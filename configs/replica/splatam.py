@@ -53,7 +53,7 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=-1,
+        num_frames=30,
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
