@@ -119,6 +119,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         embedding_dir: str = "feat_lseg_240_320",
         embedding_dim: int = 512,
         relative_pose: bool = True,  # If True, the pose is relative to the first frame
+        load_instseg: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -143,6 +144,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.normalize_color = normalize_color
 
         self.load_embeddings = load_embeddings
+        self.load_instseg = load_instseg
         self.embedding_dir = embedding_dir
         self.embedding_dim = embedding_dim
         self.relative_pose = relative_pose
@@ -320,7 +322,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         intrinsics[:3, :3] = K
 
         pose = self.transformed_poses[index]
-
         if self.load_embeddings:
             embedding = self.read_embedding_from_file(self.embedding_paths[index])
             return (
@@ -329,6 +330,19 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
                 embedding.to(self.device),  # Allow embedding to be another dtype
+                # self.retained_inds[index].item(),
+            )
+        
+        elif self.load_instseg:
+            # instseg_path = self.instseg_paths[index]
+            # instseg = np.asarray(imageio.imread(instseg_path), dtype=np.int64)
+            instseg = torch.zeros((color.shape[0], color.shape[1], 1))
+            return (
+                color.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                instseg.to(self.device).type(self.dtype),  # Allow embedding to be another dtype
                 # self.retained_inds[index].item(),
             )
 

@@ -406,7 +406,7 @@ def eval_online(dataset, all_params, num_frames, eval_online_dir, sil_thres,
 
 
 def eval(dataset, final_params, num_frames, eval_dir, sil_thres, 
-         mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False):
+         mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False, dynosplatam=False):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -428,7 +428,12 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
     gt_w2c_list = []
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
-        color, depth, intrinsics, pose = dataset[time_idx]
+        if not dynosplatam:
+            color, depth, intrinsics, pose = dataset[time_idx]
+            instseg = None
+        else:
+            color, depth, intrinsics, pose, instseg = dataset[time_idx]
+            instseg = instseg.permute(2, 0, 1)
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
         intrinsics = intrinsics[:3, :3]
@@ -453,7 +458,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
                                                    camera_grad=False)
  
         # Define current frame data
-        curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+        curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
 
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params, transformed_gaussians)
