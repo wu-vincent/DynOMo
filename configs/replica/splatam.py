@@ -36,7 +36,7 @@ config = dict(
     checkpoint_time_idx=0,
     save_checkpoints=False, # Save Checkpoints
     checkpoint_interval=100, # Checkpoint Interval
-    use_wandb=True,
+    use_wandb=False,
     wandb=dict(
         project="DynoSplaTAM",
         group=group_name,
@@ -53,7 +53,7 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=-1,
+        num_frames=30,
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
