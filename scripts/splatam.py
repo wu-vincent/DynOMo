@@ -394,7 +394,7 @@ class RBDG_SLAMMER():
     def initialize_new_params(self, new_pt_cld, mean3_sq_dist, gaussian_distribution):
         num_pts = new_pt_cld.shape[0]
         means3D = new_pt_cld[:, :3] # [num_gaussians, 3]
-        unnorm_rots = np.tile([1, 0, 0, 0], (num_pts, 1)) # [num_gaussians, 4]
+        unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
         logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
