@@ -415,7 +415,7 @@ class RBDG_SLAMMER():
                     'logit_opacities': logit_opacities[~dyno_mask],
                     'log_scales': log_scales[~dyno_mask],
             }
-
+        dyno_params = None
         if False:
             # initialize dynamic gaussians
             dyno_params = {
@@ -433,7 +433,7 @@ class RBDG_SLAMMER():
             else:
                 params[k] = torch.nn.Parameter(v.cuda().float().contiguous().requires_grad_(True))
 
-        return params, dyno_mask
+        return params, dyno_mask, dyno_params
 
     def add_new_gaussians(self, curr_data, sil_thres, 
                         time_idx, mean_sq_dist_method, gaussian_distribution):
@@ -467,27 +467,30 @@ class RBDG_SLAMMER():
             new_pt_cld, mean3_sq_dist = self.get_pointcloud(curr_data['im'], curr_data['depth'], curr_data['intrinsics'], 
                                         curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
                                         mean_sq_dist_method=mean_sq_dist_method, instseg=curr_data['instseg'])
-            new_params, dyno_mask = self.initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution)
+            new_params, dyno_mask, new_dyno_params = self.initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution)
+            static_points = new_params['means3D'].shape[0] + self.params['means3D'].shape[0]
+            if False:
+                dyno_points = new_dyno_params['means3D'].shape[0] + self.dyno_params['means3D'].shape[0]
+
             for k, v in new_params.items():
                 self.params[k] = torch.nn.Parameter(torch.cat((self.params[k], v), dim=0).requires_grad_(True))
-            num_pts = self.params['means3D'].shape[0]
-            self.variables['means2D_gradient_accum'] = torch.zeros(num_pts, device="cuda").float()[~dyno_mask]
-            self.variables['denom'] = torch.zeros(num_pts, device="cuda").float()[~dyno_mask]
-            self.variables['max_2D_radius'] = torch.zeros(num_pts, device="cuda").float()[~dyno_mask]
-            new_timestep = time_idx*torch.ones(new_pt_cld.shape[0],device="cuda").float()[~dyno_mask]
-            self.variables['timestep'] = torch.cat((self.variables['timestep'],new_timestep),dim=0)[~dyno_mask]
+            self.variables['means2D_gradient_accum'] = torch.zeros(static_points, device="cuda").float()
+            self.variables['denom'] = torch.zeros(static_points, device="cuda").float()
+            self.variables['max_2D_radius'] = torch.zeros(static_points, device="cuda").float()
+            new_timestep = time_idx*torch.ones(new_params['means3D'].shape[0], device="cuda").float()
+            self.variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep),dim=0)
 
             if self.dynosplatam:
-                self.variables['instseg'] = torch.cat((self.variables['instseg'], new_pt_cld[:, 6:]), dim=0)[~dyno_mask]
+                self.variables['instseg'] = torch.cat((self.variables['instseg'], new_pt_cld[:, 6:][~dyno_mask]), dim=0)
 
                 # initialize dynamic gaussians
                 if False:
-                    self.dyno_variables['means2D_gradient_accum'] = torch.zeros(num_pts, device="cuda").float()[dyno_mask]
-                    self.dyno_variables['denom'] = torch.zeros(num_pts, device="cuda").float()[dyno_mask]
-                    self.dyno_variables['max_2D_radius'] = torch.zeros(num_pts, device="cuda").float()[dyno_mask]
-                    new_timestep = time_idx*torch.ones(new_pt_cld.shape[0],device="cuda").float()[dyno_mask]
-                    self.dyno_variables['timestep'] = torch.cat((self.variables['timestep'],new_timestep),dim=0)[dyno_mask]
-                    self.dyno_variables['instseg'] = torch.cat((self.variables['instseg'], new_pt_cld[:, 6:]), dim=0)[dyno_mask]
+                    self.dyno_variables['means2D_gradient_accum'] = torch.zeros(dyno_points, device="cuda").float()
+                    self.dyno_variables['denom'] = torch.zeros(dyno_points, device="cuda").float()
+                    self.dyno_variables['max_2D_radius'] = torch.zeros(dyno_points, device="cuda").float()
+                    new_timestep = time_idx*torch.ones(new_dyno_params['means3D'].shape[0],device="cuda").float()
+                    self.dyno_variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep),dim=0)
+                    self.dyno_variables['instseg'] = torch.cat((self.variables['instseg'], new_pt_cld[:, 6:][~dyno_mask]), dim=0)
 
     def initialize_camera_pose(self, curr_time_idx, forward_prop):
         with torch.no_grad():
