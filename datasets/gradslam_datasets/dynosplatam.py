@@ -43,26 +43,36 @@ class DynoSplatamDataset(ReplicaDataset):
         )
         self.instseg_paths = self.get_instsegpaths()
         self.load_instseg = True
+        embedding_path = f"{self.input_folder}/Features/crop-256-dinov2-01.npy"
+        if self.load_embeddings:
+            self.embeddings = np.load(embedding_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/instseg*.png"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/instseg*.npy"))
         return instseg_paths
+    
+    def read_embedding_from_file(self, idx):
+        return self.embeddings[idx]
+    
+    def get_filepaths(self):
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.jpg"))
+        if len(color_paths) == 0:
+            color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.png"))
+        # color_paths = [color_paths[0]]
+        # print(color_paths)
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/depth*.npy"))
+        if len(depth_paths) == 0:
+            depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/depth*.png"))
+        embedding_paths = None
+        if self.load_embeddings:
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
+        return color_paths, depth_paths, embedding_paths
 
     def load_poses(self):
-        '''poses = []
+        poses = []
         for i in range(self.num_imgs):
             # c2w[:3, 1] *= -1
             # c2w[:3, 2] *= -1
             c2w = torch.eye(4).float()
-            poses.append(c2w)'''
-        poses = []
-        with open(self.pose_path, "r") as f:
-            lines = f.readlines()
-        for i in range(self.num_imgs):
-            line = lines[i]
-            c2w = np.array(list(map(float, line.split()))).reshape(4, 4)
-            # c2w[:3, 1] *= -1
-            # c2w[:3, 2] *= -1
-            c2w = torch.from_numpy(c2w).float()
             poses.append(c2w)
         return poses
