@@ -23,6 +23,8 @@ from natsort import natsorted
 
 from .geometryutils import relative_transformation
 from . import datautils
+import torchvision
+from torchvision.transforms.functional import InterpolationMode
 
 
 def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
@@ -119,6 +121,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         embedding_dir: str = "feat_lseg_240_320",
         embedding_dim: int = 512,
         relative_pose: bool = True,  # If True, the pose is relative to the first frame
+        load_instseg: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -143,6 +146,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.normalize_color = normalize_color
 
         self.load_embeddings = load_embeddings
+        self.load_instseg = load_instseg
         self.embedding_dir = embedding_dir
         self.embedding_dim = embedding_dim
         self.relative_pose = relative_pose
@@ -297,12 +301,20 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color_path = self.color_paths[index]
         depth_path = self.depth_paths[index]
         color = np.asarray(imageio.imread(color_path), dtype=float)
+        if color.shape[2] > 3:
+            color = color[:, :, :3]
+        
         color = self._preprocess_color(color)
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
             depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+        elif 'npy' in depth_path:
+            depth = np.load(depth_path, mmap_mode="r").astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
+
+        if len(depth.shape) > 2 and depth.shape[2] != 1:
+            depth = depth[:, :, 1]
 
         K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
         if self.distortion is not None:
@@ -311,7 +323,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         color = torch.from_numpy(color)
         K = torch.from_numpy(K)
-
         depth = self._preprocess_depth(depth)
         depth = torch.from_numpy(depth)
 
@@ -320,8 +331,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         intrinsics[:3, :3] = K
 
         pose = self.transformed_poses[index]
-
-        if self.load_embeddings:
+        if self.load_embeddings and not self.load_instseg:
             embedding = self.read_embedding_from_file(self.embedding_paths[index])
             return (
                 color.to(self.device).type(self.dtype),
@@ -329,6 +339,42 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
                 embedding.to(self.device),  # Allow embedding to be another dtype
+                # self.retained_inds[index].item(),
+            )
+        
+        elif self.load_instseg and self.load_embeddings:
+            trans = torchvision.transforms.Resize(
+                (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
+            embedding = self.read_embedding_from_file(index)
+            # load and downsample to rgb size
+            instseg_path = self.instseg_paths[index]
+            instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+            # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
+            return (
+                color.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                instseg.to(self.device).type(self.dtype),
+                embedding.to(self.device)# Allow embedding to be another dtype
+                # self.retained_inds[index].item(),
+            )
+        
+        elif self.load_instseg:
+            trans = torchvision.transforms.Resize(
+                (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
+            # load and downsample to rgb size
+            instseg_path = self.instseg_paths[index]
+            instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+            # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
+            return (
+                color.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                instseg.to(self.device).type(self.dtype),  # Allow embedding to be another dtype
                 # self.retained_inds[index].item(),
             )
 

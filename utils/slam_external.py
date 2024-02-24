@@ -155,6 +155,8 @@ def remove_points(to_remove, params, variables, optimizer):
     variables['means2D_gradient_accum'] = variables['means2D_gradient_accum'][to_keep]
     variables['denom'] = variables['denom'][to_keep]
     variables['max_2D_radius'] = variables['max_2D_radius'][to_keep]
+    if 'instseg' in variables.keys():
+        variables['instseg'] = variables['instseg'][to_keep]
     if 'timestep' in variables.keys():
         variables['timestep'] = variables['timestep'][to_keep]
     return params, variables
@@ -198,6 +200,9 @@ def densify(params, variables, optimizer, iter, densify_dict):
             to_clone = torch.logical_and(grads >= grad_thresh, (
                         torch.max(torch.exp(params['log_scales']), dim=1).values <= 0.01 * variables['scene_radius']))
             new_params = {k: v[to_clone] for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
+            # clone instance segmentation tag
+            if 'instseg' in variables.keys():
+                variables['instseg'] = torch.cat((variables['instseg'], variables['instseg'][to_clone]), dim=0)
             params = cat_params_to_optimizer(new_params, params, optimizer)
             num_pts = params['means3D'].shape[0]
 
@@ -208,6 +213,9 @@ def densify(params, variables, optimizer, iter, densify_dict):
                                              'scene_radius'])
             n = densify_dict['num_to_split_into']  # number to split into
             new_params = {k: v[to_split].repeat(n, 1) for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
+            # split instance segmentation tag
+            if 'instseg' in variables.keys():
+                variables['instseg'] = torch.cat((variables['instseg'], variables[to_split].repeat(n, 1)), dim=0)
             stds = torch.exp(params['log_scales'])[to_split].repeat(n, 3)
             means = torch.zeros((stds.size(0), 3), device="cuda")
             samples = torch.normal(mean=means, std=stds)

@@ -1,9 +1,7 @@
 import os
 from os.path import join as p_join
 
-scenes = ["room0", "room1", "room2",
-          "office0", "office1", "office2",
-          "office_", "office4"]
+scenes = ["picatchu"]
 
 primary_device="cuda:0"
 seed = 0
@@ -15,8 +13,8 @@ mapping_window_size = 24
 tracking_iters = 40
 mapping_iters = 60
 
-group_name = "Replica"
-run_name = f"{scene_name}_{seed}"
+group_name = "dynosplatam"
+run_name = f"bg_dynosplatam_{scene_name}_{seed}"
 
 config = dict(
     workdir=f"./experiments/{group_name}",
@@ -37,6 +35,7 @@ config = dict(
     save_checkpoints=False, # Save Checkpoints
     checkpoint_interval=100, # Checkpoint Interval
     use_wandb=False,
+    mode='just_static', # 'splatam' 'static_dyno'
     wandb=dict(
         project="DynoSplaTAM",
         group=group_name,
@@ -45,15 +44,15 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/Replica",
-        gradslam_data_cfg="./configs/data/replica.yaml",
+        basedir="./data/dynosplatam",
+        gradslam_data_cfg="./configs/data/dynosplatam.yaml",
         sequence=scene_name,
         desired_image_height=680,
         desired_image_width=1200,
         start=0,
         end=-1,
         stride=1,
-        num_frames=30,
+        num_frames=-1,
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
@@ -75,6 +74,29 @@ config = dict(
             log_scales=0.0,
             cam_unnorm_rots=0.0004,
             cam_trans=0.002,
+        ),
+    ),
+    tracking_obj=dict(
+        add_new_gaussians=True,
+        use_gt_poses=False, # Use GT Poses for Tracking
+        forward_prop=True, # Forward Propagate Poses
+        num_iters=tracking_iters,
+        use_sil_for_loss=True,
+        sil_thres=0.99,
+        use_l1=True,
+        ignore_outlier_depth_loss=False,
+        loss_weights=dict(
+            im=0.5,
+            depth=1.0,
+        ),
+        lrs=dict(
+            means3D=0.0001,
+            rgb_colors=0.0025,
+            unnorm_rotations=0.001,
+            logit_opacities=0.05,
+            log_scales=0.001,
+            cam_unnorm_rots=0.0000,
+            cam_trans=0.0000,
         ),
     ),
     mapping=dict(

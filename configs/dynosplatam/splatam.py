@@ -15,7 +15,7 @@ mapping_window_size = 24
 tracking_iters = 40
 mapping_iters = 60
 
-group_name = "Replica"
+group_name = "dynosplatam"
 run_name = f"{scene_name}_{seed}"
 
 config = dict(
@@ -46,7 +46,7 @@ config = dict(
     ),
     data=dict(
         basedir="./data/Replica",
-        gradslam_data_cfg="./configs/data/replica.yaml",
+        gradslam_data_cfg="./configs/data/dynosplatam.yaml",
         sequence=scene_name,
         desired_image_height=680,
         desired_image_width=1200,
