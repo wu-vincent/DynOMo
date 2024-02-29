@@ -23,7 +23,7 @@ from math import exp
 
 
 def build_rotation(q):
-    norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3])
+    norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3]) + 1e-20
     q = q / norm[:, None]
     rot = torch.zeros((q.size(0), 3, 3), device='cuda')
     r = q[:, 0]
@@ -40,6 +40,12 @@ def build_rotation(q):
     rot[:, 2, 1] = 2 * (y * z + r * x)
     rot[:, 2, 2] = 1 - 2 * (x * x + y * y)
     return rot
+
+
+def normalize_quat(q):
+    norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3])
+    q = q / norm[:, None]
+    return q
 
 
 def calc_mse(img1, img2):

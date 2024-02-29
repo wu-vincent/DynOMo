@@ -11,7 +11,7 @@ from utils.recon_helpers import setup_camera
 from utils.slam_external import build_rotation, calc_psnr
 from utils.slam_helpers import (
     transform_to_frame, transformed_params2rendervar, transformed_params2depthplussilhouette,
-    quat_mult, matrix_to_quaternion, transformed_params2depthplussilhouetteplusinstseg
+    quat_mult, matrix_to_quaternion, transformed_params2depthsilinstseg
 )
 
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
@@ -471,22 +471,6 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         # Skip frames if not eval_every
         if time_idx != 0 and (time_idx+1) % eval_every != 0:
             continue
-        
-        # add dyno_params to static_params
-        if dynosplatam and dyno_variables is not None:
-            for inst in dyno_variables['instseg'].unique():
-                mask = (dyno_variables['instseg'] == inst).squeeze()
-                mask = mask & (time_idx - dyno_variables['timestep'] >= 0).squeeze()
-                final_params_time['means3D'] = torch.cat(
-                    (final_params_time['means3D'], dyno_variables['means3D'][mask][:, :, time_idx]), dim=0)
-                final_params_time['rgb_colors'] = torch.cat(
-                    (final_params_time['rgb_colors'], final_dyno_params['rgb_colors'][mask]), dim=0)
-                final_params_time['unnorm_rotations'] = torch.cat(
-                    (final_params_time['unnorm_rotations'], dyno_variables['unnorm_rotations'][mask][:, :, time_idx]), dim=0)
-                final_params_time['logit_opacities'] = torch.cat(
-                    (final_params_time['logit_opacities'], final_dyno_params['logit_opacities'][mask]), dim=0)
-                final_params_time['log_scales'] = torch.cat(
-                    (final_params_time['log_scales'], final_dyno_params['log_scales'][mask]), dim=0)
 
         # Get current frame Gaussians
         transformed_gaussians = transform_to_frame(final_params_time, time_idx, 
@@ -498,12 +482,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
 
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians)
-        if not dynosplatam:
-            depth_sil_rendervar = transformed_params2depthplussilhouette(final_params_time, curr_data['w2c'],
-                                                                         transformed_gaussians)
-        else:
-            depth_sil_rendervar = transformed_params2depthplussilhouetteplusinstseg(final_params_time, curr_data['w2c'],
-                                                                     transformed_gaussians, variables)
+        depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
+                                                                        transformed_gaussians)
+
         # Render Depth & Silhouette
         depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
         rastered_depth = depth_sil[0, :, :].unsqueeze(0)
@@ -593,7 +574,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             cv2.imwrite(os.path.join(depth_dir, "gt_{:04d}.png".format(time_idx)), depth_colormap)
 
         if save_pc:
-            means = final_params_time['means3D']
+            means = final_params_time['means3D'] + final_params_time['delta_means3D'][:, :, time_idx]
             with open(os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), 'w') as f:
                 for r in means.cpu().numpy():
                     f.write(str(r.tolist()) + '\n')
