@@ -20,6 +20,31 @@ from pytorch_msssim import ms_ssim
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).cuda()
 
+import imageio.v2 as iio
+import numpy as np
+
+import imageio
+import glob
+
+  
+def make_vid(input_path): 
+    
+    os.environ['IMAGEIO_FFMPEG_EXE'] = '/usr/bin/ffmpeg'
+
+    images = list()
+    for f in glob.glob(f'{input_path}/*'):
+        images.append(imageio.imread(f))
+
+    writer = imageio.get_writer(input_path + '.mp4', fps=30)
+    print(input_path + '.mp4')
+    print(images)
+    for im in images:
+        print('adding')
+        # im is numpy array
+        writer.append_data(im)
+    writer.close()
+
+
 def align(model, data):
     """Align two trajectories using the method of Horn (closed-form).
 
@@ -418,7 +443,8 @@ def param2tensor(param):
 def eval(dataset, final_params, num_frames, eval_dir, sil_thres, 
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
          eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
-         dyno_variables=None, variables=None, save_pc=False, mask_sil_vis=False):
+         dyno_variables=None, variables=None, save_pc=False, mask_sil_vis=False,
+         save_videos=False):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -440,11 +466,14 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         os.makedirs(pc_dir, exist_ok=True)
         render_instseg_dir = os.path.join(eval_dir, "rendered_instseg")
         os.makedirs(render_instseg_dir, exist_ok=True)
+        instseg_dir = os.path.join(eval_dir, "instseg")
+        os.makedirs(instseg_dir, exist_ok=True)
         render_sil_dir = os.path.join(eval_dir, "rendered_sil")
         os.makedirs(render_sil_dir, exist_ok=True)
 
     gt_w2c_list = []
     import copy
+
     for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
@@ -476,14 +505,14 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         transformed_gaussians = transform_to_frame(final_params_time, time_idx, 
                                                    gaussians_grad=False, 
                                                    camera_grad=False)
- 
+         
         # Define current frame data
         curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
 
         # Initialize Render Variables
-        rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians)
+        rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
         depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
-                                                                        transformed_gaussians)
+                                                                        transformed_gaussians, time_idx)
 
         # Render Depth & Silhouette
         depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
@@ -545,9 +574,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             # Save Rendered RGB and Depth
             viz_render_im = torch.clamp(im, 0, 1)
             viz_render_im = viz_render_im.detach().cpu().permute(1, 2, 0).numpy()
+            # depth
             vmin = 0
             vmax = 6
-            # depth
             viz_render_depth = rastered_depth_viz[0].detach().cpu().numpy()
             normalized_depth = np.clip((viz_render_depth - vmin) / (vmax - vmin), 0, 1)
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
@@ -558,7 +587,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             instseg_colormap = cv2.applyColorMap((normalized_instseg * 255).astype(np.uint8), cv2.COLORMAP_JET)
             # silouette
             rastered_sil_vis = torch.clamp(rastered_sil_vis , 0, 1)[0].detach().cpu().numpy()
-            sil_colormap = cv2.applyColorMap((rastered_sil_vis * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            sil_colormap = (rastered_sil_vis * 255).astype(np.uint8)
             cv2.imwrite(os.path.join(render_rgb_dir, "gs_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_render_im*255, cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
             cv2.imwrite(os.path.join(render_instseg_dir, "gs_{:04d}.png".format(time_idx)), instseg_colormap)
@@ -567,14 +596,24 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             # Save GT RGB and Depth
             viz_gt_im = torch.clamp(curr_data['im'], 0, 1)
             viz_gt_im = viz_gt_im.detach().cpu().permute(1, 2, 0).numpy()
+            # depth
+            vmin = 0
+            vmax = 6
             viz_gt_depth = curr_data['depth'][0].detach().cpu().numpy()
             normalized_depth = np.clip((viz_gt_depth - vmin) / (vmax - vmin), 0, 1)
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            # instseg
+            viz_gt_instseg = curr_data['instseg'][0].detach().cpu().numpy()
+            smax, smin = viz_gt_instseg.max(), viz_gt_instseg.min()
+            normalized_instseg = np.clip((viz_gt_instseg - smin) / (smax - smin), 0, 1)
+            instseg_colormap = cv2.applyColorMap((normalized_instseg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+
             cv2.imwrite(os.path.join(rgb_dir, "gt_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_gt_im*255, cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(depth_dir, "gt_{:04d}.png".format(time_idx)), depth_colormap)
+            cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
 
         if save_pc:
-            means = final_params_time['means3D'] + final_params_time['delta_means3D'][:, :, time_idx]
+            means = final_params_time['means3D'][:, :, time_idx]
             with open(os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), 'w') as f:
                 for r in means.cpu().numpy():
                     f.write(str(r.tolist()) + '\n')
@@ -597,8 +636,12 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
     import open3d as o3d
     pcd = o3d.geometry.PointCloud()
     v3d = o3d.utility.Vector3dVector
-    pcd.points = v3d(final_params_time['means3D'].cpu().numpy())
+    pcd.points = v3d(final_params_time['means3D'][:, :, time_idx].cpu().numpy())
     o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
+
+    if save_videos:
+        for input_path in [render_rgb_dir, render_depth_dir, rgb_dir, depth_dir, pc_dir, render_instseg_dir, instseg_dir, render_sil_dir]:
+            make_vid(input_path)
 
     try:
         # Compute the final ATE RMSE
