@@ -44,7 +44,7 @@ from utils.recon_helpers import setup_camera
 from utils.slam_helpers import (
     transformed_params2rendervar, transformed_params2depthplussilhouette,
     transform_to_frame, l1_loss_v1, matrix_to_quaternion, quat_mult, l2_loss_v2,
-    transformed_params2depthsilinstseg, weighted_l2_loss_v2
+    transformed_params2instsegmov, weighted_l2_loss_v2
 )
 from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, densify, normalize_quat
 from utils.neighbor_search import calculate_neighbors_seg
@@ -254,7 +254,8 @@ class RBDG_SLAMMER():
             'means2D_gradient_accum': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
             'denom': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
             'timestep': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
-            'dyno_mask': dyno_mask}
+            'dyno_mask': dyno_mask,
+            'moving': torch.ones(self.params['means3D'].shape[0], dtype=bool).cuda().float()}
 
         instseg_mask = self.params["instseg"].long()
         self.variables = calculate_neighbors_seg(
@@ -418,7 +419,8 @@ class RBDG_SLAMMER():
         return loss, weighted_losses, variables
 
     def get_loss_dyno(self, params, variables, curr_data, iter_time_idx, loss_weights, use_sil_for_loss,
-                sil_thres, use_l1, ignore_outlier_depth_loss, dyno=False, cam_tracking=False):
+                sil_thres, use_l1, ignore_outlier_depth_loss, dyno=False, cam_tracking=False, obj_tracking=False,
+                mapping=False, moving_mask=False):
         # Initialize Loss Dictionary
         losses = {}
         
@@ -430,14 +432,24 @@ class RBDG_SLAMMER():
             transformed_gaussians = transform_to_frame(params, iter_time_idx,
                                                         gaussians_grad=True,
                                                         camera_grad=False)
-        print('comparison', params['means3D'][0, :, 0])
+        
+        if moving_mask and obj_tracking:
+            for k, v in transformed_gaussians.items():
+                if 'cam' not in k:
+                    transformed_gaussians[k] = v[variables['moving']]
+        elif moving_mask and mapping:
+            for k, v in transformed_gaussians.items():
+                if 'cam' not in k:
+                    transformed_gaussians[k] = v[~variables['moving']]
+
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(params, transformed_gaussians, iter_time_idx)
         depth_sil_rendervar = transformed_params2depthplussilhouette(params, curr_data['w2c'],
                                                                 transformed_gaussians, iter_time_idx)
-        # seg_rendervar = transformed_params2instseg(params, curr_data['w2c'],
+        # seg_rendervar = transformed_params2instsegmov(params, curr_data['w2c'],
         #                                                 transformed_gaussians, iter_time_idx)
-
+        
+        # print(rendervar['means3D'], rendervar['means3D'].shape)
         # RGB Rendering
         rendervar['means2D'].retain_grad()
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
@@ -449,6 +461,8 @@ class RBDG_SLAMMER():
         # Instseg
         # instseg, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
         # instseg = instseg[2, :, :]
+        # moving = instseg[1, :, :]
+        # moving = (moving > mov_thresh)
         
         # silouette
         silhouette = depth_sil[1, :, :]
@@ -471,8 +485,8 @@ class RBDG_SLAMMER():
 
         mask = mask & nan_mask
         # Mask with presence silhouette mask (accounts for empty space)
-        if cam_tracking and use_sil_for_loss:
-            mask = mask & presence_sil_mask            
+        if use_sil_for_loss:
+            mask = mask & presence_sil_mask
 
         # Depth loss
         if use_l1:
@@ -483,7 +497,8 @@ class RBDG_SLAMMER():
                 losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].mean()
         
         # RGB Loss
-        if cam_tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
+        # if (cam_tracking) and (use_sil_for_loss or ignore_outlier_depth_loss):
+        if (cam_tracking and obj_tracking) and (use_sil_for_loss or ignore_outlier_depth_loss):
             color_mask = torch.tile(mask, (3, 1, 1))
             color_mask = color_mask.detach()
             losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].sum()
@@ -492,7 +507,7 @@ class RBDG_SLAMMER():
         else:
             losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (
                 1.0 - calc_ssim(im, curr_data['im']))
-        
+
         # SEG LOSS
         # if use_sil_for_loss or ignore_outlier_depth_loss:
         #     losses['instseg'] = torch.abs(curr_data['instseg'] - instseg)[mask].sum()
@@ -508,15 +523,12 @@ class RBDG_SLAMMER():
         # ADD DYNO LOSSES LIKE RIGIDITY
         # DYNO LOSSES
         if dyno:
-            # get nearest neighbors in segment
-            instseg_mask = params["instseg"].long()
-
-            '''
+            moving = variables['moving']
             # get relative rotation
-            prev_rot = params["unnorm_rotations"][:, :, iter_time_idx-1].detach()
+            prev_rot = params["unnorm_rotations"][:, :, iter_time_idx-1].clone().detach()
             prev_rot[:, 1:] = -1 * prev_rot[:, 1:]
-            prev_means = params["means3D"][:, :, iter_time_idx-1].detach()
-            curr_rot = params["unnorm_rotations"][:, :, iter_time_idx]
+            prev_means = params["means3D"][:, :, iter_time_idx-1].clone().detach()
+            curr_rot = transformed_gaussians["unnorm_rotations"] # params["unnorm_rotations"][:, :, iter_time_idx]
             rel_rot = quat_mult(curr_rot, prev_rot)
             rel_rot_mat = build_rotation(rel_rot)
 
@@ -533,17 +545,17 @@ class RBDG_SLAMMER():
             # losses['dx'] = l2_loss_v2(mean_dx_seg[instseg_mask], dx)
 
             # rigid body
-            curr_means = params["means3D"][:, :, iter_time_idx]
+            curr_means = transformed_gaussians["means3D"] # params["means3D"][:, :, iter_time_idx]
             offset = curr_means[variables["self_indices"]] - curr_means[variables["neighbor_indices"]]
             offset_prev_coord = (rel_rot_mat[variables["self_indices"]].transpose(2, 1) @ offset.unsqueeze(-1)).squeeze(-1)
             prev_offset = prev_means[variables["self_indices"]] - prev_means[variables["neighbor_indices"]]
             losses['rigid'] = l2_loss_v2(offset_prev_coord, prev_offset)
 
             # isometry
-            zero_means = params["means3D"][:, :, iter_time_idx]
+            zero_means = params["means3D"][:, :, 0].clone().detach()
             offset_0 =  zero_means[variables["self_indices"]] - zero_means[variables["neighbor_indices"]]
             losses['iso'] = l2_loss_v2(offset, offset_0)
-            '''
+            
 
         weighted_losses = {k: v * loss_weights[k] for k, v in losses.items()}
         loss = sum(weighted_losses.values())
@@ -632,17 +644,19 @@ class RBDG_SLAMMER():
                                         curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
                                         mean_sq_dist_method=mean_sq_dist_method, instseg=curr_data['instseg'], embeddings=curr_data['embeddings'])
             new_params, dyno_mask = self.initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution)
-            static_points = new_params['means3D'].shape[0] + self.params['means3D'].shape[0]
+            num_gaussians = new_params['means3D'].shape[0] + self.params['means3D'].shape[0]
 
             # make new static Gaussians parameters and update static variables
             for k, v in new_params.items():
                 self.params[k] = torch.nn.Parameter(torch.cat((self.params[k], v), dim=0).requires_grad_(True))
-            self.variables['means2D_gradient_accum'] = torch.zeros(static_points, device="cuda").float()
-            self.variables['denom'] = torch.zeros(static_points, device="cuda").float()
-            self.variables['max_2D_radius'] = torch.zeros(static_points, device="cuda").float()
+            self.variables['means2D_gradient_accum'] = torch.zeros(num_gaussians, device="cuda").float()
+            self.variables['denom'] = torch.zeros(num_gaussians, device="cuda").float()
+            self.variables['max_2D_radius'] = torch.zeros(num_gaussians, device="cuda").float()
             new_timestep = time_idx*torch.ones(new_params['means3D'].shape[0], device="cuda").float()
-            self.variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep),dim=0)
+            self.variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep), dim=0)
             self.variables['dyno_mask'] = dyno_mask
+            new_moving = torch.ones(self.params['means3D'].shape[0], dtype=bool).cuda().float()
+            self.variables['moving'] = torch.cat((self.variables['moving'], new_moving), dim=0)
             
     def initialize_camera_pose(self, curr_time_idx, forward_prop):
         with torch.no_grad():
@@ -663,7 +677,7 @@ class RBDG_SLAMMER():
                 self.params['cam_unnorm_rots'][..., curr_time_idx] = self.params['cam_unnorm_rots'][..., curr_time_idx-1].detach()
                 self.params['cam_trans'][..., curr_time_idx] = self.params['cam_trans'][..., curr_time_idx-1].detach()
     
-    def initialize_dyno_poses(self, curr_time_idx, forward_prop=True):
+    def initialize_dyno_poses(self, curr_time_idx, forward_prop=True, moving_forward_thresh=0.0):
         mask = (curr_time_idx - self.variables['timestep'] == 1).squeeze()
         with torch.no_grad():
             if forward_prop:
@@ -677,6 +691,17 @@ class RBDG_SLAMMER():
                 new_tran = self.params['means3D'][mask, :, 0]
                 new_tran = torch.nn.Parameter(new_tran.cuda().float().contiguous().requires_grad_(True))
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
+        
+        mask = (curr_time_idx - self.variables['timestep'] == 2).squeeze()
+        with torch.no_grad():
+            if moving_forward_thresh:
+                prev_tran1 = self.params['means3D'][mask, :, curr_time_idx-1]
+                prev_tran2 = self.params['means3D'][mask, :, curr_time_idx-2]
+                new_tran = prev_tran1 - prev_tran2
+                if new_tran.shape[0]:
+                    mean_trans = scatter_mean(new_tran, self.params['instseg'].long(), dim=0)
+                    mean_trans = torch.linalg.norm(mean_trans, dim=1)
+                    self.variables['moving'] = mean_trans[self.params['instseg'].long()] > moving_forward_thresh
 
         mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
         with torch.no_grad():
@@ -1043,7 +1068,7 @@ class RBDG_SLAMMER():
             wandb.finish()
 
 
-    def optimize_time(self, color, depth, gt_pose, time_idx, gt_w2c_all_frames, curr_data, \
+    def optimize_time(self, color, depth, gt_pose, time_idx, gt_w2c_all_frames, _curr_data, \
         tracking_curr_data, densify_curr_data, keyframe_list, keyframe_time_indices, instseg, embeddings):
 
         # Process poses
@@ -1061,8 +1086,16 @@ class RBDG_SLAMMER():
         # Optimize only current time step for tracking
         iter_time_idx = time_idx
         # Initialize Mapping Data for selected frame
-        curr_data.update(
-            { 'im': color, 'depth': depth, 'id': iter_time_idx, 'iter_gt_w2c_list': curr_gt_w2c, 'instseg': instseg, 'embeddings': embeddings})
+        curr_data = {
+            'im': color,
+            'depth': depth,
+            'id': iter_time_idx,
+            'iter_gt_w2c_list': curr_gt_w2c,
+            'instseg': instseg,
+            'embeddings': embeddings,
+            'cam': _curr_data['cam'],
+            'intrinsics': _curr_data['intrinsics'],
+            'w2c': _curr_data['w2c']}
         
         # Initialize Data for Tracking
         if self.seperate_tracking_res:
@@ -1091,9 +1124,17 @@ class RBDG_SLAMMER():
         # self.track_camera(time_idx, tracking_curr_data, iter_time_idx, curr_gt_w2c)
         if self.dynosplatam and self.config['mode'] == 'static_dyno':
             self.track_objects(time_idx, curr_data, iter_time_idx, curr_gt_w2c)
-        
+
         self.densify_and_map(time_idx, curr_data, curr_gt_w2c, color, depth, instseg, embeddings,\
             keyframe_list, num_iters_mapping, gt_w2c_all_frames, densify_curr_data)
+
+        if time_idx == 0:
+            self.config['tracking_obj']['loss_weights']['rgb_colors'] = 0
+            self.config['tracking_obj']['loss_weights']['logit_opacities'] = 0
+            self.config['tracking_obj']['loss_weights']['log_scales'] = 0
+            self.config['mapping']['loss_weights']['rgb_colors'] = 0
+            self.config['mapping']['loss_weights']['logit_opacities'] = 0
+            self.config['mapping']['loss_weights']['log_scales'] = 0
         
         # Add frame to keyframe list
         if ((time_idx == 0) or ((time_idx+1) % self.config['keyframe_every'] == 0) or \
@@ -1127,7 +1168,9 @@ class RBDG_SLAMMER():
 
     def track_objects(self, time_idx, curr_data, iter_time_idx, curr_gt_w2c):
         # get instance segementation mask for Gaussians
-        time_mask = self.initialize_dyno_poses(time_idx)
+        time_mask = self.initialize_dyno_poses(
+            time_idx,
+            moving_forward_thresh=self.config['tracking_obj']['moving_forward_thresh'])
         tracking_start_time = time.time()
 
         if time_idx > 0 and not self.config['tracking']['use_gt_poses']:
@@ -1149,7 +1192,9 @@ class RBDG_SLAMMER():
                 # Loss for current frame
                 loss, losses, self.variables = self.get_loss_dyno(self.params, self.variables, curr_data, iter_time_idx, \
                     self.config['tracking_obj']['loss_weights'], self.config['tracking_obj']['use_sil_for_loss'], self.config['tracking_obj']['sil_thres'],
-                    self.config['tracking_obj']['use_l1'], self.config['tracking_obj']['ignore_outlier_depth_loss'], cam_tracking=False, dyno=True)
+                    self.config['tracking_obj']['use_l1'], self.config['tracking_obj']['ignore_outlier_depth_loss'], cam_tracking=False,
+                    dyno=self.config['tracking_obj']['dyno_losses'])
+                
                 if self.config['use_wandb']:
                     # Report Loss
                     self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, tracking=True)
@@ -1300,8 +1345,10 @@ class RBDG_SLAMMER():
         # Densification & KeyFrame-based Mapping
         if time_idx == 0 or (time_idx+1) % self.config['map_every'] == 0:
             # Densification
-            selected_keyframes = \
-                self.densify(time_idx, curr_data, curr_gt_w2c, depth, keyframe_list, densify_curr_data)
+            self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data)
+
+            # select keyframes for mapping
+            selected_keyframes = self.select_keyframes(time_idx, keyframe_list, depth)
 
             # Reset Optimizer & Learning Rates for Full Map Optimization
             self.map(num_iters_mapping, time_idx, selected_keyframes, color, depth, instseg, embeddings,\
@@ -1331,7 +1378,7 @@ class RBDG_SLAMMER():
                 self.params['unnorm_rotations'][:, :, time_idx] = self.params['unnorm_rotations'][:, :, time_idx].detach()
                 self.params['means3D'][:, :, time_idx] = self.params['means3D'][:, :, time_idx].detach()
 
-    def densify(self, time_idx, curr_data, curr_gt_w2c, depth, keyframe_list, densify_curr_data):
+    def densify(self, time_idx, curr_data, curr_gt_w2c, densify_curr_data):
         if self.config['mapping']['add_new_gaussians'] and time_idx > 0:
             # Setup Data for Densification
             if self.seperate_densification_res:
@@ -1358,6 +1405,7 @@ class RBDG_SLAMMER():
                 self.wandb_run.log({"Mapping/Number of Gaussians": post_num_pts,
                                 "Mapping/step": self.wandb_time_step})
         
+    def select_keyframes(self, time_idx, keyframe_list, depth):
         with torch.no_grad():
             # Get the current estimated rotation & translation
             curr_cam_rot = F.normalize(self.params['cam_unnorm_rots'][..., time_idx].detach())
@@ -1383,8 +1431,7 @@ class RBDG_SLAMMER():
 
     def map(self, num_iters_mapping, time_idx, selected_keyframes, color, depth, instseg, embeddings, keyframe_list,\
             gt_w2c_all_frames, curr_data):
-        if time_idx > 0:
-            return
+        
         optimizer = self.initialize_optimizer(self.params, self.config['mapping']['lrs'], tracking=False) 
         mapping_start_time = time.time()
 
@@ -1410,16 +1457,16 @@ class RBDG_SLAMMER():
                 iter_depth = keyframe_list[selected_rand_keyframe_idx]['depth']
                 iter_instseg = keyframe_list[selected_rand_keyframe_idx]['instseg']
                 iter_embeddings = keyframe_list[selected_rand_keyframe_idx]['embeddings']
-
             iter_gt_w2c = gt_w2c_all_frames[:iter_time_idx+1]
             iter_data = {'cam': curr_data['cam'], 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                             'intrinsics': self.intrinsics, 'w2c': self.first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c,
                             'instseg': iter_instseg, 'embeddings': iter_embeddings}
-            
+
             # Loss for current frame
-            loss, losses, self.variables = self.get_loss_dyno(self.params, self.variables, curr_data, iter_time_idx, \
-                self.config['tracking_obj']['loss_weights'], self.config['tracking_obj']['use_sil_for_loss'], self.config['tracking_obj']['sil_thres'],
-                self.config['tracking_obj']['use_l1'], self.config['tracking_obj']['ignore_outlier_depth_loss'], cam_tracking=False, dyno=False)
+            loss, losses, self.variables = self.get_loss_dyno(self.params, self.variables, iter_data, iter_time_idx, \
+                self.config['mapping']['loss_weights'], self.config['mapping']['use_sil_for_loss'], self.config['mapping']['sil_thres'],
+                self.config['mapping']['use_l1'], self.config['mapping']['ignore_outlier_depth_loss'], cam_tracking=False,
+                dyno=self.config['mapping']['dyno_losses'] and iter_time_idx>0)
 
             if self.config['use_wandb']:
                 # Report Loss

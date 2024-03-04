@@ -48,7 +48,9 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
         else:
             pts = params['means3D'][:, :, time_idx].detach()
         pts = pts[bin_mask]
-        neighbor_dist, neighbor_indices = torch_3d_knn(pts.contiguous(), num_knn)
+        neighbor_dist, neighbor_indices = torch_3d_knn(pts.contiguous(), num_knn+1)
+        neighbor_dist = neighbor_dist[:, 1:]
+        neighbor_indices = neighbor_indices[:, 1:]
         neighbor_weight = torch.exp(-2000 * torch.square(neighbor_dist))
         indices[bin_mask] = neighbor_indices
         weight[bin_mask] = neighbor_weight
