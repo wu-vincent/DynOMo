@@ -48,7 +48,7 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
             self.embeddings = np.load(embedding_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
         return instseg_paths
     
     def read_embedding_from_file(self, idx):

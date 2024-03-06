@@ -11,7 +11,7 @@ from utils.recon_helpers import setup_camera
 from utils.slam_external import build_rotation, calc_psnr
 from utils.slam_helpers import (
     transform_to_frame, transformed_params2rendervar, transformed_params2depthplussilhouette,
-    quat_mult, matrix_to_quaternion, transformed_params2depthsilinstseg
+    quat_mult, matrix_to_quaternion, transformed_params2depthsilinstseg, mask_timestamp, transformed_params2instsegmov
 )
 
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
@@ -25,6 +25,8 @@ import numpy as np
 
 import imageio
 import glob
+import open3d as o3d
+
 
   
 def make_vid(input_path): 
@@ -444,7 +446,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
          eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
          dyno_variables=None, variables=None, save_pc=False, mask_sil_vis=False,
-         save_videos=False):
+         save_videos=False, mov_thresh=0.005):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -470,6 +472,8 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         os.makedirs(instseg_dir, exist_ok=True)
         render_sil_dir = os.path.join(eval_dir, "rendered_sil")
         os.makedirs(render_sil_dir, exist_ok=True)
+        render_mov_dir = os.path.join(eval_dir, "rendered_mov")
+        os.makedirs(render_mov_dir, exist_ok=True)
 
     gt_w2c_list = []
     import copy
@@ -511,14 +515,24 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
 
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
+        rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables)
         depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
                                                                         transformed_gaussians, time_idx)
+        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables)
+        seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
+                                                        transformed_gaussians, time_idx, variables)
+        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables)
+
+        # Moving Gaussians
+        instseg_mov, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
+        rastered_moving = instseg_mov[1, :, :].unsqueeze(0)
+        rastered_moving_viz = rastered_moving.detach()
 
         # Render Depth & Silhouette
-        depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
-        rastered_depth = depth_sil[0, :, :].unsqueeze(0)
-        rastered_inst = depth_sil[2, :, :].unsqueeze(0)
-        rastered_sil = depth_sil[1, :, :].unsqueeze(0)
+        depth_sil_inst, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
+        rastered_depth = depth_sil_inst[0, :, :].unsqueeze(0)
+        rastered_inst = depth_sil_inst[2, :, :].unsqueeze(0)
+        rastered_sil = depth_sil_inst[1, :, :].unsqueeze(0)
 
         # Mask invalid depth in GT
         valid_depth_mask = (curr_data['depth'] > 0)
@@ -526,7 +540,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         rastered_inst_viz = rastered_inst.detach()
         rastered_sil_vis = rastered_sil.detach()
         rastered_depth = rastered_depth * valid_depth_mask
-        silhouette = depth_sil[1, :, :]
+        silhouette = depth_sil_inst[1, :, :]
         presence_sil_mask = (silhouette > sil_thres)
         
         # Render RGB and Calculate PSNR
@@ -588,10 +602,15 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             # silouette
             rastered_sil_vis = torch.clamp(rastered_sil_vis , 0, 1)[0].detach().cpu().numpy()
             sil_colormap = (rastered_sil_vis * 255).astype(np.uint8)
+            # moving
+            rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy() > mov_thresh
+            moving_colormap = cv2.applyColorMap((rastered_moving_viz * 255).astype(np.uint8), cv2.COLORMAP_JET)
             cv2.imwrite(os.path.join(render_rgb_dir, "gs_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_render_im*255, cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
             cv2.imwrite(os.path.join(render_instseg_dir, "gs_{:04d}.png".format(time_idx)), instseg_colormap)
             cv2.imwrite(os.path.join(render_sil_dir, "gs_{:04d}.png".format(time_idx)), sil_colormap)
+            cv2.imwrite(os.path.join(render_mov_dir, "gs_{:04d}.png".format(time_idx)), moving_colormap)
+
 
             # Save GT RGB and Depth
             viz_gt_im = torch.clamp(curr_data['im'], 0, 1)
@@ -613,10 +632,10 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
 
         if save_pc:
-            means = final_params_time['means3D'][:, :, time_idx]
-            with open(os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), 'w') as f:
-                for r in means.cpu().numpy():
-                    f.write(str(r.tolist()) + '\n')
+            pcd = o3d.geometry.PointCloud()
+            v3d = o3d.utility.Vector3dVector
+            pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
+            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
         
         # Plot the Ground Truth and Rasterized RGB & Depth, along with Silhouette
         fig_title = "Time Step: {}".format(time_idx)
@@ -633,10 +652,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
                                  wandb_run=wandb_run, wandb_step=None, 
                                  wandb_title="Eval/Qual Viz")
 
-    import open3d as o3d
     pcd = o3d.geometry.PointCloud()
     v3d = o3d.utility.Vector3dVector
-    pcd.points = v3d(final_params_time['means3D'][:, :, time_idx].cpu().numpy())
+    pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
     o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
 
     if save_videos:

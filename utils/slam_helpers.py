@@ -242,6 +242,12 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx):
     }
     return rendervar
 
+def mask_timestamp(rendervar, timestamp, variables):
+    time_mask = variables['timestep'] <= timestamp
+    masked_rendervar = dict()
+    for k, v in rendervar.items():
+        masked_rendervar[k] = v[time_mask]
+    return masked_rendervar, time_mask
 
 def transformed_params2silhouette(params, transformed_gaussians):
     # Check if Gaussians are Isotropic
@@ -368,3 +374,31 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad):
         transformed_gaussians['unnorm_rotations'] = unnorm_rots
 
     return transformed_gaussians
+
+
+def get_smallest_axis(params, iter_time_idx, return_idx=False):
+    """Returns the smallest axis of the Gaussians.
+
+    Args:
+        return_idx (bool, optional): _description_. Defaults to False.
+
+    Returns:
+        _type_: _description_
+    """
+    rotation_matrices = build_rotation(params['unnorm_rotations'][:, :, iter_time_idx])
+    smallest_axis_idx = params['log_scales'].min(dim=-1)[1][..., None, None].expand(-1, 3, -1)
+    smallest_axis = rotation_matrices.gather(2, smallest_axis_idx)
+    if return_idx:
+        return smallest_axis.squeeze(dim=2), smallest_axis_idx[..., 0, 0]
+    return smallest_axis.squeeze(dim=2)
+    
+
+def get_hook(should_be_disabled):
+    def hook(grad):
+        grad = grad.clone() # NEVER change the given grad inplace
+        # Assumes 1D but can be generalized
+        for i in grad.size(0):
+            if should_be_disabled[i]:
+                grad[i] = 0
+        return grad
+    return hook
