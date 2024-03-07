@@ -19,7 +19,6 @@ sys.path.insert(0, _BASE_DIR)
 print("System Paths:")
 for p in sys.path:
     print(p)
-from utils.slam_helpers import quat_mult, build_rotation
 from utils.recon_helpers import setup_camera
 from utils.colormap import colormap
 try:
@@ -28,6 +27,13 @@ except:
     print("Can't use rasterizer locally!")
 from utils.common_utils import seed_everything
 from datasets.gradslam_datasets import datautils, load_dataset_config
+from utils.slam_helpers import (
+    transformed_params2rendervar,
+    transformed_params2depthplussilhouette,
+    quat_mult,
+    mask_timestamp,
+    build_rotation,
+    transform_to_frame)
 
 
 RENDER_MODE = 'color'  # 'color', 'depth' or 'centers'
@@ -43,7 +49,7 @@ FORCE_LOOP = False  # False or True
 
 w, h = 640, 360
 near, far = 0.01, 100.0
-view_scale = 3.9
+view_scale = 1.0
 fps = 20
 traj_frac = 25  # 4% of points
 traj_length = 15
@@ -140,19 +146,7 @@ def _preprocess_depth(depth: np.ndarray, desired_width, desired_height, png_dept
 def load_scene_data(config, results_dir):
     params = dict(np.load(f"{results_dir}/params.npz"))
     params = {k: torch.tensor(v).cuda().float() for k, v in params.items()}
-    scene_data = []
-    for t in range(params['means3D'].shape[2]):
-        time_mask = params['timestep'] <= t + 1
-        rendervar = {
-            'means3D': params['means3D'][:, :, t][time_mask],
-            'colors_precomp': params['rgb_colors'][time_mask],
-            'rotations': torch.nn.functional.normalize(params['unnorm_rotations'][:, :, t][time_mask]),
-            'opacities': torch.sigmoid(params['logit_opacities'][time_mask]),
-            'scales': torch.exp(params['log_scales'][time_mask]),
-            'means2D': torch.zeros_like(params['means3D'][:, :, 0], device="cuda")[time_mask]
-        }
-        scene_data.append(rendervar)
-    return scene_data, params['moving'], params['timestep'], params['intrinsics'], params['w2c']
+    return params, params['moving'], params['timestep'], params['intrinsics'], params['w2c']
 
 
 def make_lineset(all_pts, cols, num_lines):
@@ -196,11 +190,23 @@ def calculate_rot_vec(scene_data, is_mov):
     return make_lineset(out_pts, cols, num_lines)
 
 
-def render(w2c, k, timestep_data):
+def render(w2c, k, params, moving_mask, first_occurance, iter_time_idx):
+    cam = setup_camera(w, h, k, w2c, near, far)
+    transformed_gaussians = transform_to_frame(params, iter_time_idx, 
+                                                gaussians_grad=False,
+                                                camera_grad=False)
+    
+    rendervar = transformed_params2rendervar(params, transformed_gaussians, iter_time_idx)
+    rendervar, _ = mask_timestamp(rendervar, iter_time_idx, first_occurance, moving_mask)
+    depth_sil_rendervar = transformed_params2depthplussilhouette(params, w2c,
+                                                            transformed_gaussians, iter_time_idx)
+    depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, iter_time_idx, first_occurance, moving_mask)
     with torch.no_grad():
-        cam = setup_camera(w, h, k, w2c, near, far)
-        im, _, depth, = Renderer(raster_settings=cam)(**timestep_data)
-        return im, depth
+        # image
+        im, _, _, = Renderer(raster_settings=cam)(**rendervar)
+        # Depth & Silhouette Rendering
+        depth_sil, _, _, = Renderer(raster_settings=cam)(**depth_sil_rendervar)
+        return im, depth_sil[0, :, :].unsqueeze(0)
 
 
 def rgbd2pcd(im, depth, w2c, k, show_depth=False, project_to_cam_w_scale=None):
@@ -227,7 +233,7 @@ def rgbd2pcd(im, depth, w2c, k, show_depth=False, project_to_cam_w_scale=None):
 
 def visualize(config, results_dir):
     print(config.keys())
-    scene_data, is_mov, num_timesteps, k, w2c = load_scene_data(config, results_dir)
+    params, moving_mask, first_occurance, k, w2c = load_scene_data(config, results_dir)
     dataset_cfg = load_dataset_config(config["data"]["gradslam_data_cfg"])
     vis = o3d.visualization.Visualizer()
     vis.create_window(
@@ -239,7 +245,7 @@ def visualize(config, results_dir):
         im = np.load(f"{results_dir}/rendered_for_traj_vis/0_im.npz", im.cpu().numpy())
         depth = np.load(f"{results_dir}/rendered_for_traj_vis/0_depth.npz", depth.cpu().numpy())
     else:
-        im, depth = render(w2c, k, scene_data[0])
+        im, depth = render(w2c, k, params, moving_mask, first_occurance, iter_time_idx=0)
     init_pts, init_cols = rgbd2pcd(im, depth, w2c, k, show_depth=(RENDER_MODE == 'depth'))
     pcd = o3d.geometry.PointCloud()
     pcd.points = init_pts
@@ -250,9 +256,9 @@ def visualize(config, results_dir):
     lines = None
     if ADDITIONAL_LINES is not None:
         if ADDITIONAL_LINES == 'trajectories':
-            linesets = calculate_trajectories(scene_data, is_mov)
+            linesets = calculate_trajectories(params, moving_mask)
         elif ADDITIONAL_LINES == 'rotations':
-            linesets = calculate_rot_vec(scene_data, is_mov)
+            linesets = calculate_rot_vec(params, moving_mask)
         lines = o3d.geometry.LineSet()
         lines.points = linesets[0].points
         lines.colors = linesets[0].colors
@@ -274,18 +280,18 @@ def visualize(config, results_dir):
     render_options.light_on = False
 
     start_time = time.time()
-    num_timesteps = len(scene_data)
+    num_timesteps = params['means3D'].shape[2]
     while True:
         passed_time = time.time() - start_time
         passed_frames = passed_time * fps
         if ADDITIONAL_LINES == 'trajectories':
-            t = int(passed_frames % (num_timesteps - traj_length)) + traj_length  # Skip t that don't have full traj.
+            iter_time_idx = int(passed_frames % (num_timesteps - traj_length)) + traj_length  # Skip t that don't have full traj.
         else:
-            t = int(passed_frames % num_timesteps)
+            iter_time_idx = int(passed_frames % num_timesteps)
 
         if FORCE_LOOP:
             num_loops = 1.4
-            y_angle = 360*t*num_loops / num_timesteps
+            y_angle = 360*iter_time_idx*num_loops / num_timesteps
             w2c = get_extrinsics(y_angle)
             cam_params = view_control.convert_to_pinhole_camera_parameters()
             cam_params.extrinsic = w2c
@@ -298,14 +304,14 @@ def visualize(config, results_dir):
             w2c = cam_params.extrinsic
 
         if RENDER_MODE == 'centers':
-            pts = o3d.utility.Vector3dVector(scene_data[t]['means3D'].contiguous().double().cpu().numpy())
-            cols = o3d.utility.Vector3dVector(scene_data[t]['colors_precomp'].contiguous().double().cpu().numpy())
+            pts = o3d.utility.Vector3dVector(params['means3D'][:, :, iter_time_idx].contiguous().double().cpu().numpy())
+            cols = o3d.utility.Vector3dVector(params['colors_precomp'].contiguous().double().cpu().numpy())
         else:
-            if os.path.isfile(f"{results_dir}/rendered_for_traj_vis/{t}_im.npz"):
-                im = np.load(f"{results_dir}/rendered_for_traj_vis/{t}_im.npz", im.cpu().numpy())
-                depth = np.load(f"{results_dir}/rendered_for_traj_vis/{t}_depth.npz", depth.cpu().numpy())
+            if os.path.isfile(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz"):
+                im = np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz", im.cpu().numpy())
+                depth = np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_depth.npz", depth.cpu().numpy())
             else:
-                im, depth = render(w2c, k, scene_data[t])
+                im, depth = render(w2c, k, params, moving_mask, first_occurance, iter_time_idx)
             pts, cols = rgbd2pcd(im, depth, w2c, k, show_depth=(RENDER_MODE == 'depth'))
         pcd.points = pts
         pcd.colors = cols
@@ -313,9 +319,9 @@ def visualize(config, results_dir):
 
         if ADDITIONAL_LINES is not None:
             if ADDITIONAL_LINES == 'trajectories':
-                lt = t - traj_length
+                lt = iter_time_idx - traj_length
             else:
-                lt = t
+                lt = iter_time_idx
             lines.points = linesets[lt].points
             lines.colors = linesets[lt].colors
             lines.lines = linesets[lt].lines
@@ -333,22 +339,13 @@ def visualize(config, results_dir):
 
 def just_render(config, results_dir):
     os.makedirs(f"{results_dir}/rendered_for_traj_vis", exist_ok=True)
-    scene_data, is_mov, num_timesteps, k, w2c = load_scene_data(config, results_dir)
-    dataset_cfg = load_dataset_config(config["data"]["gradslam_data_cfg"])
+    params, moving_mask, first_occurance, k, w2c = load_scene_data(config, results_dir)
 
-    start_time = time.time()
-    num_timesteps = len(scene_data)
-    for t in range(num_timesteps):
-        passed_time = time.time() - start_time
-        passed_frames = passed_time * fps
-        if ADDITIONAL_LINES == 'trajectories':
-            t = int(passed_frames % (num_timesteps - traj_length)) + traj_length  # Skip t that don't have full traj.
-        else:
-            t = int(passed_frames % num_timesteps)
-
-        im, depth = render(w2c, k, scene_data[t])
-        np.savez(f"{results_dir}/rendered_for_traj_vis/{t}_im.npz", im.cpu().numpy())
-        np.savez(f"{results_dir}/rendered_for_traj_vis/{t}_depth.npz", depth.cpu().numpy())
+    num_timesteps = params['means3D'].shape[2]
+    for iter_time_idx in range(num_timesteps):
+        im, depth = render(w2c, k, params, moving_mask.bool(), first_occurance, iter_time_idx)
+        np.savez(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz", im.cpu().numpy())
+        np.savez(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_depth.npz", depth.cpu().numpy())
 
 
 if __name__ == "__main__":
