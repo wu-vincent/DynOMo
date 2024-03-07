@@ -11,6 +11,7 @@ import sys
 import time
 from importlib.machinery import SourceFileLoader
 import cv2
+import random
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,7 +25,7 @@ from utils.colormap import colormap
 try:
     from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 except:
-    print("Can't use rasterizer locally!")
+    print('Rasterizer not installed locally, will use precomputed img and depth.')
 from utils.common_utils import seed_everything
 from datasets.gradslam_datasets import datautils, load_dataset_config
 from utils.slam_helpers import (
@@ -33,15 +34,17 @@ from utils.slam_helpers import (
     quat_mult,
     mask_timestamp,
     build_rotation,
-    transform_to_frame)
+    transform_to_frame,
+    )
+from utils.slam_external import normalize_quat
 
 
 RENDER_MODE = 'color'  # 'color', 'depth' or 'centers'
 # RENDER_MODE = 'depth'  # 'color', 'depth' or 'centers'
 # RENDER_MODE = 'centers'  # 'color', 'depth' or 'centers'
 
-ADDITIONAL_LINES = None  # None, 'trajectories' or 'rotations'
-# ADDITIONAL_LINES = 'trajectories'  # None, 'trajectories' or 'rotations'
+# ADDITIONAL_LINES = None  # None, 'trajectories' or 'rotations'
+ADDITIONAL_LINES = 'trajectories'  # None, 'trajectories' or 'rotations'
 # ADDITIONAL_LINES = 'rotations'  # None, 'trajectories' or 'rotations'
 
 FORCE_LOOP = False  # False or True
@@ -50,12 +53,13 @@ FORCE_LOOP = False  # False or True
 w, h = 640, 360
 near, far = 0.01, 100.0
 view_scale = 1.0
-fps = 20
-traj_frac = 25  # 4% of points
+fps = 1
+traj_frac = 10 # 4% of points
 traj_length = 15
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 def_pix = torch.tensor(
-    np.stack(np.meshgrid(np.arange(w) + 0.5, np.arange(h) + 0.5, 1), -1).reshape(-1, 3)).cuda().float()
-pix_ones = torch.ones(h * w, 1).cuda().float()
+    np.stack(np.meshgrid(np.arange(w) + 0.5, np.arange(h) + 0.5, 1), -1).reshape(-1, 3)).to(device).float()
+pix_ones = torch.ones(h * w, 1).to(device).float()
 
 
 def init_camera(y_angle=0., center_dist=2.4, cam_height=1.3, f_ratio=0.82):
@@ -145,7 +149,7 @@ def _preprocess_depth(depth: np.ndarray, desired_width, desired_height, png_dept
 
 def load_scene_data(config, results_dir):
     params = dict(np.load(f"{results_dir}/params.npz"))
-    params = {k: torch.tensor(v).cuda().float() for k, v in params.items()}
+    params = {k: torch.tensor(v).to(device).float() for k, v in params.items()}
     return params, params['moving'], params['timestep'], params['intrinsics'], params['w2c']
 
 
@@ -162,31 +166,36 @@ def make_lineset(all_pts, cols, num_lines):
     return linesets
 
 
-def calculate_trajectories(scene_data, is_mov):
-    in_pts = [data['means3D'][is_mov][::traj_frac].contiguous().float().cpu().numpy() for data in scene_data]
-    num_lines = len(in_pts[0])
-    cols = np.repeat(colormap[np.arange(len(in_pts[0])) % len(colormap)][None], traj_length, 0).reshape(-1, 3)
+def calculate_trajectories(params, is_mov):
+    idxs = random.sample(list(range(params['means3D'][is_mov.bool()].shape[0])), traj_frac)
+    in_pts = params['means3D'][is_mov.bool()][idxs, :, :].contiguous().float().cpu().numpy()
+    num_lines = traj_frac
+    cols = np.repeat(colormap[np.arange(num_lines) % len(colormap)][None], traj_length, 0).reshape(-1, 3)
     out_pts = []
-    for t in range(len(in_pts))[traj_length:]:
-        out_pts.append(np.array(in_pts[t - traj_length:t + 1]).reshape(-1, 3))
+    for t in range(in_pts.shape[2])[traj_length:]:
+        out_pts.append(np.array(in_pts[:, :, t - traj_length:t + 1]).transpose(2, 0, 1).reshape(-1, 3))
+    
     return make_lineset(out_pts, cols, num_lines)
 
 
 def calculate_rot_vec(scene_data, is_mov):
-    in_pts = [data['means3D'][is_mov][::traj_frac].contiguous().float().cpu().numpy() for data in scene_data]
-    in_rotation = [data['rotations'][is_mov][::traj_frac] for data in scene_data]
-    num_lines = len(in_pts[0])
+    in_pts = params['means3D'][is_mov.bool()][:traj_frac, :, :].contiguous().float().cpu().numpy()
+    in_rotation = params['unnorm_rotations'][is_mov.bool()]
+    for t in range(in_rotation.shape[2]):
+        in_rotation[:, :, t] = normalize_quat(in_rotation[:, :, t])
+    in_rotation = params['unnorm_rotations'][is_mov.bool()][:traj_frac, :, :].contiguous().float().cpu().numpy()
+    num_lines = traj_frac
     cols = colormap[np.arange(num_lines) % len(colormap)]
-    inv_init_q = deepcopy(in_rotation[0])
+    inv_init_q = deepcopy(in_rotation[:, : 0])
     inv_init_q[:, 1:] = -1 * inv_init_q[:, 1:]
     inv_init_q = inv_init_q / (inv_init_q ** 2).sum(-1)[:, None]
     init_vec = np.array([-0.1, 0, 0])
     out_pts = []
-    for t in range(len(in_pts)):
+    for t in range(in_pts.shape[2]):
         cam_rel_qs = quat_mult(in_rotation[t], inv_init_q)
         rot = build_rotation(cam_rel_qs).cpu().numpy()
         vec = (rot @ init_vec[None, :, None]).squeeze()
-        out_pts.append(np.concatenate((in_pts[t] + vec, in_pts[t]), 0))
+        out_pts.append(np.concatenate((in_pts[:, :, t] + vec, in_pts[:, :, t]), 0))
     return make_lineset(out_pts, cols, num_lines)
 
 
@@ -212,8 +221,8 @@ def render(w2c, k, params, moving_mask, first_occurance, iter_time_idx):
 def rgbd2pcd(im, depth, w2c, k, show_depth=False, project_to_cam_w_scale=None):
     d_near = 1.5
     d_far = 6
-    invk = torch.inverse(torch.tensor(k).cuda().float())
-    c2w = torch.inverse(torch.tensor(w2c).cuda().float())
+    invk = torch.inverse(torch.tensor(k).to(device).float())
+    c2w = torch.inverse(torch.tensor(w2c).to(device).float())
     radial_depth = depth[0].reshape(-1)
     def_rays = (invk @ def_pix.T).T
     def_radial_rays = def_rays / torch.linalg.norm(def_rays, ord=2, dim=-1)[:, None]
@@ -242,11 +251,13 @@ def visualize(config, results_dir):
         visible=True)
 
     if os.path.isfile(f"{results_dir}/rendered_for_traj_vis/0_im.npz"):
-        im = np.load(f"{results_dir}/rendered_for_traj_vis/0_im.npz", im.cpu().numpy())
-        depth = np.load(f"{results_dir}/rendered_for_traj_vis/0_depth.npz", depth.cpu().numpy())
+        print(np.load(f"{results_dir}/rendered_for_traj_vis/0_im.npz"))
+        im = torch.from_numpy(np.load(f"{results_dir}/rendered_for_traj_vis/0_im.npz")['arr_0']).to(device)
+        depth = torch.from_numpy(np.load(f"{results_dir}/rendered_for_traj_vis/0_depth.npz")['arr_0']).to(device)
     else:
         im, depth = render(w2c, k, params, moving_mask, first_occurance, iter_time_idx=0)
     init_pts, init_cols = rgbd2pcd(im, depth, w2c, k, show_depth=(RENDER_MODE == 'depth'))
+    
     pcd = o3d.geometry.PointCloud()
     pcd.points = init_pts
     pcd.colors = init_cols
@@ -277,6 +288,7 @@ def visualize(config, results_dir):
 
     render_options = vis.get_render_option()
     render_options.point_size = view_scale
+    render_options.line_width = 50
     render_options.light_on = False
 
     start_time = time.time()
@@ -305,11 +317,11 @@ def visualize(config, results_dir):
 
         if RENDER_MODE == 'centers':
             pts = o3d.utility.Vector3dVector(params['means3D'][:, :, iter_time_idx].contiguous().double().cpu().numpy())
-            cols = o3d.utility.Vector3dVector(params['colors_precomp'].contiguous().double().cpu().numpy())
+            cols = o3d.utility.Vector3dVector(params['rgb_colors'].contiguous().double().cpu().numpy())
         else:
             if os.path.isfile(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz"):
-                im = np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz", im.cpu().numpy())
-                depth = np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_depth.npz", depth.cpu().numpy())
+                im = torch.from_numpy(np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_im.npz")['arr_0']).to(device)
+                depth = torch.from_numpy(np.load(f"{results_dir}/rendered_for_traj_vis/{iter_time_idx}_depth.npz")['arr_0']).to(device)
             else:
                 im, depth = render(w2c, k, params, moving_mask, first_occurance, iter_time_idx)
             pts, cols = rgbd2pcd(im, depth, w2c, k, show_depth=(RENDER_MODE == 'depth'))
@@ -369,6 +381,7 @@ if __name__ == "__main__":
     if not experiment.config['load_checkpoint']:
         os.makedirs(results_dir, exist_ok=True)
         shutil.copy(args.experiment, os.path.join(results_dir, "config.py"))
+    visualize(experiment.config, results_dir)
     try:
         visualize(experiment.config, results_dir)
     except:

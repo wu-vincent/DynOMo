@@ -1,5 +1,9 @@
 import torch
-from diff_gaussian_rasterization import GaussianRasterizationSettings as Camera
+try:
+    from diff_gaussian_rasterization import GaussianRasterizationSettings as Camera
+except:
+    pass
+
 
 def setup_camera(w, h, k, w2c, near=0.01, far=100):
     fx, fy, cx, cy = k[0][0], k[1][1], k[0][2], k[1][2]
