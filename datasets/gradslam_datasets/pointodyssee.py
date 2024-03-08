@@ -6,11 +6,12 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import torch
 from natsort import natsorted
+import imageio
 
 from .replica import ReplicaDataset
 
 
-class SyntheticDynoSplatamDataset(ReplicaDataset):
+class PointOdysseeDynoSplatamDataset(ReplicaDataset):
     def __init__(
         self,
         config_dict,
@@ -28,6 +29,11 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
     ):
         self.input_folder = os.path.join(basedir, sequence)
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
+
+        self.anno = np.load(f'{self.input_folder}/anno.npz')
+
+        self.intrinsics = self.anno['intrinsics'][0]
+
         super().__init__(config_dict,
             basedir,
             sequence,
@@ -39,6 +45,7 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
             load_embeddings=load_embeddings,
             embedding_dir=embedding_dir,
             embedding_dim=embedding_dim,
+            precomp_intrinsics=True,
             **kwargs,
         )
         self.instseg_paths = self.get_instsegpaths()
@@ -48,28 +55,25 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
             self.embeddings = np.load(embedding_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/masks/mask_*.png"))
         return instseg_paths
     
+    def _load_instseg(self, instseg_path):
+        instseg = np.asarray(imageio.imread(instseg_path), dtype=np.int64)
+        instseg = np.dot(instseg, [0.2989, 0.5870, 0.1140])
+        instseg = np.round(instseg).astype(np.uint8)
+        return np.round(instseg).astype(np.uint8)
+
     def read_embedding_from_file(self, idx):
         return self.embeddings[idx]
-
-    def _load_instseg(self, instseg_path):
-        return np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.depth.png"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/rgbs/rgb_*.jpg"))
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depths/depth_*.png"))
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = natsorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
         return color_paths, depth_paths, embedding_paths
 
     def load_poses(self):
-        poses = []
-        for i in range(self.num_imgs):
-            # c2w[:3, 1] *= -1
-            # c2w[:3, 2] *= -1
-            c2w = torch.eye(4).float()
-            poses.append(c2w)
-        return poses
+        return [torch.from_numpy(p) for p in self.anno['extrinsics']]

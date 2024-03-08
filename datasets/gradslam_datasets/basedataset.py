@@ -122,6 +122,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         embedding_dim: int = 512,
         relative_pose: bool = True,  # If True, the pose is relative to the first frame
         load_instseg: bool = False,
+        precomp_intrinsics: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -129,12 +130,16 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.device = device
         self.png_depth_scale = config_dict["camera_params"]["png_depth_scale"]
 
-        self.orig_height = config_dict["camera_params"]["image_height"]
-        self.orig_width = config_dict["camera_params"]["image_width"]
-        self.fx = config_dict["camera_params"]["fx"]
-        self.fy = config_dict["camera_params"]["fy"]
-        self.cx = config_dict["camera_params"]["cx"]
-        self.cy = config_dict["camera_params"]["cy"]
+        if not precomp_intrinsics:
+            self.orig_height = config_dict["camera_params"]["image_height"]
+            self.orig_width = config_dict["camera_params"]["image_width"]
+            self.fx = config_dict["camera_params"]["fx"]
+            self.fy = config_dict["camera_params"]["fy"]
+            self.cx = config_dict["camera_params"]["cx"]
+            self.cy = config_dict["camera_params"]["cy"]
+        else:
+            self.orig_height = self.intrinsics[0, 2] * 2
+            self.orig_width = self.intrinsics[1, 2] * 2
 
         self.dtype = dtype
 
@@ -199,6 +204,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
+        
+        self.precomp_intrinsics = precomp_intrinsics
 
     def __len__(self):
         return self.num_imgs
@@ -316,7 +323,11 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
 
-        K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        if not self.precomp_intrinsics:
+            K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        else:
+            K = self.intrinsics
+
         if self.distortion is not None:
             # undistortion is only applied on color image, not depth!
             color = cv2.undistort(color, K, self.distortion)
@@ -347,8 +358,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
             embedding = self.read_embedding_from_file(index)
             # load and downsample to rgb size
-            instseg_path = self.instseg_paths[index]
-            instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+            instseg = self._load_instseg(self.instseg_paths[index])
             instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
             # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
             return (
@@ -365,8 +375,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             trans = torchvision.transforms.Resize(
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
             # load and downsample to rgb size
-            instseg_path = self.instseg_paths[index]
-            instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+            instseg = self._load_instseg(self.instseg_paths[index])
             instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
             # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
             return (
