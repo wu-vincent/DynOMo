@@ -195,7 +195,7 @@ def get_depth_and_silhouette_and_instseg(pts_3D, w2c, instseg):
     
     return depth_silhouette
 
-def get_instsegmoving(tensor_shape, instseg, moving):
+def get_instsegmoving(tensor_shape, instseg, moving, mov_thresh):
     """
     Function to compute depth and silhouette for each gaussian.
     These are evaluated at gaussian center.
@@ -203,7 +203,7 @@ def get_instsegmoving(tensor_shape, instseg, moving):
     # Depth and Silhouette
     depth_silhouette = torch.zeros((tensor_shape, 3)).cuda().float()
     depth_silhouette[:, 0] = 1.0
-    depth_silhouette[:, 1] = moving.squeeze()
+    depth_silhouette[:, 1] = (moving > mov_thresh).float().squeeze()
     depth_silhouette[:, 2] = instseg.squeeze()
     return depth_silhouette
 
@@ -242,8 +242,10 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx):
     }
     return rendervar
 
-def mask_timestamp(rendervar, timestamp, variables):
-    time_mask = variables['timestep'] <= timestamp
+def mask_timestamp(rendervar, timestamp, first_occurance, moving_mask=None):
+    time_mask = first_occurance <= timestamp
+    if moving_mask is not None:
+        time_mask = time_mask & moving_mask
     masked_rendervar = dict()
     for k, v in rendervar.items():
         masked_rendervar[k] = v[time_mask]
@@ -286,7 +288,7 @@ def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians, t
     }
     return rendervar
 
-def transformed_params2instsegmov(params, w2c, transformed_gaussians, time_idx, variables):
+def transformed_params2instsegmov(params, w2c, transformed_gaussians, time_idx, variables, mov_thresh):
     # Check if Gaussians are Isotropic
     if params['log_scales'].shape[1] == 1:
         log_scales = torch.tile(params['log_scales'], (1, 3))
@@ -295,7 +297,7 @@ def transformed_params2instsegmov(params, w2c, transformed_gaussians, time_idx, 
     # Initialize Render Variables
     rendervar = {
         'means3D': transformed_gaussians['means3D'],
-        'colors_precomp': get_instsegmoving(transformed_gaussians['means3D'].shape[0], params['instseg'], variables['moving']),
+        'colors_precomp': get_instsegmoving(transformed_gaussians['means3D'].shape[0], params['instseg'], variables['moving'], mov_thresh),
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
@@ -397,8 +399,6 @@ def get_hook(should_be_disabled):
     def hook(grad):
         grad = grad.clone() # NEVER change the given grad inplace
         # Assumes 1D but can be generalized
-        for i in grad.size(0):
-            if should_be_disabled[i]:
-                grad[i] = 0
+        grad[should_be_disabled, :] = 0
         return grad
     return hook

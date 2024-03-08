@@ -446,7 +446,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
          eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
          dyno_variables=None, variables=None, save_pc=False, mask_sil_vis=False,
-         save_videos=False, mov_thresh=0.005):
+         save_videos=False, mov_thresh=0.0005):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -514,14 +514,17 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
 
         # Initialize Render Variables
+        moving_mask = variables['moving'] > mov_thresh
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
-        rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables)
+        rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
+
         depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
                                                                         transformed_gaussians, time_idx)
-        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables)
+        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables['timestep'])
+
         seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
-                                                        transformed_gaussians, time_idx, variables)
-        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables)
+                                                        transformed_gaussians, time_idx, variables, mov_thresh)
+        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables['timestep'])
 
         # Moving Gaussians
         instseg_mov, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
