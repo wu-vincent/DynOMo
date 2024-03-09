@@ -55,7 +55,7 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch_scatter import scatter_mean
 from utils.average_quat import averageQuaternions
 import open3d as o3d
-from utils.dyno_helpers import intersect_and_union
+from utils.dyno_helpers import intersect_and_union, get_assignments
 import imageio
 
 # Make deterministic
@@ -520,11 +520,11 @@ class RBDG_SLAMMER():
         
         # RGB Loss
         # if (cam_tracking) and (use_sil_for_loss or ignore_outlier_depth_loss):
-        if (cam_tracking or obj_tracking) and (config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']):
+        if (cam_tracking) and (config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']):
             color_mask = torch.tile(mask, (3, 1, 1))
             color_mask = color_mask.detach()
             losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].mean()
-        elif cam_tracking or obj_tracking:
+        elif cam_tracking:
             losses['im'] = torch.abs(curr_data['im'] - im).mean()
         else:
             losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (
@@ -668,13 +668,29 @@ class RBDG_SLAMMER():
 
         return params, dyno_mask, variables
 
-    def add_new_gaussians(self, curr_data, sil_thres, 
-                        time_idx, mean_sq_dist_method, gaussian_distribution):
+    def add_new_gaussians(
+            self,
+            curr_data,
+            sil_thres, 
+            time_idx,
+            mean_sq_dist_method,
+            gaussian_distribution,
+            prev_instseg):
+        # get correnspondance between segments
+        # os.makedirs('instseg_test', exist_ok=True)
+        # print(curr_data['instseg'].shape)
+        curr_data['instseg'] = get_assignments(prev_instseg, curr_data['instseg'])
+        # print(curr_data['instseg'].shape)
+        # quit()
         # Silhouette Rendering
         transformed_gaussians = transform_to_frame(self.params, time_idx, gaussians_grad=False, camera_grad=False)
         depth_sil_rendervar = transformed_params2depthplussilhouette(self.params, curr_data['w2c'],
                                                                     transformed_gaussians, time_idx)
+        seg_rendervar = transformed_params2instsegmov(self.params, curr_data['w2c'],
+                                                        transformed_gaussians, time_idx, self.variables, self.config['mov_thresh'])
         depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
+        instseg, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
+
         silhouette = depth_sil[1, :, :]
         non_presence_sil_mask = (silhouette < sil_thres)
         # Check for new foreground objects by using GT depth
@@ -747,14 +763,11 @@ class RBDG_SLAMMER():
                 self.params['cam_unnorm_rots'][..., curr_time_idx] = self.params['cam_unnorm_rots'][..., curr_time_idx-1].detach()
                 self.params['cam_trans'][..., curr_time_idx] = self.params['cam_trans'][..., curr_time_idx-1].detach()
 
-    def make_gaussians_static(self, curr_time_idx):
+    def make_gaussians_static(self, curr_time_idx, delta_rot, delta_tran):
         mask = (curr_time_idx - self.variables['timestep'] == 2).squeeze()
         with torch.no_grad():
-            prev_tran1 = self.params['means3D'][mask, :, curr_time_idx-1]
-            prev_tran2 = self.params['means3D'][mask, :, curr_time_idx-2]
-            new_tran = prev_tran1 - prev_tran2
-            if new_tran.shape[0]:
-                mean_trans = scatter_mean(new_tran, self.params['instseg'][mask].long(), dim=0)
+            if delta_tran[mask].shape[0]:
+                mean_trans = scatter_mean(delta_tran, self.params['instseg'].long(), dim=0)
                 mean_trans = torch.linalg.norm(mean_trans, dim=1)
                 self.variables['moving'][mask] = mean_trans[self.params['instseg'][mask].long()]
     
@@ -775,44 +788,45 @@ class RBDG_SLAMMER():
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
 
         # for all other timestamps moving
-        mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
-        if self.config['moving_mask'] and curr_time_idx > 1:
-            mask = mask & (self.variables['moving'] > moving_forward_thresh)
         with torch.no_grad():
             if forward_prop:
-                # Initialize the camera pose for the current frame based on a constant velocity model
-                # Rotation
-                prev_rot1 = normalize_quat(self.params['unnorm_rotations'][mask, :, curr_time_idx-1].detach())
-                prev_rot2 = normalize_quat(self.params['unnorm_rotations'][mask, :, curr_time_idx-2].detach())
+                # Get detla rotation
+                prev_rot1 = normalize_quat(self.params['unnorm_rotations'][:, :, curr_time_idx-1].detach())
+                prev_rot2 = normalize_quat(self.params['unnorm_rotations'][:, :, curr_time_idx-2].detach())
                 prev_rot2_inv = prev_rot2
                 prev_rot2_inv[:, 1:] = -1 * prev_rot2_inv[:, 1:]
-                new_rot = quat_mult(quat_mult(prev_rot1, prev_rot2_inv), prev_rot1)
+                delta_rot = quat_mult(prev_rot1, prev_rot2_inv)
+
+                # Get delta translation
+                prev_tran1 = self.params['means3D'][:, :, curr_time_idx-1]
+                prev_tran2 = self.params['means3D'][:, :, curr_time_idx-2]
+                delta_tran = prev_tran1 - prev_tran2
+
+                # make Gaussians static
+                if self.config['moving_mask']:
+                    self.make_gaussians_static(curr_time_idx, delta_rot, delta_tran)
+                
+                # Get time mask 
+                mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
+
+                # add moving mask if to be used
+                if self.config['moving_mask'] and curr_time_idx > 1:
+                    mask = mask & (self.variables['moving'] > moving_forward_thresh)
+
+                # For moving objects set new rotation and translation
+                new_rot = quat_mult(delta_rot, prev_rot1)[mask]
                 new_rot = torch.nn.Parameter(new_rot.cuda().float().contiguous().requires_grad_(True))
                 self.params['unnorm_rotations'][mask, :, curr_time_idx] = new_rot
-
-                # Translation
-                prev_tran1 = self.params['means3D'][mask, :, curr_time_idx-1]
-                prev_tran2 = self.params['means3D'][mask, :, curr_time_idx-2]
-                new_tran = prev_tran1 + (prev_tran1 - prev_tran2)
+                new_tran = (prev_tran1 + delta_tran)[mask]
                 new_tran = torch.nn.Parameter(new_tran.cuda().float().contiguous().requires_grad_(True))
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
-        
-        # all other timestamps non moving
-        if self.config['moving_mask'] and curr_time_idx > 1:
-            mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
-            mask = mask & ~(self.variables['moving'] > moving_forward_thresh)
-            with torch.no_grad():
-                if forward_prop:
-                    # Initialize the camera pose for the current frame based on a constant velocity model
-                    # Rotation
-                    prev_rot1 = normalize_quat(self.params['unnorm_rotations'][mask, :, curr_time_idx-1].detach())
-                    new_rot = torch.nn.Parameter(prev_rot1.cuda().float().contiguous().requires_grad_(True))
-                    self.params['unnorm_rotations'][mask, :, curr_time_idx] = new_rot
 
-                    # Translation
-                    prev_tran1 = self.params['means3D'][mask, :, curr_time_idx-1]
-                    new_tran = torch.nn.Parameter(prev_tran1.cuda().float().contiguous().requires_grad_(True))
-                    self.params['means3D'][mask, :, curr_time_idx] = new_tran
+                # For static objects set new rotation and translation
+                if self.config['moving_mask'] and curr_time_idx > 1:
+                    mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
+                    mask = mask & ~(self.variables['moving'] > moving_forward_thresh)
+                    self.params['unnorm_rotations'][mask, :, curr_time_idx] = prev_rot1[mask]
+                    self.params['means3D'][mask, :, curr_time_idx] = prev_tran1[mask]
 
     def convert_params_to_store(self, params):
         params_to_store = {}
@@ -1203,10 +1217,6 @@ class RBDG_SLAMMER():
         else:
             tracking_curr_data = curr_data
 
-        # make Gaussians static
-        if self.config['moving_mask'] and time_idx >= 2:
-            self.make_gaussians_static(time_idx)
-
         # Optimization Iterations
         num_iters_mapping = self.config['mapping']['num_iters']
         
@@ -1276,6 +1286,7 @@ class RBDG_SLAMMER():
             candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
             candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
             current_min_loss = float(1e20)
+            best_time_idx = 0
 
             # Tracking Optimization
             iter = 0
@@ -1300,6 +1311,7 @@ class RBDG_SLAMMER():
                     # Save the best candidate rotation & translation
                     if loss < current_min_loss:
                         current_min_loss = loss
+                        best_iter = iter
                         candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
                         candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
 
@@ -1328,6 +1340,7 @@ class RBDG_SLAMMER():
             with torch.no_grad():
                 self.params['unnorm_rotations'][:, :, time_idx] = candidate_dyno_rot
                 self.params['means3D'][:, :, time_idx] = candidate_dyno_trans
+                print(f'Best candidate at iteration {best_iter}!')
 
         # Update the runtime numbers
         tracking_end_time = time.time()
@@ -1439,7 +1452,8 @@ class RBDG_SLAMMER():
         # Densification & KeyFrame-based Mapping
         if time_idx == 0 or (time_idx+1) % self.config['map_every'] == 0:
             # Densification
-            self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data)
+            print(time_idx)
+            self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, time_idx-1)
 
             # select keyframes for mapping
             selected_keyframes = self.select_keyframes(time_idx, keyframe_list, depth)
@@ -1476,8 +1490,9 @@ class RBDG_SLAMMER():
                 self.params['unnorm_rotations'][:, :, time_idx] = self.params['unnorm_rotations'][:, :, time_idx].detach()
                 self.params['means3D'][:, :, time_idx] = self.params['means3D'][:, :, time_idx].detach()
 
-    def densify(self, time_idx, curr_data, curr_gt_w2c, densify_curr_data):
+    def densify(self, time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, prev_time_idx):
         if self.config['mapping']['add_new_gaussians'] and time_idx > 1:
+            densify_prev_data = keyframe_list[prev_time_idx]
             # Setup Data for Densification
             if self.seperate_densification_res:
                 # Load RGBD frames incrementally instead of all frames
@@ -1496,8 +1511,11 @@ class RBDG_SLAMMER():
 
             # Add new Gaussians to the scene based on the Silhouette
             self.add_new_gaussians(densify_curr_data, 
-                                    self.config['mapping']['sil_thres'], time_idx,
-                                    self.config['mean_sq_dist_method'], self.config['gaussian_distribution'])
+                                    self.config['mapping']['sil_thres'],
+                                    time_idx,
+                                    self.config['mean_sq_dist_method'],
+                                    self.config['gaussian_distribution'],
+                                    densify_prev_data['instseg'])
 
             post_num_pts = self.params['means3D'].shape[0]
             if self.config['use_wandb']:
@@ -1614,6 +1632,7 @@ class RBDG_SLAMMER():
         # LOGGING
         if num_iters_mapping > 0:
             progress_bar.close()
+
         # Update the runtime numbers
         mapping_end_time = time.time()
         self.mapping_frame_time_sum += mapping_end_time - mapping_start_time

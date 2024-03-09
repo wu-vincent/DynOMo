@@ -517,6 +517,8 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         moving_mask = variables['moving'] > mov_thresh
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
         rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
+        if time_idx == 0:
+            time_mask_0 = time_mask
 
         depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
                                                                         transformed_gaussians, time_idx)
@@ -655,6 +657,12 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
                                  wandb_run=wandb_run, wandb_step=None, 
                                  wandb_title="Eval/Qual Viz")
 
+    # save pc of first and last step
+    pcd = o3d.geometry.PointCloud()
+    v3d = o3d.utility.Vector3dVector
+    pcd.points = v3d(final_params_time['means3D'][:, :, 0][time_mask_0].cpu().numpy())
+    o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(0)), pointcloud=pcd)
+                             
     pcd = o3d.geometry.PointCloud()
     v3d = o3d.utility.Vector3dVector
     pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
