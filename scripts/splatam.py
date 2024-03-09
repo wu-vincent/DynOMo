@@ -744,6 +744,8 @@ class RBDG_SLAMMER():
             if self.config["compute_normals"]:
                 self.variables['normals'] = torch.cat((self.variables['normals'], variables['normals']), dim=0)
             
+        return curr_data
+            
     def initialize_camera_pose(self, curr_time_idx, forward_prop):
         with torch.no_grad():
             if curr_time_idx > 1 and forward_prop:
@@ -771,7 +773,7 @@ class RBDG_SLAMMER():
                 mean_trans = torch.linalg.norm(mean_trans, dim=1)
                 self.variables['moving'][mask] = mean_trans[self.params['instseg'][mask].long()]
     
-    def initialize_time_poses(self, curr_time_idx, forward_prop=True, moving_forward_thresh=0.0):
+    def initialize_time_poses(self, curr_time_idx, forward_prop=True):
         # for timestamp 1
         mask = (curr_time_idx - self.variables['timestep'] == 1).squeeze()
         with torch.no_grad():
@@ -811,7 +813,7 @@ class RBDG_SLAMMER():
 
                 # add moving mask if to be used
                 if self.config['moving_mask'] and curr_time_idx > 1:
-                    mask = mask & (self.variables['moving'] > moving_forward_thresh)
+                    mask = mask & (self.variables['moving'] > self.moving_forward_thresh)
 
                 # For moving objects set new rotation and translation
                 new_rot = quat_mult(delta_rot, prev_rot1)[mask]
@@ -824,7 +826,7 @@ class RBDG_SLAMMER():
                 # For static objects set new rotation and translation
                 if self.config['moving_mask'] and curr_time_idx > 1:
                     mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
-                    mask = mask & ~(self.variables['moving'] > moving_forward_thresh)
+                    mask = mask & ~(self.variables['moving'] > self.moving_forward_thresh)
                     self.params['unnorm_rotations'][mask, :, curr_time_idx] = prev_rot1[mask]
                     self.params['means3D'][mask, :, curr_time_idx] = prev_tran1[mask]
 
@@ -1222,14 +1224,13 @@ class RBDG_SLAMMER():
         
         # Initialize the camera pose for the current frame in params
         if time_idx > 0:
+            self.moving_forward_thresh = self.variables['moving'].median() / 2 
             self.initialize_camera_pose(
                 time_idx, forward_prop=self.config['tracking']['forward_prop'])
 
-        self.initialize_time_poses(
-            time_idx,
-            moving_forward_thresh=self.config['mov_thresh'])
+        self.initialize_time_poses(time_idx)
     
-        self.densify_and_map(time_idx, curr_data, curr_gt_w2c, color, depth, instseg, embeddings,\
+        curr_data = self.densify_and_map(time_idx, curr_data, curr_gt_w2c, color, depth, instseg, embeddings,\
             keyframe_list, num_iters_mapping, gt_w2c_all_frames, densify_curr_data)
         
         # self.track_camera(time_idx, tracking_curr_data, iter_time_idx, curr_gt_w2c)
@@ -1255,7 +1256,7 @@ class RBDG_SLAMMER():
                 curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
                 curr_w2c[:3, 3] = curr_cam_tran
                 # Initialize Keyframe Info
-                curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 'depth': depth, 'instseg': instseg, 'embeddings': embeddings}
+                curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': curr_data['im'], 'depth': curr_data['depth'], 'instseg': curr_data['instseg'], 'embeddings': curr_data['embeddings']}
                 # Add to keyframe list
                 keyframe_list.append(curr_keyframe)
                 keyframe_time_indices.append(time_idx)
@@ -1453,7 +1454,7 @@ class RBDG_SLAMMER():
         if time_idx == 0 or (time_idx+1) % self.config['map_every'] == 0:
             # Densification
             print(time_idx)
-            self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, time_idx-1)
+            curr_data = self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, time_idx-1)
 
             # select keyframes for mapping
             selected_keyframes = self.select_keyframes(time_idx, keyframe_list, depth)
@@ -1489,6 +1490,8 @@ class RBDG_SLAMMER():
             with torch.no_grad():
                 self.params['unnorm_rotations'][:, :, time_idx] = self.params['unnorm_rotations'][:, :, time_idx].detach()
                 self.params['means3D'][:, :, time_idx] = self.params['means3D'][:, :, time_idx].detach()
+        
+        return curr_data
 
     def densify(self, time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, prev_time_idx):
         if self.config['mapping']['add_new_gaussians'] and time_idx > 1:
@@ -1510,7 +1513,7 @@ class RBDG_SLAMMER():
                 densify_curr_data = curr_data
 
             # Add new Gaussians to the scene based on the Silhouette
-            self.add_new_gaussians(densify_curr_data, 
+            curr_data = self.add_new_gaussians(densify_curr_data, 
                                     self.config['mapping']['sil_thres'],
                                     time_idx,
                                     self.config['mean_sq_dist_method'],
@@ -1521,6 +1524,7 @@ class RBDG_SLAMMER():
             if self.config['use_wandb']:
                 self.wandb_run.log({"Mapping/Number of Gaussians": post_num_pts,
                                 "Mapping/step": self.wandb_time_step})
+        return curr_data
         
     def select_keyframes(self, time_idx, keyframe_list, depth):
         with torch.no_grad():
