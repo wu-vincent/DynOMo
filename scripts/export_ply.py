@@ -17,7 +17,7 @@ def spherical_harmonic_to_rgb(sh):
     return sh*C0 + 0.5
 
 
-def save_ply(path, means, scales, rotations, rgbs, opacities, normals=None):
+def save_ply(path, means, scales, rotations, rgbs, opacities, normals=None, timestamp=1):
     if normals is None:
         normals = np.zeros_like(means)
 
@@ -59,14 +59,15 @@ if __name__ == "__main__":
     work_path = config['workdir']
     run_name = config['run_name']
     params_path = os.path.join(work_path, run_name, "params.npz")
+    os.makedirs(os.path.join(work_path, run_name, 'splats'), exist_ok=True)
 
-    params = dict(np.load(params_path, allow_pickle=True))
-    means = params['means3D']
-    scales = params['log_scales']
-    rotations = params['unnorm_rotations']
-    rgbs = params['rgb_colors']
-    opacities = params['logit_opacities']
+    for timestamp in range(config['data']['num_frames']):
+        params = dict(np.load(params_path, allow_pickle=True))
+        means = params['means3D'][:, :, timestamp]
+        scales = params['log_scales']
+        rotations = params['unnorm_rotations'][:, :, timestamp]
+        rgbs = params['rgb_colors']
+        opacities = params['logit_opacities']
 
-    ply_path = os.path.join(work_path, run_name, "splat.ply")
-
-    save_ply(ply_path, means, scales, rotations, rgbs, opacities)
+        ply_path = os.path.join(work_path, run_name, 'splats', f"splat_{timestamp}.ply")
+        save_ply(ply_path, means, scales, rotations, rgbs, opacities, timestamp=timestamp)

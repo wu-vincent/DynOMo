@@ -50,7 +50,7 @@ ADDITIONAL_LINES = 'trajectories'  # None, 'trajectories' or 'rotations'
 FORCE_LOOP = False  # False or True
 # FORCE_LOOP = True  # False or True
 
-w, h = 640, 360
+w, h = 640, 480
 near, far = 0.01, 100.0
 view_scale = 1.0
 fps = 1
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     if not experiment.config['load_checkpoint']:
         os.makedirs(results_dir, exist_ok=True)
         shutil.copy(args.experiment, os.path.join(results_dir, "config.py"))
-    visualize(experiment.config, results_dir)
+
     try:
         visualize(experiment.config, results_dir)
     except:

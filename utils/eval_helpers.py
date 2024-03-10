@@ -445,7 +445,7 @@ def param2tensor(param):
 def eval(dataset, final_params, num_frames, eval_dir, sil_thres, 
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
          eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
-         dyno_variables=None, variables=None, save_pc=False, mask_sil_vis=False,
+         dyno_variables=None, variables=None, save_pc=True, mask_sil_vis=False,
          save_videos=False, mov_thresh=0.0005):
     print("Evaluating Final Parameters ...")
     psnr_list = []
@@ -608,7 +608,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             rastered_sil_vis = torch.clamp(rastered_sil_vis , 0, 1)[0].detach().cpu().numpy()
             sil_colormap = (rastered_sil_vis * 255).astype(np.uint8)
             # moving
-            rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy() > mov_thresh
+            rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy() # > mov_thresh
+            smax, smin = rastered_moving_viz.max(), rastered_moving_viz.min()
+            normalized_instseg = np.clip((rastered_moving_viz - smin) / (smax - smin), 0, 1)
             moving_colormap = cv2.applyColorMap((rastered_moving_viz * 255).astype(np.uint8), cv2.COLORMAP_JET)
             cv2.imwrite(os.path.join(render_rgb_dir, "gs_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_render_im*255, cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
@@ -657,16 +659,17 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
                                  wandb_run=wandb_run, wandb_step=None, 
                                  wandb_title="Eval/Qual Viz")
 
-    # save pc of first and last step
-    pcd = o3d.geometry.PointCloud()
-    v3d = o3d.utility.Vector3dVector
-    pcd.points = v3d(final_params_time['means3D'][:, :, 0][time_mask_0].cpu().numpy())
-    o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(0)), pointcloud=pcd)
-                             
-    pcd = o3d.geometry.PointCloud()
-    v3d = o3d.utility.Vector3dVector
-    pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
-    o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
+    if not save_pc:
+        # save pc of first and last step
+        pcd = o3d.geometry.PointCloud()
+        v3d = o3d.utility.Vector3dVector
+        pcd.points = v3d(final_params_time['means3D'][:, :, 0][time_mask_0].cpu().numpy())
+        o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(0)), pointcloud=pcd)
+                                    
+        pcd = o3d.geometry.PointCloud()
+        v3d = o3d.utility.Vector3dVector
+        pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
+        o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
 
     if save_videos:
         for input_path in [render_rgb_dir, render_depth_dir, rgb_dir, depth_dir, pc_dir, render_instseg_dir, instseg_dir, render_sil_dir]:

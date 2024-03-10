@@ -55,7 +55,7 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch_scatter import scatter_mean
 from utils.average_quat import averageQuaternions
 import open3d as o3d
-from utils.dyno_helpers import intersect_and_union, get_assignments
+from utils.dyno_helpers import intersect_and_union2D, get_assignments2D, get_assignments3D
 import imageio
 
 # Make deterministic
@@ -147,10 +147,12 @@ class RBDG_SLAMMER():
             self.dynosplatam = False
         
         self.per_point_params = ['means3D', 'rgb_colors', 'unnorm_rotations', 'logit_opacities', 'log_scales', 'instseg']
+        self.mean_trans = None
+        self.seg_idxs = None
 
     def get_pointcloud(self, color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective",
-                   instseg=None, embeddings=None):
+                   instseg=None, embeddings=None, time_idx=0):
         width, height = color.shape[2], color.shape[1]
         CX = intrinsics[0][2]
         CY = intrinsics[1][2]
@@ -176,6 +178,15 @@ class RBDG_SLAMMER():
             pts = (c2w @ pts4.T).T[:, :3]
         else:
             pts = pts_cam
+        
+        if time_idx > 0 and self.config['assign_instseg'] == '3D':
+            shape = torch.permute(instseg, (1, 2, 0)).shape
+            instseg = get_assignments3D(
+                self.params['means3D'][:, :, time_idx-1],
+                pts,
+                self.params['instseg'].squeeze(),
+                torch.permute(instseg, (1, 2, 0)).reshape(-1, 1).squeeze())
+            instseg = torch.permute(instseg.reshape(shape), (2, 0, 1))
 
         # Compute mean squared distance for initializing the scale of the Gaussians
         if compute_mean_sq_dist:
@@ -211,11 +222,21 @@ class RBDG_SLAMMER():
             point_cld = point_cld[mask]
             if compute_mean_sq_dist:
                 mean3_sq_dist = mean3_sq_dist[mask]
+        
+        # filter small segments
+        if instseg is not None:
+            masekd_instseg = point_cld[:, 6]
+            uniques, counts = masekd_instseg.unique(return_counts=True)
+            mask_small_seg = torch.isin(masekd_instseg, uniques[counts>self.config['filter_small_segments']])
+            # instseg = instseg[mask_small_seg]
+            point_cld = point_cld[mask_small_seg]
+            if compute_mean_sq_dist:
+                mean3_sq_dist = mean3_sq_dist[mask_small_seg]
 
         if compute_mean_sq_dist:
-            return point_cld, mean3_sq_dist
+            return point_cld, mean3_sq_dist, instseg
         else:
-            return point_cld
+            return point_cld, instseg
 
     def initialize_params(self, init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution):
         num_pts = init_pt_cld.shape[0]
@@ -524,7 +545,7 @@ class RBDG_SLAMMER():
             color_mask = torch.tile(mask, (3, 1, 1))
             color_mask = color_mask.detach()
             losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].mean()
-        elif cam_tracking:
+        elif cam_tracking or obj_tracking:
             losses['im'] = torch.abs(curr_data['im'] - im).mean()
         else:
             losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (
@@ -534,10 +555,10 @@ class RBDG_SLAMMER():
         if config['use_seg_loss']:
             if config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']:
                 mask = mask.detach()
-                intersect, union, _, _  = intersect_and_union(curr_data['instseg'][mask], instseg[mask])
+                intersect, union, _, _  = intersect_and_union2D(curr_data['instseg'][mask], instseg[mask])
                 losses['instseg'] = (intersect/union).mean()
             else:
-                intersect, union, _, _  = intersect_and_union(curr_data['instseg'], instseg)
+                intersect, union, _, _  = intersect_and_union2D(curr_data['instseg'], instseg)
                 losses['instseg'] = intersect/union.mean()
         
         # EMBEDDING LOSS
@@ -677,11 +698,18 @@ class RBDG_SLAMMER():
             gaussian_distribution,
             prev_instseg):
         # get correnspondance between segments
-        # os.makedirs('instseg_test', exist_ok=True)
-        # print(curr_data['instseg'].shape)
-        curr_data['instseg'] = get_assignments(prev_instseg, curr_data['instseg'])
-        # print(curr_data['instseg'].shape)
-        # quit()
+        os.makedirs('instseg_test', exist_ok=True)
+        instseg_colormap = cv2.applyColorMap(prev_instseg.squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
+        cv2.imwrite(f'instseg_test/{time_idx}_prev.png', instseg_colormap)
+        instseg_colormap = cv2.applyColorMap(curr_data['instseg'].squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
+        cv2.imwrite(f'instseg_test/{time_idx}_curr.png', instseg_colormap)
+        # for s in torch.unique(curr_data['instseg']):
+        #     print(s, (curr_data['instseg'] == s).sum())
+        #     instseg_colormap = cv2.applyColorMap(((curr_data['instseg'] == s).long() * 255).squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
+        #     cv2.imwrite(f'instseg_test/{time_idx}_{s}_update.png', instseg_colormap)
+        if self.config['assign_instseg'] == '2D':
+            curr_data['instseg'] = get_assignments2D(prev_instseg, curr_data['instseg'])
+
         # Silhouette Rendering
         transformed_gaussians = transform_to_frame(self.params, time_idx, gaussians_grad=False, camera_grad=False)
         depth_sil_rendervar = transformed_params2depthplussilhouette(self.params, curr_data['w2c'],
@@ -722,9 +750,15 @@ class RBDG_SLAMMER():
             imageio.imwrite(
                 os.path.join(self.eval_dir, 'non_presence_mask', f'{time_idx}.png'),
                 non_presence_mask.reshape(shape).cpu().numpy().astype(np.uint8)*255)
-            new_pt_cld, mean3_sq_dist = self.get_pointcloud(curr_data['im'], curr_data['depth'], curr_data['intrinsics'], 
+            new_pt_cld, mean3_sq_dist, instseg = self.get_pointcloud(curr_data['im'], curr_data['depth'], curr_data['intrinsics'], 
                                         curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
-                                        mean_sq_dist_method=mean_sq_dist_method, instseg=curr_data['instseg'], embeddings=curr_data['embeddings'])
+                                        mean_sq_dist_method=mean_sq_dist_method, instseg=curr_data['instseg'], embeddings=curr_data['embeddings'], time_idx=time_idx)
+            
+            if self.config['assign_instseg'] == '3D':
+                curr_data['instseg'] = instseg.reshape(curr_data['instseg'].shape)
+                instseg_colormap = cv2.applyColorMap(curr_data['instseg'].squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
+                cv2.imwrite(f'instseg_test/{time_idx}_update.png', instseg_colormap)
+
             print(f"Added {new_pt_cld.shape[0]} Gaussians...")
             new_params, dyno_mask, variables = self.initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, time_idx)
             num_gaussians = new_params['means3D'].shape[0] + self.params['means3D'].shape[0]
@@ -769,9 +803,15 @@ class RBDG_SLAMMER():
         mask = (curr_time_idx - self.variables['timestep'] == 2).squeeze()
         with torch.no_grad():
             if delta_tran[mask].shape[0]:
+                if self.seg_idxs is None:
+                    self.seg_idxs = torch.unique(self.params['instseg'].long())
                 mean_trans = scatter_mean(delta_tran, self.params['instseg'].long(), dim=0)
                 mean_trans = torch.linalg.norm(mean_trans, dim=1)
-                self.variables['moving'][mask] = mean_trans[self.params['instseg'][mask].long()]
+                if self.mean_trans is not None:
+                    mean_trans[self.seg_idxs] = self.mean_trans[self.seg_idxs]
+                    self.seg_idxs = torch.unique(self.params['instseg'].long())
+                self.mean_trans = mean_trans
+                self.variables['moving'][mask] = self.mean_trans[self.params['instseg'][mask].long()]
     
     def initialize_time_poses(self, curr_time_idx, forward_prop=True):
         # for timestamp 1
@@ -880,7 +920,7 @@ class RBDG_SLAMMER():
         # Get Initial Point Cloud (PyTorch CUDA Tensor)
         mask = (depth > 0) # Mask out invalid depth values
         mask = mask.reshape(-1)
-        init_pt_cld, mean3_sq_dist = self.get_pointcloud(color, depth, self.densify_intrinsics, w2c, 
+        init_pt_cld, mean3_sq_dist, _ = self.get_pointcloud(color, depth, self.densify_intrinsics, w2c, 
                                                     mask=mask, compute_mean_sq_dist=True, 
                                                     mean_sq_dist_method=mean_sq_dist_method,
                                                     instseg=instseg, embeddings=embeddings)
@@ -1224,7 +1264,7 @@ class RBDG_SLAMMER():
         
         # Initialize the camera pose for the current frame in params
         if time_idx > 0:
-            self.moving_forward_thresh = self.variables['moving'].median() / 2 
+            self.moving_forward_thresh = self.variables['moving'].median() / 4
             self.initialize_camera_pose(
                 time_idx, forward_prop=self.config['tracking']['forward_prop'])
 
@@ -1453,7 +1493,6 @@ class RBDG_SLAMMER():
         # Densification & KeyFrame-based Mapping
         if time_idx == 0 or (time_idx+1) % self.config['map_every'] == 0:
             # Densification
-            print(time_idx)
             curr_data = self.densify(time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, time_idx-1)
 
             # select keyframes for mapping

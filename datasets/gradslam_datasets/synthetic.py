@@ -48,14 +48,17 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
             self.embeddings = np.load(embedding_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
         return instseg_paths
     
     def read_embedding_from_file(self, idx):
         return self.embeddings[idx]
 
     def _load_instseg(self, instseg_path):
-        return np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+        instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+        return instseg
     
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))
