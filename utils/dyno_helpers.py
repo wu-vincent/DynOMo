@@ -1,6 +1,8 @@
 from lapsolver import solve_dense
 import torch
 import pytorch3d.loss
+import sklearn.cluster
+import numpy as np
 
 
 def intersect_and_union2D(pred1: torch.tensor, pred2: torch.tensor):
@@ -113,6 +115,7 @@ def get_assignments2D(pred1, pred2, method='hungarian'):
 
     return pred_new
 
+
 def get_assignments3D(pc1, pc2, instseg1, instseg2, method='hungarian', distance_measure_3D='chamfer'):
     instseg1 = instseg1.clone().detach()
     pc1 = pc1.clone().detach()
@@ -130,3 +133,16 @@ def get_assignments3D(pc1, pc2, instseg1, instseg2, method='hungarian', distance
 
     return instseg_new
 
+
+def dbscan_filter(pt_cloud, eps=0.5, min_samples=25):
+    instseg = pt_cloud[:, 6]
+    pts = pt_cloud[:, :3]
+    mask = torch.ones(instseg.shape[0], dtype=bool)
+    clustering_algo = sklearn.cluster.DBSCAN(eps=eps, min_samples=min_samples)
+    for s in torch.unique(instseg):
+        seg_pts = pts[instseg == s]
+        clustering = clustering_algo.fit(seg_pts.clone().detach().cpu().numpy())
+        labels = torch.from_numpy(clustering.labels_)
+        uniques, counts = labels.unique(return_counts=True)
+        print(uniques, counts)
+    quit()

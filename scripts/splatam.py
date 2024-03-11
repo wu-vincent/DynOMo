@@ -55,7 +55,7 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch_scatter import scatter_mean
 from utils.average_quat import averageQuaternions
 import open3d as o3d
-from utils.dyno_helpers import intersect_and_union2D, get_assignments2D, get_assignments3D
+from utils.dyno_helpers import intersect_and_union2D, get_assignments2D, get_assignments3D, dbscan_filter
 import imageio
 
 # Make deterministic
@@ -179,6 +179,12 @@ class RBDG_SLAMMER():
         else:
             pts = pts_cam
         
+        # filter background
+        if self.config['remove_background']:
+            background_mask = torch.permute(instseg == 255, (1, 2, 0)).reshape(-1, 1).squeeze()
+        else:
+            background_mask = torch.permute(torch.zeros_like(instseg, dtype=bool), (1, 2, 0)).reshape(-1, 1).squeeze()
+
         if time_idx > 0 and self.config['assign_instseg'] == '3D':
             shape = torch.permute(instseg, (1, 2, 0)).shape
             instseg = get_assignments3D(
@@ -208,6 +214,11 @@ class RBDG_SLAMMER():
                 point_cld = torch.cat((pts, cols, instseg), -1)
         else:
             point_cld = torch.cat((pts, cols), -1)
+                
+        if self.config['use_dbscan_filter']:
+            point_cld, dbscan_mask = dbscan_filter(point_cld)
+            if compute_mean_sq_dist:
+                mean3_sq_dist = mean3_sq_dist[dbscan_mask]
         
         if self.config["compute_normals"]:
             pcd = o3d.geometry.PointCloud()
@@ -219,9 +230,14 @@ class RBDG_SLAMMER():
 
         # Select points based on mask
         if mask is not None:
-            point_cld = point_cld[mask]
-            if compute_mean_sq_dist:
-                mean3_sq_dist = mean3_sq_dist[mask]
+            mask = mask & (~background_mask)
+        else:
+            mask = ~background_mask
+
+        # mask background points and incoming points
+        point_cld = point_cld[mask]
+        if compute_mean_sq_dist:
+            mean3_sq_dist = mean3_sq_dist[mask]
         
         # filter small segments
         if instseg is not None:
@@ -472,11 +488,13 @@ class RBDG_SLAMMER():
                                                 camera_grad=True)
         else:
             transformed_gaussians = transform_to_frame(params, iter_time_idx,
-                                                        gaussians_grad=True,
-                                                        camera_grad=False)
+                                                gaussians_grad=True,
+                                                camera_grad=False)
         
         if self.config['moving_mask'] and obj_tracking and config['mask_moving']:
             moving_mask = variables['moving'] > self.config['mov_thresh']
+        elif self.config['moving_mask'] and mapping and config['mask_moving']:
+            moving_mask = (variables['moving'] <= self.config['mov_thresh']) | (variables['timestep'] >= (iter_time_idx - 2))
         else:
             moving_mask = None
 
@@ -530,6 +548,9 @@ class RBDG_SLAMMER():
         
         if self.config['moving_mask'] and obj_tracking and config['mask_moving']:
             mask = mask & presence_moving_mask
+        elif self.config['moving_mask'] and mapping and config['mask_moving']:
+            # new_gaussians = variables['timestep'] >= iter_time_idx - 2
+            mask = mask & ~presence_moving_mask
 
         # Depth loss
         if config['use_l1']:
@@ -545,7 +566,7 @@ class RBDG_SLAMMER():
             color_mask = torch.tile(mask, (3, 1, 1))
             color_mask = color_mask.detach()
             losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].mean()
-        elif cam_tracking or obj_tracking:
+        elif cam_tracking or obj_tracking or mapping:
             losses['im'] = torch.abs(curr_data['im'] - im).mean()
         else:
             losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (
@@ -574,6 +595,10 @@ class RBDG_SLAMMER():
             index_time_mask = index_time_mask & (variables['moving'][variables["neighbor_indices"]] > self.config['mov_thresh'])
             sample_time_mask = sample_time_mask & (variables['moving'] > self.config['mov_thresh'])
 
+        if self.config['moving_mask'] and mapping and config['mask_moving'] and iter_time_idx >= 2:
+            index_time_mask = index_time_mask & ~((variables['moving'][variables["neighbor_indices"]] > self.config['mov_thresh']) | (variables['timestep'][variables["neighbor_indices"]] >= (iter_time_idx - 2)))
+            sample_time_mask = sample_time_mask & ~((variables['moving'] > self.config['mov_thresh']) | (variables['timestep'] >= (iter_time_idx - 2)))
+
         if config['dyno_losses'] and iter_time_idx>0:
             moving = variables['moving'][time_mask]
             # get relative rotation
@@ -592,9 +617,9 @@ class RBDG_SLAMMER():
                 variables["neighbor_weight"][index_time_mask])
 
             # mean translation within segment should be similar
-            dx = (params["means3D"][:, :, iter_time_idx] - prev_means)[sample_time_mask]
-            mean_trans = scatter_mean(dx.clone().detach(), self.params['instseg'][sample_time_mask].long(), dim=0)
-            losses['mean_dx'] = l2_loss_v2(mean_trans[self.params['instseg'][sample_time_mask].long()], dx)
+            # dx = (params["means3D"][:, :, iter_time_idx] - prev_means)[sample_time_mask]
+            # mean_trans = scatter_mean(dx.clone().detach(), self.params['instseg'][sample_time_mask].long(), dim=0)
+            # losses['mean_dx'] = l2_loss_v2(mean_trans[self.params['instseg'][sample_time_mask].long()], dx)
 
             # rigid body
             curr_means = transformed_gaussians["means3D"] # params["means3D"][:, :, iter_time_idx]
@@ -859,6 +884,8 @@ class RBDG_SLAMMER():
                 new_rot = quat_mult(delta_rot, prev_rot1)[mask]
                 new_rot = torch.nn.Parameter(new_rot.cuda().float().contiguous().requires_grad_(True))
                 self.params['unnorm_rotations'][mask, :, curr_time_idx] = new_rot
+                # self.params['unnorm_rotations'][mask, :, curr_time_idx] = prev_rot1[mask]
+
                 new_tran = (prev_tran1 + delta_tran)[mask]
                 new_tran = torch.nn.Parameter(new_tran.cuda().float().contiguous().requires_grad_(True))
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
@@ -1277,13 +1304,13 @@ class RBDG_SLAMMER():
         if self.dynosplatam and self.config['mode'] == 'static_dyno' and time_idx > 0 and self.config['tracking']['num_iters'] != 0:
             self.track_objects(time_idx, curr_data, iter_time_idx, curr_gt_w2c)
 
-        if time_idx == 0:
+        '''if time_idx == 0:
             self.config['tracking_obj']['loss_weights']['rgb_colors'] = 0
             self.config['tracking_obj']['loss_weights']['logit_opacities'] = 0
             self.config['tracking_obj']['loss_weights']['log_scales'] = 0
             self.config['mapping']['loss_weights']['rgb_colors'] = 0
             self.config['mapping']['loss_weights']['logit_opacities'] = 0
-            self.config['mapping']['loss_weights']['log_scales'] = 0
+            self.config['mapping']['loss_weights']['log_scales'] = 0'''
         
         # Add frame to keyframe list
         if ((time_idx == 0) or ((time_idx+1) % self.config['keyframe_every'] == 0) or \
@@ -1334,6 +1361,7 @@ class RBDG_SLAMMER():
             do_continue_slam = False
             num_iters_tracking = self.config['tracking']['num_iters']
             progress_bar = tqdm(range(num_iters_tracking), desc=f"Object Tracking Time Step: {time_idx}")
+
             while True:
                 iter_start_time = time.time()
                 # Loss for current frame
@@ -1342,7 +1370,7 @@ class RBDG_SLAMMER():
 
                 if self.config['use_wandb']:
                     # Report Loss
-                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, tracking=True)
+                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True)
                 # Backprop
                 loss.backward()
                 # Optimizer Update
@@ -1553,7 +1581,7 @@ class RBDG_SLAMMER():
 
             # Add new Gaussians to the scene based on the Silhouette
             curr_data = self.add_new_gaussians(densify_curr_data, 
-                                    self.config['mapping']['sil_thres'],
+                                    self.config['mapping']['sil_thres_gaussians'],
                                     time_idx,
                                     self.config['mean_sq_dist_method'],
                                     self.config['gaussian_distribution'],
@@ -1646,16 +1674,23 @@ class RBDG_SLAMMER():
                         self.wandb_run.log({"Mapping/Number of Gaussians - Densification": self.params['means3D'].shape[0],
                                         "Mapping/step": self.wandb_mapping_step})
 
-                if self.config['moving_mask'] and time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
-                    for k, p in self.params.items():
-                        if 'cam' in k:
-                            continue
-                        p.register_hook(get_hook(self.variables['moving'] > self.config['mov_thresh']))
-                    # print(f"In total {(self.variables['moving'] > self.config['mov_thresh']).sum()} Gaussians disabled")
+            if self.config['moving_mask'] and time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
+                for k, p in self.params.items():
+                    if 'cam' in k:
+                        continue
+                    p.register_hook(get_hook(self.variables['moving'] > self.config['mov_thresh']))
 
-                # Optimizer Update
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+            if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_old']:
+                for k, p in self.params.items():
+                    if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                        continue
+                    p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
+                
+            # Optimizer Update
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+            with torch.no_grad():
                 # Report Progress
                 if self.config['report_iter_progress']:
                     if self.config['use_wandb']:

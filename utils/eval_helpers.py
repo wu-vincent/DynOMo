@@ -104,16 +104,29 @@ def evaluate_ate(gt_traj, est_traj):
     return avg_trans_error
 
 
-def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False):
+def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False):
     # Update loss dict
     loss_dict = {'Loss': losses['loss'].item(),
                  'Image Loss': losses['im'].item(),
-                 'Depth Loss': losses['depth'].item(),}
+                 'Depth Loss': losses['depth'].item()}
+    if 'rot' in losses.keys():
+        moving_losses = {
+                 'Rotation Loss': losses['rot'].item(),
+                 'Rigid Loss': losses['rigid'].item(),
+                 'Isometry Loss': losses['iso'].item()}
+        loss_dict.update(moving_losses)
+        
     if tracking:
         tracking_loss_dict = {}
         for k, v in loss_dict.items():
             tracking_loss_dict[f"Per Iteration Tracking/{k}"] = v
         tracking_loss_dict['Per Iteration Tracking/step'] = wandb_step
+        wandb_run.log(tracking_loss_dict)
+    elif obj_tracking:
+        tracking_loss_dict = {}
+        for k, v in loss_dict.items():
+            tracking_loss_dict[f"Per Iteration Object Tracking/{k}"] = v
+        tracking_loss_dict['Per Iteration Object Tracking/step'] = wandb_step
         wandb_run.log(tracking_loss_dict)
     elif mapping:
         mapping_loss_dict = {}
@@ -514,7 +527,6 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
 
         # Initialize Render Variables
-        moving_mask = variables['moving'] > mov_thresh
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
         rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
         if time_idx == 0:
@@ -639,10 +651,23 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
 
         if save_pc:
+            _mask = time_mask & (variables['moving'] > mov_thresh)
+            print(final_params_time['means3D'][:, :, time_idx][_mask].shape)
+            pcd = o3d.geometry.PointCloud()
+            v3d = o3d.utility.Vector3dVector
+            pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
+            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_mov.xyz".format(time_idx)), pointcloud=pcd)
+            _mask = time_mask & (variables['moving'] <= mov_thresh)
+            print(final_params_time['means3D'][:, :, time_idx][_mask].shape)
+            pcd = o3d.geometry.PointCloud()
+            v3d = o3d.utility.Vector3dVector
+            pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
+            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_stat.xyz".format(time_idx)), pointcloud=pcd)
+            print(final_params_time['means3D'][:, :, time_idx][time_mask].shape)
             pcd = o3d.geometry.PointCloud()
             v3d = o3d.utility.Vector3dVector
             pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
-            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}.xyz".format(time_idx)), pointcloud=pcd)
+            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_all.xyz".format(time_idx)), pointcloud=pcd)
         
         # Plot the Ground Truth and Rasterized RGB & Depth, along with Silhouette
         fig_title = "Time Step: {}".format(time_idx)
