@@ -149,6 +149,8 @@ class RBDG_SLAMMER():
         self.per_point_params = ['means3D', 'rgb_colors', 'unnorm_rotations', 'logit_opacities', 'log_scales', 'instseg']
         self.mean_trans = None
         self.seg_idxs = None
+        self.moving_segs = None
+        self.static_segs = None
 
     def get_pointcloud(self, color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective",
@@ -491,22 +493,30 @@ class RBDG_SLAMMER():
                                                 gaussians_grad=True,
                                                 camera_grad=False)
         
-        if self.config['moving_mask'] and obj_tracking and config['mask_moving']:
-            moving_mask = variables['moving'] > self.config['mov_thresh']
-        elif self.config['moving_mask'] and mapping and config['mask_moving']:
-            moving_mask = (variables['moving'] <= self.config['mov_thresh']) | (variables['timestep'] >= (iter_time_idx - 2))
+        # print(self.moving_segs)
+        moving_segs = self.moving_segs if self.moving_segs is not None else torch.unique(params['instseg'])
+        # print(moving_segs, torch.unique(curr_data['instseg']))
+        moving_seg_mask = torch.isin(curr_data['instseg'], moving_segs)
+        # print(curr_data['instseg'][moving_seg_mask])
+        # quit()
+        if mapping:
+            cv2.imwrite(os.path.join("moving_seg_mask_{:04d}.png".format(iter_time_idx)), cv2.cvtColor((moving_seg_mask.cpu().numpy().astype(np.uint8)*255).squeeze(), cv2.COLOR_RGB2BGR))
+        if obj_tracking and config['mask_moving']:
+            moving_gauss_mask = variables['moving'] > self.moving_forward_thresh
+        elif mapping and config['mask_moving'] and iter_time_idx >= 2:
+            moving_gauss_mask = (variables['moving'] <= self.moving_forward_thresh) | (variables['timestep'] >= (iter_time_idx - 2))
         else:
-            moving_mask = None
-
+            moving_gauss_mask = None
+        
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(params, transformed_gaussians, iter_time_idx)
-        rendervar, time_mask = mask_timestamp(rendervar, iter_time_idx, variables['timestep'], moving_mask)
+        rendervar, time_mask = mask_timestamp(rendervar, iter_time_idx, variables['timestep'], moving_gauss_mask)
         depth_sil_rendervar = transformed_params2depthplussilhouette(params, curr_data['w2c'],
                                                                 transformed_gaussians, iter_time_idx)
-        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, iter_time_idx, variables['timestep'], moving_mask)
+        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, iter_time_idx, variables['timestep'], moving_gauss_mask)
         seg_rendervar = transformed_params2instsegmov(params, curr_data['w2c'],
-                                                        transformed_gaussians, iter_time_idx, variables, self.config['mov_thresh'])
-        seg_rendervar, _ = mask_timestamp(seg_rendervar, iter_time_idx, variables['timestep'], moving_mask)
+                                                        transformed_gaussians, iter_time_idx, variables, self.moving_forward_thresh)
+        seg_rendervar, _ = mask_timestamp(seg_rendervar, iter_time_idx, variables['timestep'], moving_gauss_mask)
 
         # RGB Rendering
         rendervar['means2D'].retain_grad()
@@ -520,7 +530,7 @@ class RBDG_SLAMMER():
         instseg, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
         moving = instseg[1, :, :]
         instseg = instseg[2, :, :]
-        presence_moving_mask = (moving > self.config['mov_thresh'])
+        moving_seg_mask = (moving > self.config['mov_thresh'])
         
         # silouette
         silhouette = depth_sil[1, :, :]
@@ -546,11 +556,10 @@ class RBDG_SLAMMER():
         if config['use_sil_for_loss']:
             mask = mask & presence_sil_mask
         
-        if self.config['moving_mask'] and obj_tracking and config['mask_moving']:
-            mask = mask & presence_moving_mask
-        elif self.config['moving_mask'] and mapping and config['mask_moving']:
-            # new_gaussians = variables['timestep'] >= iter_time_idx - 2
-            mask = mask & ~presence_moving_mask
+        if obj_tracking and config['mask_moving']:
+            mask = mask & moving_seg_mask
+        elif mapping and config['mask_moving'] and iter_time_idx >= 2:
+            mask = mask & ~moving_seg_mask
 
         # Depth loss
         if config['use_l1']:
@@ -561,12 +570,11 @@ class RBDG_SLAMMER():
                 losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].mean()
         
         # RGB Loss
-        # if (cam_tracking) and (use_sil_for_loss or ignore_outlier_depth_loss):
-        if (cam_tracking) and (config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']):
+        if (config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']) and not config['calc_ssmi']:
             color_mask = torch.tile(mask, (3, 1, 1))
             color_mask = color_mask.detach()
             losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].mean()
-        elif cam_tracking or obj_tracking or mapping:
+        elif not config['calc_ssmi']:
             losses['im'] = torch.abs(curr_data['im'] - im).mean()
         else:
             losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (
@@ -591,13 +599,13 @@ class RBDG_SLAMMER():
         # DYNO LOSSES
         index_time_mask = variables['timestep'][variables["neighbor_indices"]] <= iter_time_idx
         sample_time_mask = variables['timestep'] <= iter_time_idx 
-        if self.config['moving_mask'] and obj_tracking and config['mask_moving']:
-            index_time_mask = index_time_mask & (variables['moving'][variables["neighbor_indices"]] > self.config['mov_thresh'])
-            sample_time_mask = sample_time_mask & (variables['moving'] > self.config['mov_thresh'])
+        if obj_tracking and config['mask_moving']:
+            index_time_mask = index_time_mask & (variables['moving'][variables["neighbor_indices"]] > self.moving_forward_thresh)
+            sample_time_mask = sample_time_mask & (variables['moving'] > self.moving_forward_thresh)
 
-        if self.config['moving_mask'] and mapping and config['mask_moving'] and iter_time_idx >= 2:
-            index_time_mask = index_time_mask & ~((variables['moving'][variables["neighbor_indices"]] > self.config['mov_thresh']) | (variables['timestep'][variables["neighbor_indices"]] >= (iter_time_idx - 2)))
-            sample_time_mask = sample_time_mask & ~((variables['moving'] > self.config['mov_thresh']) | (variables['timestep'] >= (iter_time_idx - 2)))
+        if mapping and config['mask_moving'] and iter_time_idx >= 2:
+            index_time_mask = index_time_mask & ~((variables['moving'][variables["neighbor_indices"]] > self.moving_forward_thresh) | (variables['timestep'][variables["neighbor_indices"]] >= (iter_time_idx - 2)))
+            sample_time_mask = sample_time_mask & ~((variables['moving'] > self.moving_forward_thresh) | (variables['timestep'] >= (iter_time_idx - 2)))
 
         if config['dyno_losses'] and iter_time_idx>0:
             moving = variables['moving'][time_mask]
@@ -740,7 +748,7 @@ class RBDG_SLAMMER():
         depth_sil_rendervar = transformed_params2depthplussilhouette(self.params, curr_data['w2c'],
                                                                     transformed_gaussians, time_idx)
         seg_rendervar = transformed_params2instsegmov(self.params, curr_data['w2c'],
-                                                        transformed_gaussians, time_idx, self.variables, self.config['mov_thresh'])
+                                                        transformed_gaussians, time_idx, self.variables, self.moving_forward_thresh)
         depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
         instseg, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
 
@@ -837,6 +845,8 @@ class RBDG_SLAMMER():
                     self.seg_idxs = torch.unique(self.params['instseg'].long())
                 self.mean_trans = mean_trans
                 self.variables['moving'][mask] = self.mean_trans[self.params['instseg'][mask].long()]
+                self.moving_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] > self.moving_forward_thresh]
+                self.static_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] <= self.moving_forward_thresh]
     
     def initialize_time_poses(self, curr_time_idx, forward_prop=True):
         # for timestamp 1
@@ -870,14 +880,13 @@ class RBDG_SLAMMER():
                 delta_tran = prev_tran1 - prev_tran2
 
                 # make Gaussians static
-                if self.config['moving_mask']:
-                    self.make_gaussians_static(curr_time_idx, delta_rot, delta_tran)
+                self.make_gaussians_static(curr_time_idx, delta_rot, delta_tran)
                 
                 # Get time mask 
                 mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
 
                 # add moving mask if to be used
-                if self.config['moving_mask'] and curr_time_idx > 1:
+                if self.config['mov_static_init'] and curr_time_idx > 1:
                     mask = mask & (self.variables['moving'] > self.moving_forward_thresh)
 
                 # For moving objects set new rotation and translation
@@ -891,7 +900,7 @@ class RBDG_SLAMMER():
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
 
                 # For static objects set new rotation and translation
-                if self.config['moving_mask'] and curr_time_idx > 1:
+                if self.config['mov_static_init'] and curr_time_idx > 1:
                     mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
                     mask = mask & ~(self.variables['moving'] > self.moving_forward_thresh)
                     self.params['unnorm_rotations'][mask, :, curr_time_idx] = prev_rot1[mask]
@@ -1210,16 +1219,17 @@ class RBDG_SLAMMER():
 
         # Evaluate Final Parameters
         with torch.no_grad():
-            self.variables['moving'] = self.variables['moving'] > self.config['mov_thresh']
+            self.variables['moving'] = self.variables['moving'] > self.moving_forward_thresh
             if self.config['use_wandb']:
+                print(self.moving_forward_thresh, self.config['mov_thresh'])
                 eval(self.dataset, self.params, self.num_frames, self.eval_dir, sil_thres=self.config['mapping']['sil_thres'],
                     wandb_run=self.wandb_run, wandb_save_qual=self.config['wandb']['eval_save_qual'],
                     mapping_iters=self.config['mapping']['num_iters'], add_new_gaussians=self.config['mapping']['add_new_gaussians'],
-                    eval_every=self.config['eval_every'], dynosplatam=self.dynosplatam, variables=self.variables, mov_thresh=self.config['mov_thresh'])
+                    eval_every=self.config['eval_every'], dynosplatam=self.dynosplatam, variables=self.variables, mov_thresh=self.moving_forward_thresh)
             else:
                 eval(self.dataset, self.params, self.num_frames, self.eval_dir, sil_thres=self.config['mapping']['sil_thres'],
                     mapping_iters=self.config['mapping']['num_iters'], add_new_gaussians=self.config['mapping']['add_new_gaussians'],
-                    eval_every=self.config['eval_every'], dynosplatam=self.dynosplatam, variables=self.variables, mov_thresh=self.config['mov_thresh'])
+                    eval_every=self.config['eval_every'], dynosplatam=self.dynosplatam, variables=self.variables, mov_thresh=self.moving_forward_thresh)
 
         # Add Camera Parameters to Save them
         self.params['timestep'] = self.variables['timestep']
@@ -1291,9 +1301,12 @@ class RBDG_SLAMMER():
         
         # Initialize the camera pose for the current frame in params
         if time_idx > 0:
-            self.moving_forward_thresh = self.variables['moving'].median() / 4
+            self.moving_forward_thresh = self.config['mov_thresh'] # (self.variables['moving'].median() / 4).cpu().item()
+            print(self.variables['moving'].median())
             self.initialize_camera_pose(
                 time_idx, forward_prop=self.config['tracking']['forward_prop'])
+        else:
+            self.moving_forward_thresh = self.config['mov_thresh']
 
         self.initialize_time_poses(time_idx)
     
@@ -1346,7 +1359,7 @@ class RBDG_SLAMMER():
         # get instance segementation mask for Gaussians
         tracking_start_time = time.time()
 
-        if time_idx > 0 and not self.config['tracking']['use_gt_poses']:
+        if time_idx > 0 and not self.config['tracking']['use_gt_poses']:            
             # Reset Optimizer & Learning Rates for tracking
             optimizer = self.initialize_optimizer(self.params, self.config['tracking_obj']['lrs'], tracking=True)
 
@@ -1361,12 +1374,18 @@ class RBDG_SLAMMER():
             do_continue_slam = False
             num_iters_tracking = self.config['tracking']['num_iters']
             progress_bar = tqdm(range(num_iters_tracking), desc=f"Object Tracking Time Step: {time_idx}")
-
+            
             while True:
                 iter_start_time = time.time()
                 # Loss for current frame
                 loss, losses, self.variables = self.get_loss_dyno(self.params, self.variables, curr_data, iter_time_idx, \
                     cam_tracking=False, obj_tracking=True, mapping=False, iter=iter, config=self.config['tracking_obj'])
+                
+                if iter_time_idx >= 2 and self.config['tracking_obj']['disable_rgb_grads_old']:
+                    for k, p in self.params.items():
+                        if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                            continue
+                        p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
 
                 if self.config['use_wandb']:
                     # Report Loss
@@ -1619,7 +1638,7 @@ class RBDG_SLAMMER():
 
     def map(self, num_iters_mapping, time_idx, selected_keyframes, color, depth, instseg, embeddings, keyframe_list,\
             gt_w2c_all_frames, curr_data):
-        
+       
         optimizer = self.initialize_optimizer(self.params, self.config['mapping']['lrs'], tracking=False) 
         mapping_start_time = time.time()
 
@@ -1674,17 +1693,20 @@ class RBDG_SLAMMER():
                         self.wandb_run.log({"Mapping/Number of Gaussians - Densification": self.params['means3D'].shape[0],
                                         "Mapping/step": self.wandb_mapping_step})
 
-            if self.config['moving_mask'] and time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
+            if time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
                 for k, p in self.params.items():
                     if 'cam' in k:
                         continue
-                    p.register_hook(get_hook(self.variables['moving'] > self.config['mov_thresh']))
+                    p.register_hook(
+                        get_hook(
+                            (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
 
             if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_old']:
                 for k, p in self.params.items():
                     if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
                         continue
-                    p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
+                    p.register_hook(
+                        get_hook(self.variables['timestep'] != iter_time_idx))
                 
             # Optimizer Update
             optimizer.step()
