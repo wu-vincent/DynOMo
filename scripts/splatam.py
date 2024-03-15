@@ -936,10 +936,10 @@ class RBDG_SLAMMER():
                 new_tran = (prev_tran1 + delta_tran)[mask]
                 new_tran = torch.nn.Parameter(new_tran.cuda().float().contiguous().requires_grad_(True))
                 self.params['means3D'][mask, :, curr_time_idx] = new_tran
+                # self.params['means3D'][mask, :, curr_time_idx] = prev_tran1[mask]
 
                 # For static objects set new rotation and translation
                 if self.config['mov_static_init'] and curr_time_idx > 1:
-                    print("NOPE")
                     mask = (curr_time_idx - self.variables['timestep'] > 1).squeeze()
                     if self.config['use_rendered_moving']:
                         mask = mask & ~(self.params['moving'] > 0.5)
