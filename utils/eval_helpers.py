@@ -459,7 +459,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
          eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
          dyno_variables=None, variables=None, save_pc=True, mask_sil_vis=False,
-         save_videos=False, mov_thresh=0.0005):
+         save_videos=False, mov_thresh=0.0005, use_rendered_moving=False):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -526,6 +526,11 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         # Define current frame data
         curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
 
+        if use_rendered_moving:
+            moving = final_params_time['moving'] > 0.5
+        else:
+            moving = variables['moving'] > mov_thresh
+
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
         rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
@@ -537,7 +542,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables['timestep'])
 
         seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
-                                                        transformed_gaussians, time_idx, variables, mov_thresh)
+                                                        transformed_gaussians, time_idx, variables, moving)
         seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables['timestep'])
 
         # Moving Gaussians

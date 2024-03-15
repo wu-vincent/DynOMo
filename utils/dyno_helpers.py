@@ -44,14 +44,15 @@ def intersect_and_union3D(pred1: torch.tensor, pred2: torch.tensor):
 
     return intersect, union, area1, area2
 
-def chamfer_distance(pc1: torch.tensor, pc2: torch.tensor, instseg1, instseg2):
+def chamfer_distance(pc1: torch.tensor, pc2: torch.tensor, instseg1, instseg2, filtered_instseg2):
     num_p1 = torch.unique(instseg1).shape[0]
     num_p2 = torch.unique(instseg2).shape[0]
-    cd_dist = torch.zeros(num_p1, num_p2)
+    cd_dist = torch.ones(num_p1, num_p2) * 1000
     for i, p1 in enumerate(torch.unique(instseg1)):
         for j, p2 in enumerate(torch.unique(instseg2)):
-            cd_dist[i, j] = pytorch3d.loss.chamfer_distance(pc1[:, instseg1 == p1], pc2[:, instseg2 == p2])[0]
-
+            if p2 not in filtered_instseg2:
+                continue
+            cd_dist[i, j] = pytorch3d.loss.chamfer_distance(pc1[:, instseg1 == p1], pc2[:, instseg2 == p2], single_directional=False)[0]
     return cd_dist
 
 
@@ -79,18 +80,20 @@ def get_greedy_assignment(iou_dist, seg_ids):
     return assignments
 
 
-def get_hungarian_assignment(iou_dist, seg_ids):
-    assignments = torch.zeros(iou_dist.shape[1])
-    iou_dist[iou_dist > 0.8] = torch.nan
+def get_hungarian_assignment(iou_dist, seg_ids, seg_ids2=None, filtered_instseg2=None, thresh=0.8):
+    assignments = torch.ones(iou_dist.shape[1]) * - 1
+    iou_dist[iou_dist > thresh] = torch.nan
     row, col = solve_dense(iou_dist)
     row, col = row.tolist(), col.tolist()
     count = 0
-    combined = torch.cat((torch.arange(1, seg_ids.max()+1), seg_ids.cpu()))
+    combined = torch.cat((torch.arange(1, 255+1), seg_ids.cpu()))
     uniques, counts = combined.unique(return_counts=True)
     unused = uniques[counts == 1]
     unused = unused[torch.randperm(unused.shape[0])]
     for c in range(iou_dist.shape[1]):
-        r = torch.argmin(iou_dist[:, c])
+        if filtered_instseg2 is not None:
+            if seg_ids2[c] not in filtered_instseg2:
+                continue
         if c in col:
             assignments[c] = seg_ids[row[col.index(c)]]
         else:
@@ -116,21 +119,22 @@ def get_assignments2D(pred1, pred2, method='hungarian'):
     return pred_new
 
 
-def get_assignments3D(pc1, pc2, instseg1, instseg2, method='hungarian', distance_measure_3D='chamfer'):
+def get_assignments3D(pc1, pc2, instseg1, instseg2, filtered_instseg2, method='hungarian', distance_measure_3D='chamfer'):
     instseg1 = instseg1.clone().detach()
     pc1 = pc1.clone().detach()
     seg_ids = torch.unique(instseg1)
+    seg_ids_2 = torch.unique(instseg2)
     if distance_measure_3D == 'chamfer':
-        dist = chamfer_distance(pc1.unsqueeze(0), pc2.unsqueeze(0), instseg1, instseg2)
+        dist = chamfer_distance(pc1.unsqueeze(0), pc2.unsqueeze(0), instseg1, instseg2, filtered_instseg2)
     if method == 'greedy':
         assignments = get_greedy_assignment(dist, seg_ids)
     else:
-        assignments = get_hungarian_assignment(dist, seg_ids)
+        assignments = get_hungarian_assignment(dist, seg_ids, seg_ids_2, filtered_instseg2, thresh=40)
     instseg_new = torch.zeros_like(instseg2)
-    seg_ids_pred2 = torch.unique(instseg2)
-    for a, s in zip(assignments, seg_ids_pred2):
+    for a, s in zip(assignments, seg_ids_2):
+        if a == -1:
+            continue
         instseg_new[instseg2 == s] = a
-
     return instseg_new
 
 
@@ -144,5 +148,3 @@ def dbscan_filter(pt_cloud, eps=0.5, min_samples=25):
         clustering = clustering_algo.fit(seg_pts.clone().detach().cpu().numpy())
         labels = torch.from_numpy(clustering.labels_)
         uniques, counts = labels.unique(return_counts=True)
-        print(uniques, counts)
-    quit()
