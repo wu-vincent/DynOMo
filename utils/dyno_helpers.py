@@ -63,18 +63,23 @@ def get_masks(pred):
     return torch.stack(mask_dets)
 
 
-def get_greedy_assignment(iou_dist, seg_ids):
+def get_greedy_assignment(iou_dist, seg_ids, seg_ids2, filtered_instseg2, thresh=0.8):
     # greedy
-    col = list()
-    assignments = torch.zeros(iou_dist.shape[1])
-    count = 1
+    assignments = torch.ones(iou_dist.shape[1]) * - 1
+    count = 0
+    combined = torch.cat((torch.arange(1, 255+1), seg_ids.cpu()))
+    uniques, counts = combined.unique(return_counts=True)
+    unused = uniques[counts == 1]
+    unused = unused[torch.randperm(unused.shape[0])]
     for c in range(iou_dist.shape[1]):
+        if filtered_instseg2 is not None:
+            if seg_ids2[c] not in filtered_instseg2:
+                continue
         r = torch.argmin(iou_dist[:, c])
-        if iou_dist[r, c] < 0.8:
-            col.append(c)
+        if iou_dist[r, c] < thresh:
             assignments[c] = seg_ids[r]
         else:
-            assignments[c] = torch.max(seg_ids) + count
+            assignments[c] = unused[count]
             count += 1
         
     return assignments
@@ -103,14 +108,15 @@ def get_hungarian_assignment(iou_dist, seg_ids, seg_ids2=None, filtered_instseg2
     return assignments
 
 
-def get_assignments2D(pred1, pred2, method='hungarian'):
+def get_assignments2D(pred1, pred2, filtered_instseg2, method='hungarian'):
     seg_ids = torch.unique(pred1)
+    seg_ids_2 = torch.unique(pred2)
     intersect, union, _, _ = intersect_and_union2D(pred1.clone().detach(), pred2)
     dist = 1 - intersect/union
     if method == 'greedy':
         assignments = get_greedy_assignment(dist, seg_ids)
     else:
-        assignments = get_hungarian_assignment(dist, seg_ids)
+        assignments = get_hungarian_assignment(dist, seg_ids, seg_ids_2, filtered_instseg2)
     pred_new = torch.zeros_like(pred2)
     seg_ids_pred2 = torch.unique(pred2)
     for a, s in zip(assignments, seg_ids_pred2):
@@ -127,7 +133,7 @@ def get_assignments3D(pc1, pc2, instseg1, instseg2, filtered_instseg2, method='h
     if distance_measure_3D == 'chamfer':
         dist = chamfer_distance(pc1.unsqueeze(0), pc2.unsqueeze(0), instseg1, instseg2, filtered_instseg2)
     if method == 'greedy':
-        assignments = get_greedy_assignment(dist, seg_ids)
+        assignments = get_greedy_assignment(dist, seg_ids, seg_ids_2, filtered_instseg2, thresh=40)
     else:
         assignments = get_hungarian_assignment(dist, seg_ids, seg_ids_2, filtered_instseg2, thresh=40)
     instseg_new = torch.zeros_like(instseg2)

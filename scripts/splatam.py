@@ -154,7 +154,7 @@ class RBDG_SLAMMER():
 
     def get_pointcloud(self, color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective",
-                   instseg=None, embeddings=None, time_idx=0):
+                   instseg=None, embeddings=None, time_idx=0, prev_instseg=None):
 
         width, height = color.shape[2], color.shape[1]
         CX = intrinsics[0][2]
@@ -249,6 +249,14 @@ class RBDG_SLAMMER():
                 torch.unique(point_cld[:, 6][mask_small_seg]))
             point_cld[:, 6][mask_small_seg] = _instseg.squeeze()
             instseg[mask_small_seg, 0] = _instseg.squeeze()
+        elif time_idx > 0 and self.config['assign_instseg'] == '2D':
+            _instseg = get_assignments2D(
+                prev_instseg.flatten(),
+                instseg.flatten(),
+                torch.unique(point_cld[:, 6][mask_small_seg]))
+            instseg[mask_small_seg, 0] = _instseg.squeeze()
+            instseg_colormap = cv2.applyColorMap(instseg.squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
+            cv2.imwrite(f'instseg_test/{time_idx}_update.png', instseg_colormap)
         
         if instseg is not None:
             mask = mask & mask_small_seg
@@ -267,7 +275,7 @@ class RBDG_SLAMMER():
         num_pts = init_pt_cld.shape[0]
         means3D = init_pt_cld[:, :3] # [num_gaussians, 3]
         unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
-        logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
+        logit_opacities = torch.ones((num_pts, 1), dtype=torch.float, device="cuda")
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
         elif gaussian_distribution == "anisotropic":
@@ -333,7 +341,7 @@ class RBDG_SLAMMER():
         else: 
             instseg_mask = torch.ones_like(instseg_mask)
         self.variables = calculate_neighbors_seg(
-                self.params, self.variables, 0, instseg_mask, num_knn=20)
+                self.params, self.variables, 0, instseg_mask, num_knn=10)
         
     def initialize_optimizer(self, params, lrs_dict, tracking):
         lrs = lrs_dict
@@ -536,7 +544,7 @@ class RBDG_SLAMMER():
                                                         transformed_gaussians, iter_time_idx, variables, moving)
         seg_rendervar, _ = mask_timestamp(seg_rendervar, iter_time_idx, variables['timestep'], gaussians_to_use)
 
-        # RGB Rendering
+        # RGB    Rendering
         rendervar['means2D'].retain_grad()
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
         variables['means2D'][iter_time_idx] = rendervar['means2D']  # Gradient only accum from colour render for densification
@@ -620,8 +628,8 @@ class RBDG_SLAMMER():
 
         # ADD DYNO LOSSES LIKE RIGIDITY
         # DYNO LOSSES
-        index_time_mask = variables['timestep'][variables["neighbor_indices"]] <= iter_time_idx
-        sample_time_mask = variables['timestep'] <= iter_time_idx 
+        index_time_mask = variables['timestep'][variables["self_indices"]] <= iter_time_idx - 1
+        sample_time_mask = variables['timestep'] <= iter_time_idx  - 1
         if obj_tracking and config['mask_moving']:
             index_time_mask = index_time_mask & (moving[variables["neighbor_indices"]])
             sample_time_mask = sample_time_mask & (moving)
@@ -630,7 +638,7 @@ class RBDG_SLAMMER():
             index_time_mask = index_time_mask & ~(moving[variables["neighbor_indices"]] | (variables['timestep'][variables["neighbor_indices"]] >= (iter_time_idx - 2)))
             sample_time_mask = sample_time_mask & ~(moving | (variables['timestep'] >= (iter_time_idx - 2)))
 
-        if config['dyno_losses'] and iter_time_idx>0:
+        if config['dyno_losses'] and iter_time_idx >= 1:
             # get relative rotation
             prev_rot = params["unnorm_rotations"][:, :, iter_time_idx-1].clone().detach()
             prev_rot[:, 1:] = -1 * prev_rot[:, 1:]
@@ -693,7 +701,8 @@ class RBDG_SLAMMER():
         num_pts = new_pt_cld.shape[0]
         means3D = new_pt_cld[:, :3] # [num_gaussians, 3]
         unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
-        logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
+
+        logit_opacities = torch.ones((num_pts, 1), dtype=torch.float, device="cuda")
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
         elif gaussian_distribution == "anisotropic":
@@ -730,13 +739,6 @@ class RBDG_SLAMMER():
             variables['normals'] = new_pt_cld[:, 8:]
         elif self.config["compute_normals"]:
             variables['normals'] = new_pt_cld[:, 7:]
-
-        for k, v in params.items():
-            # Check if value is already a torch tensor
-            if not isinstance(v, torch.Tensor):
-                params[k] = torch.nn.Parameter(torch.tensor(v).cuda().float().contiguous().requires_grad_(True))
-            else:
-                params[k] = torch.nn.Parameter(v.cuda().float().contiguous().requires_grad_(True))
         
         instseg_mask = params["instseg"].long()
         if self.config['use_seg_for_nn']:
@@ -745,15 +747,20 @@ class RBDG_SLAMMER():
         else: 
             instseg_mask = torch.ones_like(instseg_mask)
             existing_instseg_mask = torch.ones_like(self.params['instseg'])
-        print(existing_instseg_mask.unique(return_counts=True))
-        print(instseg_mask.unique(return_counts=True))
-        variables = calculate_neighbors_seg(
-                params, variables, 0, instseg_mask, num_knn=20,
-                existing_params=self.params, existing_instseg_mask=existing_instseg_mask)
 
-        max_prev_idx = self.variables['self_indices'].max()
-        variables['self_indices'] += max_prev_idx
-        variables['neighbor_indices'] += max_prev_idx
+        variables = calculate_neighbors_seg(
+                params, variables, 0, instseg_mask, num_knn=10,
+                existing_params=self.params, existing_instseg_mask=existing_instseg_mask)
+        
+        # neighbor_opacities = self.params['logit_opacities'][variables]
+        # params['logit_opacities'] = scatter_mean(neighbor_opacities, variables['self_indices'])
+
+        for k, v in params.items():
+            # Check if value is already a torch tensor
+            if not isinstance(v, torch.Tensor):
+                params[k] = torch.nn.Parameter(torch.tensor(v).cuda().float().contiguous().requires_grad_(True))
+            else:
+                params[k] = torch.nn.Parameter(v.cuda().float().contiguous().requires_grad_(True))
 
         return params, dyno_mask, variables
 
@@ -771,15 +778,6 @@ class RBDG_SLAMMER():
         cv2.imwrite(f'instseg_test/{time_idx}_prev.png', instseg_colormap)
         instseg_colormap = cv2.applyColorMap(curr_data['instseg'].squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
         cv2.imwrite(f'instseg_test/{time_idx}_curr.png', instseg_colormap)
-        
-        # for s in torch.unique(curr_data['instseg']):
-        #     print(s, (curr_data['instseg'] == s).sum())
-        #     instseg_colormap = cv2.applyColorMap(((curr_data['instseg'] == s).long() * 255).squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
-        #     cv2.imwrite(f'instseg_test/{time_idx}_{s}_update.png', instseg_colormap)
-        if self.config['assign_instseg'] == '2D':
-            curr_data['instseg'] = get_assignments2D(prev_instseg, curr_data['instseg'])
-            instseg_colormap = cv2.applyColorMap(curr_data['instseg'].squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
-            cv2.imwrite(f'instseg_test/{time_idx}_update.png', instseg_colormap)
 
         # Silhouette Rendering
         transformed_gaussians = transform_to_frame(self.params, time_idx, gaussians_grad=False, camera_grad=False)
@@ -830,7 +828,7 @@ class RBDG_SLAMMER():
             print(f"Added {new_pt_cld.shape[0]} Gaussians...")
             new_params, dyno_mask, variables = self.initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, time_idx)
             num_gaussians = new_params['means3D'].shape[0] + self.params['means3D'].shape[0]
-
+        
             # make new static Gaussians parameters and update static variables
             for k, v in new_params.items():
                 self.params[k] = torch.nn.Parameter(torch.cat((self.params[k], v), dim=0).requires_grad_(True))
@@ -845,7 +843,11 @@ class RBDG_SLAMMER():
             self.variables['moving'] = torch.cat((self.variables['moving'], new_moving), dim=0)
             if self.config["compute_normals"]:
                 self.variables['normals'] = torch.cat((self.variables['normals'], variables['normals']), dim=0)
-            
+            self.variables['self_indices'] = torch.cat((self.variables['self_indices'], variables['self_indices']), dim=0)
+            self.variables['neighbor_indices'] = torch.cat((self.variables['neighbor_indices'], variables['neighbor_indices']), dim=0)
+            self.variables['neighbor_weight'] = torch.cat((self.variables['neighbor_weight'], variables['neighbor_weight']), dim=0)
+            self.variables['neighbor_dist'] = torch.cat((self.variables['neighbor_dist'], variables['neighbor_dist']), dim=0)
+
         return curr_data
             
     def initialize_camera_pose(self, curr_time_idx, forward_prop):
@@ -1263,7 +1265,6 @@ class RBDG_SLAMMER():
         with torch.no_grad():
             self.variables['moving'] = self.variables['moving'] > self.moving_forward_thresh
             if self.config['use_wandb']:
-                print(self.moving_forward_thresh, self.config['mov_thresh'])
                 eval(self.dataset, self.params, self.num_frames, self.eval_dir, sil_thres=self.config['mapping']['sil_thres'],
                     wandb_run=self.wandb_run, wandb_save_qual=self.config['wandb']['eval_save_qual'],
                     mapping_iters=self.config['mapping']['num_iters'], add_new_gaussians=self.config['mapping']['add_new_gaussians'],
@@ -1355,7 +1356,6 @@ class RBDG_SLAMMER():
     
         curr_data = self.densify_and_map(time_idx, curr_data, curr_gt_w2c, color, depth, instseg, embeddings,\
             keyframe_list, num_iters_mapping, gt_w2c_all_frames, densify_curr_data)
-        
         # self.track_camera(time_idx, tracking_curr_data, iter_time_idx, curr_gt_w2c)
         if self.dynosplatam and self.config['mode'] == 'static_dyno' and time_idx > 0 and self.config['tracking']['num_iters'] != 0:
             self.track_objects(time_idx, curr_data, iter_time_idx, curr_gt_w2c)
@@ -1591,6 +1591,7 @@ class RBDG_SLAMMER():
 
             if num_iters_mapping == 0 and time_idx == 0:
                 _num_iters_mapping = self.config['tracking_obj']['num_iters']
+                # _num_iters_mapping = num_iters_mapping
             else:
                 _num_iters_mapping = num_iters_mapping
             # Reset Optimizer & Learning Rates for Full Map Optimization
@@ -1614,7 +1615,7 @@ class RBDG_SLAMMER():
                     ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
                     save_params_ckpt(self.params, ckpt_output_dir, time_idx)
                     print('Failed to evaluate trajectory.')
-        
+
         if time_idx == 0:
             # Copy over the best candidate rotation & translation
             with torch.no_grad():

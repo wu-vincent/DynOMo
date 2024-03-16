@@ -42,6 +42,8 @@ def calculate_neighbors(params, variables, time_idx, num_knn=20):
 
 def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=20, existing_params=None, existing_instseg_mask=None, dist_to_use='l2'):
     device = params['means3D'].device
+    if existing_params is not None:
+        number_existing_gaussians = existing_params['means3D'].shape[0]
 
     # initalize matrices
     indices = torch.zeros(params['means3D'].shape[0], num_knn).long().to(device)
@@ -104,9 +106,13 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
         neighbor_weight = torch.exp(-2000 * torch.square(neighbor_dist))
         indices[bin_mask] = neighbor_indices
         weight[bin_mask] = neighbor_weight
-        dist[bin_mask] = neighbor_dist
-    variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten()
-    non_neighbor_mask = variables["self_indices"] != -1
+
+    if existing_params is not None:
+        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten() + number_existing_gaussians
+    else:
+        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten()
+
+    non_neighbor_mask = indices.flatten() != -1
     variables["neighbor_indices"] = indices.flatten().long().contiguous()[non_neighbor_mask]
     variables["neighbor_weight"] = weight.flatten().float().contiguous()[non_neighbor_mask]
     variables["neighbor_dist"] = dist.flatten().float().contiguous()[non_neighbor_mask]
