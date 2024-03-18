@@ -341,7 +341,7 @@ class RBDG_SLAMMER():
         else: 
             instseg_mask = torch.ones_like(instseg_mask)
         self.variables = calculate_neighbors_seg(
-                self.params, self.variables, 0, instseg_mask, num_knn=10)
+                self.params, self.variables, 0, instseg_mask, num_knn=20)
         
     def initialize_optimizer(self, params, lrs_dict, tracking):
         lrs = lrs_dict
@@ -749,7 +749,7 @@ class RBDG_SLAMMER():
             existing_instseg_mask = torch.ones_like(self.params['instseg'])
 
         variables = calculate_neighbors_seg(
-                params, variables, 0, instseg_mask, num_knn=10,
+                params, variables, 0, instseg_mask, num_knn=20,
                 existing_params=self.params, existing_instseg_mask=existing_instseg_mask)
         
         # neighbor_opacities = self.params['logit_opacities'][variables]
@@ -881,7 +881,10 @@ class RBDG_SLAMMER():
                     mean_trans[self.seg_idxs] = self.mean_trans[self.seg_idxs]
                     self.seg_idxs = torch.unique(self.params['instseg'].long())
                 self.mean_trans = mean_trans
-                self.variables['moving'][mask] = self.mean_trans[self.params['instseg'][mask].long()]
+                if self.config['seg_for_mov']:
+                    self.variables['moving'][mask] = self.mean_trans[self.params['instseg'][mask].long()]
+                else:
+                    self.variables['moving'] = torch.linalg.norm(delta_tran, dim=1)
                 self.moving_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] > self.moving_forward_thresh]
                 self.static_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] <= self.moving_forward_thresh]
     
@@ -1424,21 +1427,54 @@ class RBDG_SLAMMER():
                 # Loss for current frame
                 loss, losses, self.variables = self.get_loss_dyno(self.params, self.variables, curr_data, iter_time_idx, \
                     cam_tracking=False, obj_tracking=True, mapping=False, iter=iter, config=self.config['tracking_obj'])
-                
+
                 if iter_time_idx >= 2 and self.config['tracking_obj']['disable_rgb_grads_old']:
                     for k, p in self.params.items():
                         if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
                             continue
                         p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
+                
+                if iter_time_idx >= 2 and self.config['tracking_obj']['disable_grads_stat']:
+                    for k, p in self.params.items():
+                        if 'cam' in k:
+                            continue
+                        if self.config['use_rendered_moving']:
+                            p.register_hook(
+                                get_hook(
+                                    (self.params['moving'] <= 0.5) & (self.variables['timestep'] >= iter_time_idx - 2)))
+                        else:
+                            p.register_hook(
+                                get_hook(
+                                    (self.variables['moving'] <= self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
 
                 if self.config['use_wandb']:
                     # Report Loss
-                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True)
+                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True, params=self.params)
                 # Backprop
                 loss.backward()
+
+                # get gradients to determine visible
+                grads = {'sum': torch.zeros_like(self.params['logit_opacities']).squeeze().cpu()}
+                for k, p in self.params.items():
+                    if 'cam' in k:
+                        continue
+                    if p.grad is None:
+                        continue
+
+                    if len(p.shape) == 3:
+                        grads[k] = torch.linalg.norm(p.grad.clone().detach().cpu()[:, :, iter_time_idx], dim=1)
+                    elif len(p.shape) == 2:
+                        grads[k] = torch.linalg.norm(p.grad.clone().detach().cpu(), dim=1)
+                    else:
+                        grads[k] = p.grad.clone().detach().cpu()
+                    grads['sum'] += grads[k]
+                # print(torch.histogram(grads['sum'], 100))
+                # quit()
+
                 # Optimizer Update
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+
                 with torch.no_grad():
                     # Save the best candidate rotation & translation
                     if loss < current_min_loss:
