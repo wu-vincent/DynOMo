@@ -26,6 +26,7 @@ import numpy as np
 import imageio
 import glob
 import open3d as o3d
+import wandb
 
 
   
@@ -104,7 +105,7 @@ def evaluate_ate(gt_traj, est_traj):
     return avg_trans_error
 
 
-def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False):
+def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False, params=None):
     # Update loss dict
     loss_dict = {'Loss': losses['loss'].item(),
                  'Image Loss': losses['im'].item(),
@@ -127,6 +128,8 @@ def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, ob
         for k, v in loss_dict.items():
             tracking_loss_dict[f"Per Iteration Object Tracking/{k}"] = v
         tracking_loss_dict['Per Iteration Object Tracking/step'] = wandb_step
+        hist = np.histogram(params['logit_opacities'].clone().detach().cpu().numpy(), 100)
+        tracking_loss_dict['Per Iteration Tracking/Opacity_hist'] = wandb.Histogram(np_histogram=hist)
         wandb_run.log(tracking_loss_dict)
     elif mapping:
         mapping_loss_dict = {}

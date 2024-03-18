@@ -11,7 +11,7 @@ map_every = 1
 keyframe_every = 1
 mapping_window_size = 24
 tracking_iters = 80
-mapping_iters = 0
+mapping_iters = 80
 
 group_name = "dynosplatam_synthetic"
 run_name = f"splatam_{scene_name}_{seed}"
@@ -36,7 +36,7 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     use_wandb=True,
     compute_normals=False,
-    mov_static_init=False,
+    mov_static_init=True,
     seg_for_mov=True,
     use_seg_for_nn=True,
     mov_thresh=0.001,

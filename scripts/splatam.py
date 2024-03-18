@@ -838,7 +838,7 @@ class RBDG_SLAMMER():
             self.variables['max_2D_radius'] = torch.zeros(num_gaussians, device="cuda").float()
             new_timestep = time_idx*torch.ones(new_params['means3D'].shape[0], device="cuda").float()
             self.variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep), dim=0)
-            self.variables['dyno_mask'] = torch.cat((self.variables['dyno_mask'], dyno_mask), dim=0)
+            self.variables['dyno_mask'] = torch.cat((self.variables['dyno_mask'], torch.atleast_1d(dyno_mask)), dim=0)
             new_moving = torch.ones(new_params['means3D'].shape[0]).float().cuda()
             self.variables['moving'] = torch.cat((self.variables['moving'], new_moving), dim=0)
             if self.config["compute_normals"]:
@@ -1430,6 +1430,8 @@ class RBDG_SLAMMER():
 
                 if iter_time_idx >= 2 and self.config['tracking_obj']['disable_rgb_grads_old']:
                     for k, p in self.params.items():
+                        if 'cam' in k:
+                            continue
                         if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
                             continue
                         p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
