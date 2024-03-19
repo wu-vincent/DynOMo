@@ -275,7 +275,7 @@ class RBDG_SLAMMER():
         num_pts = init_pt_cld.shape[0]
         means3D = init_pt_cld[:, :3] # [num_gaussians, 3]
         unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
-        logit_opacities = torch.ones((num_pts, 1), dtype=torch.float, device="cuda")
+        logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
         elif gaussian_distribution == "anisotropic":
@@ -321,14 +321,13 @@ class RBDG_SLAMMER():
             else:
                 self.params[k] = torch.nn.Parameter(v.cuda().float().contiguous().requires_grad_(True))
 
-        self.variables = {'max_2D_radius': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
-            'means2D_gradient_accum': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
+        self.variables = {
+            'max_2D_radius': torch.zeros(means3D.shape[0]).cuda().float(),
+            'means2D_gradient_accum': torch.zeros(means3D.shape[0], dtype=torch.float32).cuda(),
             'denom': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
             'timestep': torch.zeros(self.params['means3D'].shape[0]).cuda().float(),
             'dyno_mask': dyno_mask,
-            'moving': torch.ones(self.params['means3D'].shape[0]).cuda().float(),
-            'means2D': [None] * self.num_frames,
-            'seen': [None] * self.num_frames}
+            'moving': torch.ones(self.params['means3D'].shape[0]).cuda().float()}
         
         if self.config["compute_normals"] and self.dataset.load_embeddings:
             self.variables['normals'] = init_pt_cld[:, 8:]
@@ -547,7 +546,7 @@ class RBDG_SLAMMER():
         # RGB    Rendering
         rendervar['means2D'].retain_grad()
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
-        variables['means2D'][iter_time_idx] = rendervar['means2D']  # Gradient only accum from colour render for densification
+        variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
         
         # Depth & Silhouette Rendering
         depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
@@ -688,10 +687,10 @@ class RBDG_SLAMMER():
         weighted_losses = {k: v * config['loss_weights'][k] for k, v in losses.items()}
 
         loss = sum(weighted_losses.values())
-
-        seen = radius > 0
-        variables['max_2D_radius'][time_mask][seen] = torch.max(radius[seen], variables['max_2D_radius'][time_mask][seen])
-        variables['seen'][iter_time_idx] = seen
+        if not mapping:
+            seen = radius > 0
+            variables['max_2D_radius'][seen] = torch.max(radius[seen], variables['max_2D_radius'][seen])
+            variables['seen'] = seen
         weighted_losses['loss'] = loss
 
         return loss, weighted_losses, variables
@@ -702,7 +701,7 @@ class RBDG_SLAMMER():
         means3D = new_pt_cld[:, :3] # [num_gaussians, 3]
         unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
 
-        logit_opacities = torch.ones((num_pts, 1), dtype=torch.float, device="cuda")
+        logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
         elif gaussian_distribution == "anisotropic":
@@ -719,7 +718,7 @@ class RBDG_SLAMMER():
         _unnorm_rotations[:, 0, :] = 1
         _means3D = torch.zeros((means3D.shape[0], 3, self.num_frames), dtype=torch.float32).cuda()
         _means3D[:, :, :time_idx+1] = means3D.unsqueeze(2).repeat(1, 1, time_idx+1)
-        moving = torch.ones(self.params['means3D'].shape[0], dtype=torch.float32).cuda()
+        moving = torch.ones(means3D.shape[0], dtype=torch.float32).cuda()
 
         params = {
                     'means3D': _means3D,
@@ -833,9 +832,10 @@ class RBDG_SLAMMER():
             for k, v in new_params.items():
                 self.params[k] = torch.nn.Parameter(torch.cat((self.params[k], v), dim=0).requires_grad_(True))
 
-            self.variables['means2D_gradient_accum'] = torch.zeros(num_gaussians, device="cuda").float()
-            self.variables['denom'] = torch.zeros(num_gaussians, device="cuda").float()
-            self.variables['max_2D_radius'] = torch.zeros(num_gaussians, device="cuda").float()
+            self.variables['means2D_gradient_accum'] = torch.zeros((num_gaussians), device="cuda").float()
+            self.variables['denom'] = torch.zeros((num_gaussians), device="cuda").float()
+            self.variables['max_2D_radius'] = torch.zeros((num_gaussians), device="cuda").float()
+
             new_timestep = time_idx*torch.ones(new_params['means3D'].shape[0], device="cuda").float()
             self.variables['timestep'] = torch.cat((self.variables['timestep'], new_timestep), dim=0)
             self.variables['dyno_mask'] = torch.cat((self.variables['dyno_mask'], torch.atleast_1d(dyno_mask)), dim=0)
@@ -884,6 +884,7 @@ class RBDG_SLAMMER():
                 if self.config['seg_for_mov']:
                     self.variables['moving'][mask] = self.mean_trans[self.params['instseg'][mask].long()]
                 else:
+                    print(delta_tran.shape, torch.linalg.norm(delta_tran, dim=1))
                     self.variables['moving'] = torch.linalg.norm(delta_tran, dim=1)
                 self.moving_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] > self.moving_forward_thresh]
                 self.static_segs = self.seg_idxs[self.mean_trans[self.seg_idxs] <= self.moving_forward_thresh]
@@ -1409,11 +1410,12 @@ class RBDG_SLAMMER():
             # Reset Optimizer & Learning Rates for tracking
             optimizer = self.initialize_optimizer(self.params, self.config['tracking_obj']['lrs'], tracking=True)
 
-            # Keep Track of Best Candidate Rotation & Translation
-            candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
-            candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
-            current_min_loss = float(1e20)
-            best_time_idx = 0
+            if self.config['tracking_obj']['take_best_candidate']:
+                # Keep Track of Best Candidate Rotation & Translation
+                candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
+                candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
+                current_min_loss = float(1e20)
+                best_time_idx = 0
 
             # Tracking Optimization
             iter = 0
@@ -1449,9 +1451,6 @@ class RBDG_SLAMMER():
                                 get_hook(
                                     (self.variables['moving'] <= self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
 
-                if self.config['use_wandb']:
-                    # Report Loss
-                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True, params=self.params)
                 # Backprop
                 loss.backward()
 
@@ -1472,18 +1471,38 @@ class RBDG_SLAMMER():
                     grads['sum'] += grads[k]
                 # print(torch.histogram(grads['sum'], 100))
                 # quit()
+                    
+                if self.config['use_wandb']:
+                    # Report Loss
+                    self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True, params=self.params, grads=grads)
 
+                with torch.no_grad():
+                    start = time.time()
+                    # Prune Gaussians
+                    if self.config['tracking_obj']['prune_gaussians']:
+                        self.params, self.variables = prune_gaussians(self.params, self.variables, optimizer, iter, self.config['tracking_obj']['pruning_dict'])
+                        if self.config['use_wandb']:
+                            self.wandb_run.log({"Tracking Object/Number of Gaussians - Pruning": self.params['means3D'].shape[0],
+                                            "Mapping/step": self.wandb_mapping_step})
+                    # Gaussian-Splatting's Gradient-based Densification
+                    if self.config['tracking_obj']['use_gaussian_splatting_densification']:
+                        self.params, self.variables = densify(self.params, self.variables, optimizer, iter, self.config['tracking_obj']['densify_dict'], iter_time_idx)
+                        if self.config['use_wandb']:
+                            self.wandb_run.log({"Tracking Object/Number of Gaussians - Densification": self.params['means3D'].shape[0],
+                                            "Tracking Object/step": self.wandb_mapping_step})
+    
                 # Optimizer Update
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
-                with torch.no_grad():
-                    # Save the best candidate rotation & translation
-                    if loss < current_min_loss:
-                        current_min_loss = loss
-                        best_iter = iter
-                        candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
-                        candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
+                if self.config['tracking_obj']['take_best_candidate']:
+                    with torch.no_grad():
+                        # Save the best candidate rotation & translation
+                        if loss < current_min_loss:
+                            current_min_loss = loss
+                            best_iter = iter
+                            candidate_dyno_rot = self.params['unnorm_rotations'][:, :, time_idx].detach().clone()
+                            candidate_dyno_trans = self.params['means3D'][:, :, time_idx].detach().clone()
 
                 # Update the runtime numbers
                 iter_end_time = time.time()
@@ -1506,11 +1525,12 @@ class RBDG_SLAMMER():
                 progress_bar.update(1)
 
             progress_bar.close()
-            # Copy over the best candidate rotation & translation
-            with torch.no_grad():
-                self.params['unnorm_rotations'][:, :, time_idx] = candidate_dyno_rot
-                self.params['means3D'][:, :, time_idx] = candidate_dyno_trans
-                print(f'Best candidate at iteration {best_iter}!')
+            if self.config['tracking_obj']['take_best_candidate']:
+                # Copy over the best candidate rotation & translation
+                with torch.no_grad():
+                    self.params['unnorm_rotations'][:, :, time_idx] = candidate_dyno_rot
+                    self.params['means3D'][:, :, time_idx] = candidate_dyno_trans
+                    print(f'Best candidate at iteration {best_iter}!')
 
         # Update the runtime numbers
         tracking_end_time = time.time()
@@ -1759,76 +1779,64 @@ class RBDG_SLAMMER():
             if self.config['use_wandb']:
                 # Report Loss
                 self.wandb_mapping_step = report_loss(losses, self.wandb_run, self.wandb_mapping_step, mapping=True)
-            # Backprop
-            loss.backward()
-
-            with torch.no_grad():
-                # Prune Gaussians
-                if self.config['mapping']['prune_gaussians']:
-                    self.params, self.variables = prune_gaussians(self.params, self.variables, optimizer, iter, self.config['mapping']['pruning_dict'])
-                    if self.config['use_wandb']:
-                        self.wandb_run.log({"Mapping/Number of Gaussians - Pruning": self.params['means3D'].shape[0],
-                                        "Mapping/step": self.wandb_mapping_step})
-                # Gaussian-Splatting's Gradient-based Densification
-                if self.config['mapping']['use_gaussian_splatting_densification']:
-                    self.params, self.variables = densify(self.params, self.variables, optimizer, iter, self.config['mapping']['densify_dict'])
-                    if self.config['use_wandb']:
-                        self.wandb_run.log({"Mapping/Number of Gaussians - Densification": self.params['means3D'].shape[0],
-                                        "Mapping/step": self.wandb_mapping_step})
-
-            if time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
-                for k, p in self.params.items():
-                    if 'cam' in k:
-                        continue
-                    if self.config['use_rendered_moving']:
-                        p.register_hook(
-                            get_hook(
-                                (self.params['moving'] > 0.5) & (self.variables['timestep'] >= iter_time_idx - 2)))
-                    else:
-                        p.register_hook(
-                            get_hook(
-                                (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
-
-            if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_old']:
-                for k, p in self.params.items():
-                    if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
-                        continue
-                    p.register_hook(
-                        get_hook(self.variables['timestep'] != iter_time_idx))
             
-            if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_mov']:
-                for k, p in self.params.items():
-                    if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
-                        continue
-                    if self.config['use_rendered_moving']:
-                        p.register_hook(
-                            get_hook(
-                                (self.params['moving'] > 0.5) & (self.variables['timestep'] >= iter_time_idx - 2)))
-                    else:
-                        p.register_hook(
-                            get_hook(
-                                (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
-                
-            # Optimizer Update
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
+            if (iter+1)%self.config['mapping']['batch_size'] == 0:
+                # Backprop
+                loss.backward()
 
-            with torch.no_grad():
-                # Report Progress
-                if self.config['report_iter_progress']:
-                    if self.config['use_wandb']:
-                        report_progress(self.params, iter_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['mapping']['sil_thres'], 
-                                        wandb_run=self.wandb_run, wandb_step=self.wandb_mapping_step, wandb_save_qual=self.config['wandb']['save_qual'],
-                                        mapping=True, online_time_idx=time_idx)
+                if time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
+                    for k, p in self.params.items():
+                        if 'cam' in k:
+                            continue
+                        if self.config['use_rendered_moving']:
+                            p.register_hook(
+                                get_hook(
+                                    (self.params['moving'] > 0.5) & (self.variables['timestep'] >= iter_time_idx - 2)))
+                        else:
+                            p.register_hook(
+                                get_hook(
+                                    (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
+
+                if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_old']:
+                    for k, p in self.params.items():
+                        if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                            continue
+                        p.register_hook(
+                            get_hook(self.variables['timestep'] != iter_time_idx))
+                
+                if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_mov']:
+                    for k, p in self.params.items():
+                        if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                            continue
+                        if self.config['use_rendered_moving']:
+                            p.register_hook(
+                                get_hook(
+                                    (self.params['moving'] > 0.5) & (self.variables['timestep'] >= iter_time_idx - 2)))
+                        else:
+                            p.register_hook(
+                                get_hook(
+                                    (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
+                    
+                # Optimizer Update
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+
+                with torch.no_grad():
+                    # Report Progress
+                    if self.config['report_iter_progress']:
+                        if self.config['use_wandb']:
+                            report_progress(self.params, iter_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['mapping']['sil_thres'], 
+                                            wandb_run=self.wandb_run, wandb_step=self.wandb_mapping_step, wandb_save_qual=self.config['wandb']['save_qual'],
+                                            mapping=True, online_time_idx=time_idx)
+                        else:
+                            report_progress(self.params, iter_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['mapping']['sil_thres'], 
+                                            mapping=True, online_time_idx=time_idx)
                     else:
-                        report_progress(self.params, iter_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['mapping']['sil_thres'], 
-                                        mapping=True, online_time_idx=time_idx)
-                else:
-                    progress_bar.update(1)
-            # Update the runtime numbers
-            iter_end_time = time.time()
-            self.mapping_iter_time_sum += iter_end_time - iter_start_time
-            self.mapping_iter_time_count += 1
+                        progress_bar.update(1)
+                # Update the runtime numbers
+                iter_end_time = time.time()
+                self.mapping_iter_time_sum += iter_end_time - iter_start_time
+                self.mapping_iter_time_count += 1
 
         # LOGGING
         if num_iters_mapping > 0:

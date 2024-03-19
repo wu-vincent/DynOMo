@@ -62,7 +62,7 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=30,
+        num_frames=10,
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
@@ -96,12 +96,12 @@ config = dict(
         ignore_outlier_depth_loss=False,
         dyno_losses=True,
         use_seg_loss=False,
-        take_best_candidate=True,
+        take_best_candidate=False,
         disable_rgb_grads_old=True,
         disable_grads_stat=False,
         mask_moving=False,
         separate_static=False,
-        calc_ssmi=False,
+        calc_ssmi=True,
         use_rendered_moving_loss=False,
         loss_weights=dict(
             im=0.5,
@@ -130,6 +130,29 @@ config = dict(
             normals_neighbors=0.00000,
             moving=0.001,
         ),
+        prune_gaussians=True, # Prune Gaussians during Mapping
+        pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
+            start_after=0,
+            remove_big_after=0,
+            stop_after=20,
+            prune_every=int(mapping_iters/3),
+            removal_opacity_threshold=0.005,
+            final_removal_opacity_threshold=0.005,
+            reset_opacities=False,
+            reset_opacities_every=500, # Doesn't consider iter 0
+        ),
+        use_gaussian_splatting_densification=True, # Use Gaussian Splatting-based Densification during Mapping
+        densify_dict=dict( # Needs to be updated based on the number of mapping iterations
+            start_after=20,
+            remove_big_after=3000,
+            stop_after=5000,
+            densify_every=int(mapping_iters/3), #100,
+            grad_thresh=0.0002,
+            num_to_split_into=2,
+            removal_opacity_threshold=0.005,
+            final_removal_opacity_threshold=0.005,
+            reset_opacities_every=3000, # Doesn't consider iter 0
+        ),
     ),
     mapping=dict(
         num_iters=mapping_iters,
@@ -149,6 +172,7 @@ config = dict(
         separate_static=False,
         calc_ssmi=True,
         use_rendered_moving_loss=False,
+        batch_size=1,
         loss_weights=dict(
             im=0.5,
             depth=1.0,
@@ -175,29 +199,6 @@ config = dict(
             normals=0.00000,
             normals_neighbors=0.00000,
             moving=0.001,
-        ),
-        prune_gaussians=False, # Prune Gaussians during Mapping
-        pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
-            start_after=0,
-            remove_big_after=0,
-            stop_after=20,
-            prune_every=20,
-            removal_opacity_threshold=0.005,
-            final_removal_opacity_threshold=0.005,
-            reset_opacities=False,
-            reset_opacities_every=500, # Doesn't consider iter 0
-        ),
-        use_gaussian_splatting_densification=False, # Use Gaussian Splatting-based Densification during Mapping
-        densify_dict=dict( # Needs to be updated based on the number of mapping iterations
-            start_after=500,
-            remove_big_after=3000,
-            stop_after=5000,
-            densify_every=100,
-            grad_thresh=0.0002,
-            num_to_split_into=2,
-            removal_opacity_threshold=0.005,
-            final_removal_opacity_threshold=0.005,
-            reset_opacities_every=3000, # Doesn't consider iter 0
         ),
     ),
     viz=dict(

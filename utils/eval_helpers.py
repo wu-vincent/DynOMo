@@ -105,7 +105,7 @@ def evaluate_ate(gt_traj, est_traj):
     return avg_trans_error
 
 
-def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False, params=None):
+def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False, params=None, grads=None):
     # Update loss dict
     loss_dict = {'Loss': losses['loss'].item(),
                  'Image Loss': losses['im'].item(),
@@ -128,8 +128,13 @@ def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, ob
         for k, v in loss_dict.items():
             tracking_loss_dict[f"Per Iteration Object Tracking/{k}"] = v
         tracking_loss_dict['Per Iteration Object Tracking/step'] = wandb_step
-        hist = np.histogram(params['logit_opacities'].clone().detach().cpu().numpy(), 100)
-        tracking_loss_dict['Per Iteration Tracking/Opacity_hist'] = wandb.Histogram(np_histogram=hist)
+        '''if params is not None:
+            hist = np.histogram(params['logit_opacities'].clone().detach().cpu().numpy(), 100)
+            tracking_loss_dict['Per Iteration Object Tracking/Opacity_hist'] = wandb.Histogram(np_histogram=hist)
+        if grads is not None:
+            for k, v in grads.items():
+                hist = np.histogram(v, 100)
+                tracking_loss_dict[f'Per Iteration Object Tracking/{k}_Gradient_Hist'] = wandb.Histogram(np_histogram=hist)'''
         wandb_run.log(tracking_loss_dict)
     elif mapping:
         mapping_loss_dict = {}
