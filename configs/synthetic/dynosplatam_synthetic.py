@@ -135,17 +135,17 @@ config = dict(
             moving=0.001,
             embeddings=0.0,
         ),
-        prune_gaussians=False, # Prune Gaussians during Mapping
+        prune_gaussians=True, # Prune Gaussians during Mapping
         pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
-            start_after=79,
+            start_after=tracking_iters-1,
             remove_big_after=0,
             stop_after=100000,
-            prune_every=int(tracking_iters/2)+1,
-            removal_opacity_threshold=0.6,
+            prune_every=tracking_iters-1,
+            removal_opacity_threshold=-10,
             final_removal_opacity_threshold=0.005,
             reset_opacities=False,
             reset_opacities_every=500, # Doesn't consider iter 0
-            kNN_dist_thresh=100000
+            kNN_dist_thresh=0.5 # * scene radius in code
         ),
         use_gaussian_splatting_densification=False, # Use Gaussian Splatting-based Densification during Mapping
         densify_dict=dict( # Needs to be updated based on the number of mapping iterations

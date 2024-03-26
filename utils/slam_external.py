@@ -218,7 +218,7 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict, curr_time_id
                 dist = pdist(
                     params['means3D'][variables["self_indices"], :, curr_time_idx-1],
                     params['means3D'][variables["neighbor_indices"], :, curr_time_idx-1])
-                far_away = scatter_add(dist, variables["self_indices"], dim=0) < prune_dict['kNN_dist_thresh']
+                far_away = scatter_add(dist, variables["self_indices"], dim=0) > 0.5 * variables['scene_radius'] #prune_dict['kNN_dist_thresh']
                 to_remove = torch.logical_or(to_remove, far_away)
 
             # Remove Gaussians that are too big

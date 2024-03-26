@@ -515,8 +515,9 @@ class RBDG_SLAMMER():
         else:
             moving = variables['moving'] > self.moving_forward_thresh
 
-        if mapping:
-            cv2.imwrite(os.path.join("moving_seg_mask_{:04d}.png".format(iter_time_idx)), cv2.cvtColor((moving_seg_mask.cpu().numpy().astype(np.uint8)*255).squeeze(), cv2.COLOR_RGB2BGR))
+        # if mapping:
+        #     cv2.imwrite(os.path.join("moving_seg_mask_{:04d}.png".format(iter_time_idx)), cv2.cvtColor((moving_seg_mask.cpu().numpy().astype(np.uint8)*255).squeeze(), cv2.COLOR_RGB2BGR))
+        
         if obj_tracking and config['mask_moving']:
             gaussians_to_use = moving
         elif mapping and config['mask_moving'] and iter_time_idx >= 2:
@@ -1472,7 +1473,7 @@ class RBDG_SLAMMER():
                 with torch.no_grad():
                     # Prune Gaussians
                     if self.config['tracking_obj']['prune_gaussians']:
-                        self.params, self.variables = prune_gaussians(self.params, self.variables, optimizer, iter, self.config['tracking_obj']['pruning_dict'])
+                        self.params, self.variables = prune_gaussians(self.params, self.variables, optimizer, iter, self.config['tracking_obj']['pruning_dict'], iter_time_idx)
                         if self.config['use_wandb']:
                             self.wandb_run.log({"Tracking Object/Number of Gaussians - Pruning": self.params['means3D'].shape[0],
                                             "Mapping/step": self.wandb_mapping_step})
