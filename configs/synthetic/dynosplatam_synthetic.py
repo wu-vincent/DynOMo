@@ -9,9 +9,9 @@ scene_name = scenes[0]
 
 map_every = 1
 keyframe_every = 1
-mapping_window_size = 24
+mapping_window_size = 3
 tracking_iters = 80
-mapping_iters = 80
+mapping_iters = 10
 
 group_name = "dynosplatam_synthetic"
 run_name = f"splatam_{scene_name}_{seed}"
@@ -145,6 +145,7 @@ config = dict(
             final_removal_opacity_threshold=0.005,
             reset_opacities=False,
             reset_opacities_every=500, # Doesn't consider iter 0
+            kNN_dist_thresh=100000
         ),
         use_gaussian_splatting_densification=False, # Use Gaussian Splatting-based Densification during Mapping
         densify_dict=dict( # Needs to be updated based on the number of mapping iterations

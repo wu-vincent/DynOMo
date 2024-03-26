@@ -20,6 +20,7 @@ import torch
 import torch.nn.functional as func
 from torch.autograd import Variable
 from math import exp
+from torch_scatter import scatter_add
 
 
 def build_rotation(q):
@@ -199,7 +200,7 @@ def inverse_sigmoid(x):
     return torch.log(x / (1 - x))
 
 
-def prune_gaussians(params, variables, optimizer, iter, prune_dict):
+def prune_gaussians(params, variables, optimizer, iter, prune_dict, curr_time_idx):
     variables['means2D_grad'] = variables['means2D'].grad
     if iter <= prune_dict['stop_after']:
         if (iter >= prune_dict['start_after']) and (iter % prune_dict['prune_every'] == 0):
@@ -209,6 +210,16 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict):
                 remove_threshold = prune_dict['removal_opacity_threshold']
             # Remove Gaussians with low opacity
             to_remove = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
+
+            # Remove Gaussians with large kNN dist
+            # recompute kNN distance
+            with torch.no_grad():
+                pdist = torch.nn.PairwiseDistance(p=2)
+                dist = pdist(
+                    params['means3D'][variables["self_indices"], :, curr_time_idx-1],
+                    params['means3D'][variables["neighbor_indices"], :, curr_time_idx-1])
+                far_away = scatter_add(dist, variables["self_indices"], dim=0) < prune_dict['kNN_dist_thresh']
+                to_remove = torch.logical_or(to_remove, far_away)
 
             # Remove Gaussians that are too big
             if iter >= prune_dict['remove_big_after']:
@@ -226,7 +237,6 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict):
             params = update_params_and_optimizer(new_params, params, optimizer)
     
     return params, variables
-
 
 def clone_vars(params, variables, to_clone):
     device = variables['self_indices'].device

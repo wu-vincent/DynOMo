@@ -1341,9 +1341,10 @@ class RBDG_SLAMMER():
             self.track_objects(time_idx, curr_data, iter_time_idx, curr_gt_w2c)
 
         # KeyFrame-based Mapping
-        if (self.config['mapping']['num_iters'] != 0 and (time_idx+1) % self.config['map_every'] == 0):
+        num_mapping_iters = self.config['mapping']['num_iters'] if time_idx >= 2 else self.config['tracking']['num_iters']
+        if (num_mapping_iters != 0 and (time_idx+1) % self.config['map_every'] == 0):
             # Reset Optimizer & Learning Rates for Full Map Optimization
-            self.map(self.config['mapping']['num_iters'], time_idx, selected_keyframes, color, depth, instseg, embeddings,\
+            self.map(num_mapping_iters, time_idx, selected_keyframes, color, depth, instseg, embeddings,\
                     keyframe_list, gt_w2c_all_frames, curr_data)
         
         # Evaluate Trajectory
@@ -1412,7 +1413,7 @@ class RBDG_SLAMMER():
             iter = 0
             best_iter = 0
             do_continue_slam = False
-            num_iters_tracking = self.config['tracking']['num_iters']
+            num_iters_tracking = self.config['tracking']['num_iters'] # if time_idx > 2 else self.config['tracking']['num_iters'] * 2
             progress_bar = tqdm(range(num_iters_tracking), desc=f"Object Tracking Time Step: {time_idx}")
             
             while True:
