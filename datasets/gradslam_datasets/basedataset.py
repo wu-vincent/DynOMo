@@ -359,7 +359,10 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             embedding = self.read_embedding_from_file(index)
             # load and downsample to rgb size
             instseg = self._load_instseg(self.instseg_paths[index])
-            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0) # [:, 80:-80, :]
+            # color = color[:, 80:-80, :]
+            # depth = depth[:, 80:-80, :]
+
             # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
             return (
                 color.to(self.device).type(self.dtype),
@@ -375,9 +378,12 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             trans = torchvision.transforms.Resize(
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
             # load and downsample to rgb size
-            instseg = self._load_instseg(self.instseg_paths[index])
-            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
-            # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
+            if self.instseg_paths is None:
+                instseg = torch.ones_like(color)[:, :, 0].unsqueeze(2)
+            else:
+                instseg = self._load_instseg(self.instseg_paths[index])
+                instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+
             return (
                 color.to(self.device).type(self.dtype),
                 depth.to(self.device).type(self.dtype),

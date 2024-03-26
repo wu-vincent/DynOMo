@@ -465,10 +465,12 @@ def param2tensor(param):
 
 def eval(dataset, final_params, num_frames, eval_dir, sil_thres, 
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, 
-         eval_every=1, save_frames=True, dynosplatam=False, final_dyno_params=None,
+         eval_every=1, save_frames=True,
          dyno_variables=None, variables=None, save_pc=True, mask_sil_vis=False,
          save_videos=False, mov_thresh=0.0005, use_rendered_moving=False):
+
     print("Evaluating Final Parameters ...")
+    dataset.load_embeddings = False
     psnr_list = []
     rmse_list = []
     l1_list = []
@@ -502,9 +504,8 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
     for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
-        if not dynosplatam:
-            color, depth, intrinsics, pose = dataset[time_idx]
-            instseg = None
+        if dataset.load_embeddings:
+            color, depth, intrinsics, pose, instseg, embeddings = dataset[time_idx]
         else:
             color, depth, intrinsics, pose, instseg = dataset[time_idx]
             instseg = instseg.permute(2, 0, 1)
@@ -575,7 +576,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         
         # Render RGB and Calculate PSNR
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
-        if (mapping_iters==0 and not add_new_gaussians) or (dynosplatam and final_dyno_params is None):
+        if (mapping_iters==0 and not add_new_gaussians):
             weighted_im = im * presence_sil_mask * valid_depth_mask
             weighted_gt_im = curr_data['im'] * presence_sil_mask * valid_depth_mask
         else:
@@ -592,7 +593,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         lpips_list.append(lpips_score)
 
         # Compute Depth RMSE
-        if (mapping_iters==0 and not add_new_gaussians) or (dynosplatam and final_dyno_params is None):
+        if (mapping_iters==0 and not add_new_gaussians):
             diff_depth_rmse = torch.sqrt((((rastered_depth - curr_data['depth']) * presence_sil_mask) ** 2))
             diff_depth_rmse = diff_depth_rmse * valid_depth_mask
             rmse = diff_depth_rmse.sum() / valid_depth_mask.sum()

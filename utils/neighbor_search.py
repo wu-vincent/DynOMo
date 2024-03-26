@@ -40,7 +40,10 @@ def calculate_neighbors(params, variables, time_idx, num_knn=20):
     return variables
 
 
-def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=20, existing_params=None, existing_instseg_mask=None, dist_to_use='l2'):
+def calculate_neighbors_seg(
+        params, variables, time_idx, instseg_mask, num_knn=20, existing_params=None, \
+            existing_instseg_mask=None, dist_to_use='rgb', use_old=False):
+    embeddings_in_params = 'embeddings' in params.keys()
     device = params['means3D'].device
     if existing_params is not None:
         number_existing_gaussians = existing_params['means3D'].shape[0]
@@ -52,13 +55,24 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
     
     # get existing Gaussians and neighbor arranged indices
     if existing_params is not None:
-        existing_colors = torch.cat(
-            [existing_params['rgb_colors'], params['rgb_colors']])
-        existing_params = torch.cat(
-            [existing_params['means3D'][:, :, time_idx].detach().contiguous(),
-             params['means3D'][:, :, time_idx].detach()])
-        aranged_idx = torch.arange(existing_params.shape[0]).to(device)
-        existing_instseg_mask = torch.cat([existing_instseg_mask, instseg_mask])
+        if use_old:
+            if embeddings_in_params:
+                existing_embeddings = torch.cat(
+                    [existing_params['embeddings'].detach(), params['embeddings'].detach()])
+            existing_colors = torch.cat(
+                [existing_params['rgb_colors'].detach(), params['rgb_colors'].detach()])
+            existing_params = torch.cat(
+                [existing_params['means3D'][:, :, time_idx].detach().contiguous(),
+                params['means3D'][:, :, time_idx].detach()])
+            aranged_idx = torch.arange(existing_params.shape[0]).to(device)
+            existing_instseg_mask = torch.cat([existing_instseg_mask, instseg_mask])
+        else:
+            existing_colors = existing_params['rgb_colors'].detach()
+            if embeddings_in_params:
+                existing_embeddings = existing_params['embeddings'].detach()
+            existing_params = existing_params['means3D'][:, :, time_idx].detach().contiguous()
+            aranged_idx = torch.arange(existing_params.shape[0]).to(device)
+            existing_instseg_mask = existing_instseg_mask
     else:
         existing_params = None
         aranged_idx = torch.arange(params['means3D'].shape[0]).to(device)
@@ -71,7 +85,9 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
             q_pts = params['means3D'].detach()
         else:
             q_pts = params['means3D'][:, :, time_idx].detach()
-        q_colors = params['rgb_colors'][bin_mask]
+        q_colors = params['rgb_colors'][bin_mask].detach()
+        if embeddings_in_params:
+            q_embeddings = params['embeddings'][bin_mask].detach()
         q_pts = q_pts[bin_mask]
 
         # mask key points
@@ -79,9 +95,13 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
             k_bin_mask = existing_instseg_mask == inst
             k_pts = existing_params[k_bin_mask].contiguous()
             k_colors = existing_colors[k_bin_mask]
+            if embeddings_in_params:
+                k_embeddings = existing_embeddings[k_bin_mask]
         else:
             k_pts = existing_params
             k_colors = q_colors
+            if embeddings_in_params:
+                k_embeddings = q_embeddings
 
         # get distances and indices
         neighbor_dist, neighbor_indices = torch_3d_knn(q_pts.contiguous(), k_pts, num_knn=num_knn+1)
@@ -89,12 +109,20 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
         if dist_to_use == 'l2':
             neighbor_dist = neighbor_dist[:, 1:]
         elif dist_to_use == 'rgb':
-            print(neighbor_dist.shape)
-            k_colors = k_colors[neighbor_indices[:, 1:]].unsqueeze(0)
-            q_colors = q_colors.unsqueeze(0)
-            neighbor_dist = torch.cdist(q_colors, k_colors)
-            print(neighbor_dist.shape)
-            quit()
+            # print(neighbor_dist.shape)
+            k_colors = k_colors[neighbor_indices[:, 1:]]
+            q_colors = q_colors.unsqueeze(1)
+            # print(k_colors.shape, q_colors.shape)
+            # pdist = torch.nn.PairwiseDistance()
+            neighbor_dist = torch.cdist(q_colors, k_colors).squeeze()
+        elif dist_to_use == 'dinov2':
+            k_embeddings = k_embeddings[neighbor_indices[:, 1:]]
+            q_embeddings = q_embeddings.unsqueeze(1)
+            # print(k_colors.shape, q_colors.shape)
+            # pdist = torch.nn.PairwiseDistance()
+            neighbor_dist = torch.cdist(
+                torch.nn.functional.normalize(q_embeddings, dim=2),
+                torch.nn.functional.normalize(k_embeddings, dim=2)).squeeze()
 
         if existing_params is not None:
             num_samps = neighbor_indices.shape[0]
@@ -108,9 +136,9 @@ def calculate_neighbors_seg(params, variables, time_idx, instseg_mask, num_knn=2
         weight[bin_mask] = neighbor_weight
 
     if existing_params is not None:
-        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten() + number_existing_gaussians
+        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten().to(device) + number_existing_gaussians
     else:
-        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten()
+        variables["self_indices"] = torch.arange(params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten().to(device)
 
     non_neighbor_mask = indices.flatten() != -1
     variables["neighbor_indices"] = indices.flatten().long().contiguous()[non_neighbor_mask]

@@ -43,29 +43,29 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
         )
         self.instseg_paths = self.get_instsegpaths()
         self.load_instseg = True
-        embedding_path = f"{self.input_folder}/Features/crop-256-dinov2-01.npy"
-        if self.load_embeddings:
-            self.embeddings = np.load(embedding_path, mmap_mode="r").astype(dtype=np.int64)
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))[:30]
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
         return instseg_paths
     
     def read_embedding_from_file(self, idx):
-        return self.embeddings[idx]
+        embedding = torch.from_numpy(np.load(self.embedding_paths[idx]).astype(dtype=np.int64))
+        embedding = torch.cat([torch.zeros(480, 80, 384), embedding, torch.zeros(480, 80, 384)], dim=1)
+        return embedding
 
     def _load_instseg(self, instseg_path):
         instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
         return instseg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.depth.png"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))[:30]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.depth.png"))[:30]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0_dinov2_bilinear.npy"))
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0_dinov2_featup.npy"))[:30]
         return color_paths, depth_paths, embedding_paths
 
     def load_poses(self):

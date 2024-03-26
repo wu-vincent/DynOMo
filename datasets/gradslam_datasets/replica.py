@@ -40,6 +40,8 @@ class ReplicaDataset(GradSLAMDataset):
             embedding_dim=embedding_dim,
             **kwargs,
         )
+        self.instseg_paths = self.get_instsegpaths()
+        self.load_instseg = True
 
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.jpg"))
@@ -65,6 +67,16 @@ class ReplicaDataset(GradSLAMDataset):
     def read_embedding_from_file(self, embedding_file_path):
         embedding = torch.load(embedding_file_path)
         return embedding.permute(0, 2, 3, 1)  # (1, H, W, embedding_dim)
+
+    def get_instsegpaths(self):
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))[:30]
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
+        return None
+    
+    def _load_instseg(self, instseg_path):
+        # instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+        return None
     
 class ReplicaV2Dataset(GradSLAMDataset):
     def __init__(
