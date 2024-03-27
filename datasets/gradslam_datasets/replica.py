@@ -44,8 +44,8 @@ class ReplicaDataset(GradSLAMDataset):
         self.load_instseg = True
 
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.jpg"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/depth*.png"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.jpg"))[:30]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/depth*.png"))[:30]
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = natsorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
@@ -69,14 +69,14 @@ class ReplicaDataset(GradSLAMDataset):
         return embedding.permute(0, 2, 3, 1)  # (1, H, W, embedding_dim)
 
     def get_instsegpaths(self):
-        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))[:30]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*sam_big_area.npy"))[:30]
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
-        return None
+        return instseg_paths
     
     def _load_instseg(self, instseg_path):
-        # instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
-        return None
+        instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+        return instseg
     
 class ReplicaV2Dataset(GradSLAMDataset):
     def __init__(

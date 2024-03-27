@@ -45,7 +45,7 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
         self.load_instseg = True
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))[:30]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam_big_area.npy"))
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0samnew.npy"))
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0sam.npy"))
         return instseg_paths
@@ -60,12 +60,12 @@ class SyntheticDynoSplatamDataset(ReplicaDataset):
         return instseg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))[:30]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.depth.png"))[:30]
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.png"))
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0.depth.png"))
         embedding_paths = None
         if self.load_embeddings:
             # embedding_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0_dinov2_bilinear.npy"))
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0_dinov2_featup.npy"))[:30]
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder}/results/*_0_dinov2_featup.npy"))
         return color_paths, depth_paths, embedding_paths
 
     def load_poses(self):

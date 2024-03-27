@@ -185,13 +185,20 @@ def remove_points(to_remove, params, variables, optimizer):
     variables['neighbor_dist'] = variables['neighbor_dist'][to_keep_idx_mask]
     variables['self_indices'] = variables['self_indices'][to_keep_idx_mask]
 
-    neighbor_indices = variables['neighbor_indices']
-    self_indices = variables['self_indices']
-    for i, v in enumerate(torch.unique(idxs_to_keep)):
-        neighbor_indices[variables['neighbor_indices']==v] = i
-        self_indices[variables['self_indices']==v] = i
-    variables['neighbor_indices'] = neighbor_indices
-    variables['self_indices'] = self_indices
+    mapping_tensor = torch.zeros(idxs_to_keep.max().item() + 1).long().to(idxs_to_keep.device)
+    mapping_tensor[idxs_to_keep] = torch.arange(idxs_to_keep.shape[0]).long().to(idxs_to_keep.device)
+
+    '''mapping_dict = {v: i for i, v in enumerate(torch.unique(idxs_to_keep))}
+    mapping_func = lambda x: mapping_dict[x]
+    neighbor_indices.cpu().apply_(mapping_func)
+    neighbor_indices = neighbor_indices.cuda()
+    self_indices.cpu().apply_(mapping_func).cuda()
+    self_indices = self_indices.cuda()
+    # for i, v in enumerate(torch.unique(idxs_to_keep)):
+    #    neighbor_indices[variables['neighbor_indices']==v] = i
+    #    self_indices[variables['self_indices']==v] = i'''
+    variables['neighbor_indices'] = mapping_tensor[variables['neighbor_indices']]
+    variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
     return params, variables
 
@@ -310,27 +317,35 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
         grad_thresh = densify_dict['grad_thresh']
         if (iter >= densify_dict['start_after']) and (iter % densify_dict['densify_every'] == 0):
             grads = variables['means2D_gradient_accum'] / variables['denom']
-            # print(variables['denom'], variables['denom'], variables['means2D_gradient_accum'])
-            # print(variables['means2D_grad'])
-            # print(torch.histogram(grads.cpu(), 100))
-            # print(grads, grad_thresh)
-            # quit()
             grads[grads.isnan()] = 0.0
+
+            # Remove Gaussians with large kNN dist
+            # recompute kNN distance
+            with torch.no_grad():
+                pdist = torch.nn.PairwiseDistance(p=2)
+                dist = pdist(
+                    params['means3D'][variables["self_indices"], :, time_idx-1],
+                    params['means3D'][variables["neighbor_indices"], :, time_idx-1])
+                dist = scatter_add(dist, variables["self_indices"], dim=0) 
+                far_away = torch.logical_and(dist < densify_dict['kNN_dist_thresh_max'] * variables['scene_radius'],
+                        dist > densify_dict['kNN_dist_thresh_min'] * variables['scene_radius'])
+
+            # clone
             if densify_dict['scale_split_thresh'] == 'scene_radius':
                 thresh = 0.01 * variables['scene_radius']
             else:
                 thresh = torch.median(torch.max(torch.exp(params['log_scales']), dim=1).values) * 0.001
-            to_clone = torch.logical_and(grads >= grad_thresh, (
-                        torch.max(torch.exp(params['log_scales']), dim=1).values <= thresh)).to(device)
+            to_clone = torch.logical_or(torch.logical_and(grads >= grad_thresh, (
+                        torch.max(torch.exp(params['log_scales']), dim=1).values <= thresh)), far_away).to(device)
             
             new_params = {k: v[to_clone] for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
-            # clone variables
             variables = clone_vars(params, variables, to_clone)
             params = cat_params_to_optimizer(new_params, params, optimizer)
+
+            # split
             num_pts = params['means3D'].shape[0]
             padded_grad = torch.zeros(num_pts, device="cuda")
             padded_grad[:grads.shape[0]] = grads
-            print(variables['scene_radius'], torch.histogram(torch.max(torch.exp(params['log_scales']), dim=1).values.cpu(), 100))
             if densify_dict['scale_clone_thresh'] == 'scene_radius':
                 thresh = 0.01 * variables['scene_radius']
             else:

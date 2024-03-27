@@ -14,3 +14,4 @@ from .nerfcapture import NeRFCaptureDataset
 from .dynosplatam import DynoSplatamDataset
 from .synthetic import SyntheticDynoSplatamDataset
 from .pointodyssee import PointOdysseeDynoSplatamDataset
+from .davis import DavisDynoSplatamDataset

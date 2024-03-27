@@ -335,6 +335,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = torch.from_numpy(color)
         K = torch.from_numpy(K)
         depth = self._preprocess_depth(depth)
+        # imageio.imwrite('test.png', depth.squeeze().astype(np.uint8))
         depth = torch.from_numpy(depth)
 
         K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
@@ -383,7 +384,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             else:
                 instseg = self._load_instseg(self.instseg_paths[index])
                 instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
-
+            # imageio.imwrite('test.png', depth.numpy().squeeze().astype(np.uint8))
             return (
                 color.to(self.device).type(self.dtype),
                 depth.to(self.device).type(self.dtype),

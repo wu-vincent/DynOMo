@@ -63,8 +63,8 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=30,
-        load_embeddings=True
+        num_frames=-1,
+        load_embeddings=False
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
@@ -149,17 +149,19 @@ config = dict(
         ),
         use_gaussian_splatting_densification=False, # Use Gaussian Splatting-based Densification during Mapping
         densify_dict=dict( # Needs to be updated based on the number of mapping iterations
-            start_after=20,
+            start_after=0,
             remove_big_after=3000,
             stop_after=5000,
-            densify_every=int(tracking_iters/2)+1, #100,
-            grad_thresh=0.0002,
+            densify_every=int(tracking_iters/2), #100,
+            grad_thresh=0.1,#0.0002,
             num_to_split_into=2,
-            removal_opacity_threshold=0.4,
+            removal_opacity_threshold=-10,
             final_removal_opacity_threshold=0.005,
             reset_opacities_every=3000, # Doesn't consider iter 0
-            scale_clone_thresh='median',
-            scale_split_thresh='median'
+            scale_clone_thresh='scene_radius',
+            scale_split_thresh='scene_radius',
+            kNN_dist_thresh_min=0.5,
+            kNN_dist_thresh_max=0.35
         ),
     ),
     mapping=dict(

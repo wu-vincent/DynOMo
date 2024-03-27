@@ -652,7 +652,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             vmin = 0
             vmax = 6
             viz_gt_depth = curr_data['depth'][0].detach().cpu().numpy()
+            imageio.imwrite('test.png', viz_gt_depth.astype(np.uint8))
             normalized_depth = np.clip((viz_gt_depth - vmin) / (vmax - vmin), 0, 1)
+            imageio.imwrite('test_norm.png', normalized_depth.astype(np.uint8))
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
             # instseg
             viz_gt_instseg = curr_data['instseg'][0].detach().cpu().numpy()

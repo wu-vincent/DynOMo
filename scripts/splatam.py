@@ -36,7 +36,8 @@ from datasets.gradslam_datasets import (
     NeRFCaptureDataset,
     DynoSplatamDataset,
     SyntheticDynoSplatamDataset,
-    PointOdysseeDynoSplatamDataset
+    PointOdysseeDynoSplatamDataset,
+    DavisDynoSplatamDataset
 )
 from utils.common_utils import seed_everything, save_params_ckpt, save_params
 from utils.eval_helpers import report_loss, report_progress, eval
@@ -57,6 +58,8 @@ from utils.average_quat import averageQuaternions
 import open3d as o3d
 from utils.dyno_helpers import intersect_and_union2D, get_assignments2D, get_assignments3D, dbscan_filter
 import imageio
+
+# from utils.trajectory_evaluation import eval_traj
 
 # Make deterministic
 import torch
@@ -97,6 +100,8 @@ def get_dataset(config_dict, basedir, sequence, **kwargs):
         return SyntheticDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["pointodyssee"]:
         return PointOdysseeDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["davis"]:
+        return DavisDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
 
@@ -1286,6 +1291,11 @@ class RBDG_SLAMMER():
         # Save Parameters
         save_params(self.params, self.output_dir)
 
+        # eval_traj(
+        #     self.params,
+        #     self.config["data"]["basedir"],
+        #     os.path.basename(self.config["data"]["sequence"]))
+
         # Close WandB Run
         if self.config['use_wandb']:
             wandb.finish()
@@ -1332,7 +1342,9 @@ class RBDG_SLAMMER():
         self.initialize_time_poses(time_idx)
 
         # Densification
-        curr_data = self.densify(time_idx, curr_data, curr_gt_w2c, curr_data, keyframe_list, time_idx-1)
+        if (time_idx+1) % self.config['map_every'] == 0:
+            print('Densifying!')
+            curr_data = self.densify(time_idx, curr_data, curr_gt_w2c, curr_data, keyframe_list, time_idx-1)
 
         # Select key frames 
         selected_keyframes = self.select_keyframes(time_idx, keyframe_list, depth)
@@ -1342,7 +1354,7 @@ class RBDG_SLAMMER():
             self.track_objects(time_idx, curr_data, iter_time_idx, curr_gt_w2c)
 
         # KeyFrame-based Mapping
-        num_mapping_iters = self.config['mapping']['num_iters'] if time_idx >= 2 else self.config['tracking']['num_iters']
+        num_mapping_iters = self.config['mapping']['num_iters'] # if time_idx >= 2 else self.config['tracking']['num_iters']
         if (num_mapping_iters != 0 and (time_idx+1) % self.config['map_every'] == 0):
             # Reset Optimizer & Learning Rates for Full Map Optimization
             self.map(num_mapping_iters, time_idx, selected_keyframes, color, depth, instseg, embeddings,\
