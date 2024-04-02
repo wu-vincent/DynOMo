@@ -17,8 +17,15 @@ def weighted_l2_loss_v1(x, y, w):
 def weighted_l2_loss_v2(x, y, w):
     return torch.sqrt(((x - y) ** 2).sum(-1) * w + 1e-20).mean()
 
-def l2_loss_v2(x, y):
-    return torch.sqrt(((x - y) ** 2) + 1e-20).mean()
+def l2_loss_v2(x, y, mask=None, reduction='mean'):
+    if mask is not None:
+        loss = torch.sqrt(((x - y) ** 2) + 1e-20)[mask]
+    else:
+        loss = torch.sqrt(((x - y) ** 2) + 1e-20)
+    if reduction == 'mean':
+        return loss.mean()
+    else:
+        return loss.sum()
 
 
 def quat_mult(q1, q2):

@@ -8,6 +8,7 @@ import numpy as np
 def intersect_and_union2D(pred1: torch.tensor, pred2: torch.tensor):
     num_p1 = torch.unique(pred1).shape[0]
     num_p2 = torch.unique(pred2).shape[0]
+    print(num_p1, num_p2)
     intersect = torch.zeros(num_p1, num_p2).cuda()
     union = torch.zeros(num_p1, num_p2).cuda()
     area1 = torch.zeros(num_p1).cuda()
@@ -114,9 +115,9 @@ def get_assignments2D(pred1, pred2, filtered_instseg2, method='hungarian'):
     intersect, union, _, _ = intersect_and_union2D(pred1.clone().detach(), pred2)
     dist = 1 - intersect/union
     if method == 'greedy':
-        assignments = get_greedy_assignment(dist, seg_ids)
+        assignments = get_greedy_assignment(dist.cpu().numpy(), seg_ids)
     else:
-        assignments = get_hungarian_assignment(dist, seg_ids, seg_ids_2, filtered_instseg2)
+        assignments = get_hungarian_assignment(dist.cpu().numpy(), seg_ids, seg_ids_2, filtered_instseg2)
     pred_new = torch.zeros_like(pred2)
     seg_ids_pred2 = torch.unique(pred2)
     for a, s in zip(assignments, seg_ids_pred2):

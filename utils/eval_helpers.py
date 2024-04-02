@@ -545,25 +545,24 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
         if time_idx == 0:
             time_mask_0 = time_mask
+        im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
 
+        # Render Depth & Silhouette
         depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
                                                                         transformed_gaussians, time_idx)
         depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables['timestep'])
-
-        seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
-                                                        transformed_gaussians, time_idx, variables, moving)
-        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables['timestep'])
-
-        # Moving Gaussians
-        instseg_mov, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
-        rastered_moving = instseg_mov[1, :, :].unsqueeze(0)
-        rastered_moving_viz = rastered_moving.detach()
-
-        # Render Depth & Silhouette
         depth_sil_inst, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
         rastered_depth = depth_sil_inst[0, :, :].unsqueeze(0)
         rastered_inst = depth_sil_inst[2, :, :].unsqueeze(0)
         rastered_sil = depth_sil_inst[1, :, :].unsqueeze(0)
+
+        # Moving Gaussians
+        seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
+                                                        transformed_gaussians, time_idx, variables, moving)
+        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables['timestep'])
+        instseg_mov, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
+        rastered_moving = instseg_mov[1, :, :].unsqueeze(0)
+        rastered_moving_viz = rastered_moving.detach()
 
         # Mask invalid depth in GT
         valid_depth_mask = (curr_data['depth'] > 0)
@@ -575,7 +574,6 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         presence_sil_mask = (silhouette > sil_thres)
         
         # Render RGB and Calculate PSNR
-        im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
         if (mapping_iters==0 and not add_new_gaussians):
             weighted_im = im * presence_sil_mask * valid_depth_mask
             weighted_gt_im = curr_data['im'] * presence_sil_mask * valid_depth_mask
@@ -620,9 +618,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             viz_render_im = torch.clamp(im, 0, 1)
             viz_render_im = viz_render_im.detach().cpu().permute(1, 2, 0).numpy()
             # depth
-            vmin = 0
-            vmax = 6
             viz_render_depth = rastered_depth_viz[0].detach().cpu().numpy()
+            vmin = 0
+            vmax = viz_render_depth.max()
             normalized_depth = np.clip((viz_render_depth - vmin) / (vmax - vmin), 0, 1)
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
             # instseg
@@ -649,9 +647,9 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             viz_gt_im = torch.clamp(curr_data['im'], 0, 1)
             viz_gt_im = viz_gt_im.detach().cpu().permute(1, 2, 0).numpy()
             # depth
-            vmin = 0
-            vmax = 6
             viz_gt_depth = curr_data['depth'][0].detach().cpu().numpy()
+            vmin = 0 # viz_gt_depth.min() # 0
+            vmax = viz_gt_depth.max() # 6
             imageio.imwrite('test.png', viz_gt_depth.astype(np.uint8))
             normalized_depth = np.clip((viz_gt_depth - vmin) / (vmax - vmin), 0, 1)
             imageio.imwrite('test_norm.png', normalized_depth.astype(np.uint8))

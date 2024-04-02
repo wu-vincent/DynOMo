@@ -314,11 +314,13 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = self._preprocess_color(color)
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-            depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+            depth = np.asarray(imageio.imread(depth_path)) #, dtype=np.int64)
         elif 'npy' in depth_path:
-            depth = np.load(depth_path, mmap_mode="r").astype(dtype=np.int64)
+            depth = np.load(depth_path, mmap_mode="r") # .astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
+        
+
 
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
@@ -335,7 +337,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = torch.from_numpy(color)
         K = torch.from_numpy(K)
         depth = self._preprocess_depth(depth)
-        # imageio.imwrite('test.png', depth.squeeze().astype(np.uint8))
         depth = torch.from_numpy(depth)
 
         K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)

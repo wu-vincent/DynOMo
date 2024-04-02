@@ -42,7 +42,7 @@ def calculate_neighbors(params, variables, time_idx, num_knn=20):
 
 def calculate_neighbors_seg(
         params, variables, time_idx, instseg_mask, num_knn=20, existing_params=None, \
-            existing_instseg_mask=None, dist_to_use='rgb', use_old=False):
+            existing_instseg_mask=None, dist_to_use='rgb', use_old=True):
     embeddings_in_params = 'embeddings' in params.keys()
     device = params['means3D'].device
     if existing_params is not None:
