@@ -59,6 +59,8 @@ from utils.average_quat import averageQuaternions
 import open3d as o3d
 from utils.dyno_helpers import intersect_and_union2D, get_assignments2D, get_assignments3D, dbscan_filter
 import imageio
+import torchvision
+from torchvision.transforms.functional import InterpolationMode
 
 # from utils.trajectory_evaluation import eval_traj
 
@@ -156,10 +158,30 @@ class RBDG_SLAMMER():
         self.static_segs = None
         self.seg_idxs = None
         self.mean_trans = None
-
+    
+    def downsample_for_init(self, color, depth, instseg, prev_instseg, embeddings):
+        h, w = int(color.shape[1]*self.config['init_scale']), int(color.shape[2]*self.config['init_scale'])
+        trans_nearest = torchvision.transforms.Resize(
+                (h, w), InterpolationMode.NEAREST)
+        trans_bilinear = torchvision.transforms.Resize(
+                (h, w), InterpolationMode.BILINEAR)
+        return trans_bilinear(color), trans_nearest(depth), trans_nearest(instseg), trans_nearest(prev_instseg), trans_bilinear(embeddings)
+    
+    def upsample_for_update(self, color, depth, instseg, prev_instseg, embeddings):
+        h, w = int(color.shape[1]/self.config['init_scale']), int(color.shape[2]/self.config['init_scale'])
+        trans_nearest = torchvision.transforms.Resize(
+                (h, w), InterpolationMode.NEAREST)
+        trans_bilinear = torchvision.transforms.Resize(
+                (h, w), InterpolationMode.BILINEAR)
+        return trans_bilinear(color), trans_nearest(depth), trans_nearest(instseg), trans_nearest(prev_instseg), trans_bilinear(embeddings)
+        
     def get_pointcloud(self, color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective",
                    instseg=None, embeddings=None, time_idx=0, prev_instseg=None, support_trajs=None):
+        
+        if self.config['init_scale'] != 1:
+            color, depth, instseg, prev_instseg, embeddings = \
+                self.downsample_for_init(color, depth, instseg, prev_instseg, embeddings)
 
         shape = instseg.shape 
         if self.config['zeodepth']:
@@ -286,6 +308,10 @@ class RBDG_SLAMMER():
             instseg[:, 0] = _instseg.squeeze()
             instseg_colormap = cv2.applyColorMap(instseg.squeeze().cpu().reshape(shape[1], shape[2]).numpy().astype(np.uint8), cv2.COLORMAP_JET)
             cv2.imwrite(f'instseg_test/{time_idx}_update.png', instseg_colormap)
+        
+        if self.config['init_scale'] != 1:
+            color, depth, instseg, prev_instseg, embeddings = \
+                self.downsample_for_init(color, depth, instseg, prev_instseg, embeddings)
         
         if instseg is not None:
             mask = mask & big_segs
@@ -653,8 +679,6 @@ class RBDG_SLAMMER():
         os.makedirs('instseg_test', exist_ok=True)
         instseg_colormap = cv2.applyColorMap(prev_instseg.squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
         cv2.imwrite(f'instseg_test/{time_idx}_prev.png', instseg_colormap)
-        instseg_colormap = cv2.applyColorMap(curr_data['instseg'].squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_JET)
-        cv2.imwrite(f'instseg_test/{time_idx}_curr.png', instseg_colormap)
 
         # Silhouette Rendering
         transformed_gaussians = transform_to_frame(params, time_idx, gaussians_grad=False, camera_grad=False)
@@ -1201,7 +1225,7 @@ class RBDG_SLAMMER():
         if time_idx > 0:
             # Initialize Gaussian poses for the current frame in params
             params, variables = self.initialize_time_poses(
-                time_idx, self.params, self.variables, 'kNN', True, 'seg', support_trajs=support_trajs)
+                time_idx, self.params, self.variables, 'kNN', False, 'kNN', support_trajs=support_trajs)
         else:
             params, variables = self.params, self.variables
 

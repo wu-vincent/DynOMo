@@ -8,7 +8,6 @@ import numpy as np
 def intersect_and_union2D(pred1: torch.tensor, pred2: torch.tensor):
     num_p1 = torch.unique(pred1).shape[0]
     num_p2 = torch.unique(pred2).shape[0]
-    print(num_p1, num_p2)
     intersect = torch.zeros(num_p1, num_p2).cuda()
     union = torch.zeros(num_p1, num_p2).cuda()
     area1 = torch.zeros(num_p1).cuda()
