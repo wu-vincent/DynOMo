@@ -123,6 +123,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         relative_pose: bool = True,  # If True, the pose is relative to the first frame
         load_instseg: bool = False,
         precomp_intrinsics: bool = False,
+        load_support_trajs=False,
         **kwargs,
     ):
         super().__init__()
@@ -206,6 +207,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self.poses
         
         self.precomp_intrinsics = precomp_intrinsics
+        self.load_support_trajs = load_support_trajs
 
     def __len__(self):
         return self.num_imgs
@@ -319,8 +321,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             depth = np.load(depth_path, mmap_mode="r") # .astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
-        
-
 
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
@@ -344,61 +344,32 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         intrinsics[:3, :3] = K
 
         pose = self.transformed_poses[index]
-        if self.load_embeddings and not self.load_instseg:
-            embedding = self.read_embedding_from_file(self.embedding_paths[index])
-            return (
+
+        return_vals = [
                 color.to(self.device).type(self.dtype),
                 depth.to(self.device).type(self.dtype),
                 intrinsics.to(self.device).type(self.dtype),
-                pose.to(self.device).type(self.dtype),
-                embedding.to(self.device),  # Allow embedding to be another dtype
-                # self.retained_inds[index].item(),
-            )
-        
-        elif self.load_instseg and self.load_embeddings:
+                pose.to(self.device).type(self.dtype),]
+
+        if self.load_instseg:
             trans = torchvision.transforms.Resize(
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
-            embedding = self.read_embedding_from_file(index)
             # load and downsample to rgb size
             instseg = self._load_instseg(self.instseg_paths[index])
-            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0) # [:, 80:-80, :]
-            # color = color[:, 80:-80, :]
-            # depth = depth[:, 80:-80, :]
+            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+            return_vals = return_vals + [instseg.to(self.device).type(self.dtype)]
+        else:
+            return_vals = return_vals + [None]
 
-            # instseg = torch.zeros((color.shape[0], color.shape[1], 1))
-            return (
-                color.to(self.device).type(self.dtype),
-                depth.to(self.device).type(self.dtype),
-                intrinsics.to(self.device).type(self.dtype),
-                pose.to(self.device).type(self.dtype),
-                instseg.to(self.device).type(self.dtype),
-                embedding.to(self.device)# Allow embedding to be another dtype
-                # self.retained_inds[index].item(),
-            )
+        if self.load_embeddings:
+            embedding = self.read_embedding_from_file(self.embedding_paths[index])
+            return_vals = return_vals + [embedding.to(self.device)],  # Allow embedding to be another dtype
+        else:
+            return_vals = return_vals + [None]
         
-        elif self.load_instseg:
-            trans = torchvision.transforms.Resize(
-                (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
-            # load and downsample to rgb size
-            if self.instseg_paths is None:
-                instseg = torch.ones_like(color)[:, :, 0].unsqueeze(2)
-            else:
-                instseg = self._load_instseg(self.instseg_paths[index])
-                instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
-            # imageio.imwrite('test.png', depth.numpy().squeeze().astype(np.uint8))
-            return (
-                color.to(self.device).type(self.dtype),
-                depth.to(self.device).type(self.dtype),
-                intrinsics.to(self.device).type(self.dtype),
-                pose.to(self.device).type(self.dtype),
-                instseg.to(self.device).type(self.dtype),  # Allow embedding to be another dtype
-                # self.retained_inds[index].item(),
-            )
+        if self.load_support_trajs:
+            return_vals = return_vals + [np.stack([self.support_trajs[0, 0, 0], self.support_trajs[0, 0, index]])]
+        else:
+            return_vals = return_vals + [None]
 
-        return (
-            color.to(self.device).type(self.dtype),
-            depth.to(self.device).type(self.dtype),
-            intrinsics.to(self.device).type(self.dtype),
-            pose.to(self.device).type(self.dtype),
-            # self.retained_inds[index].item(),
-        )
+        return return_vals

@@ -504,11 +504,14 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
     for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
+        data = dataset[time_idx]
+        color, depth, intrinsics, pose = data[0], data[1], data[2], data[3]
+        instseg = data[4]
         if dataset.load_embeddings:
-            color, depth, intrinsics, pose, instseg, embeddings = dataset[time_idx]
-        else:
-            color, depth, intrinsics, pose, instseg = dataset[time_idx]
-            instseg = instseg.permute(2, 0, 1)
+            embeddings = data[5].permute(2, 0, 1)
+        if dataset.load_support_trajs:
+            support_trajs = data[6]
+                
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
         intrinsics = intrinsics[:3, :3]

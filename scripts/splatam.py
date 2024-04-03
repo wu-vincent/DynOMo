@@ -159,7 +159,7 @@ class RBDG_SLAMMER():
 
     def get_pointcloud(self, color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective",
-                   instseg=None, embeddings=None, time_idx=0, prev_instseg=None):
+                   instseg=None, embeddings=None, time_idx=0, prev_instseg=None, support_trajs=None):
 
         shape = instseg.shape 
         if self.config['zeodepth']:
@@ -174,10 +174,21 @@ class RBDG_SLAMMER():
         FX = intrinsics[0][0]
         FY = intrinsics[1][1]
 
+
         # Compute indices of pixels
         x_grid, y_grid = torch.meshgrid(torch.arange(width).cuda().float(), 
                                         torch.arange(height).cuda().float(),
                                         indexing='xy')
+        '''
+        if support_trajs is not None:
+            print(support_trajs.shape)
+            support_trajs_mask = torch.logical_and(x_grid == support_trajs[0, :, 0], y_grid == support_trajs[0, :, 1])
+            print(support_trajs_mask)
+            print(support_trajs_mask.shape)
+        print(support_trajs)
+        print(support_trajs.shape)
+        quit()
+        '''
         xx = (x_grid - CX)/FX
         yy = (y_grid - CY)/FY
         xx = xx.reshape(-1)
@@ -289,7 +300,7 @@ class RBDG_SLAMMER():
         else:
             return point_cld, instseg
 
-    def initialize_params(self, init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution):
+    def initialize_params(self, init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, support_trajs=None):
         num_pts = init_pt_cld.shape[0]
         means3D = init_pt_cld[:, :3] # [num_gaussians, 3]
         unnorm_rots = torch.from_numpy(np.tile([1, 0, 0, 0], (num_pts, 1))) # [num_gaussians, 4]
@@ -367,151 +378,6 @@ class RBDG_SLAMMER():
             return torch.optim.Adam(param_groups)
         else:
             return torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
-
-
-    def get_loss(self, params, variables, curr_data, iter_time_idx, loss_weights, use_sil_for_loss,
-                sil_thres, use_l1, ignore_outlier_depth_loss, tracking=False, 
-                mapping=False, do_ba=False, plot_dir=None, visualize_tracking_loss=False, \
-                    tracking_iteration=None):
-        
-        # Initialize Loss Dictionary
-        losses = {}
-
-        # Transform Gaussians to camera frame
-        if tracking:
-            # Get current frame Gaussians, where only the camera pose gets gradient
-            transformed_gaussians = transform_to_frame(params, iter_time_idx, 
-                                                gaussians_grad=False,
-                                                camera_grad=True)
-        elif mapping:
-            if do_ba:
-                # Get current frame Gaussians, where both camera pose and Gaussians get gradient
-                transformed_gaussians = transform_to_frame(params, iter_time_idx,
-                                                    gaussians_grad=True,
-                                                    camera_grad=True)
-            else:
-                # Get current frame Gaussians, where only the Gaussians get gradient
-                transformed_gaussians = transform_to_frame(params, iter_time_idx,
-                                                    gaussians_grad=True,
-                                                    camera_grad=False)
-        else:
-            # Get current frame Gaussians, where only the Gaussians get gradient
-            transformed_gaussians = transform_to_frame(params, iter_time_idx,
-                                                gaussians_grad=True,
-                                                camera_grad=False)
-
-        # Initialize Render Variables
-        rendervar = transformed_params2rendervar(params, transformed_gaussians)
-        depth_sil_rendervar = transformed_params2depthplussilhouette(params, curr_data['w2c'],
-                                                                    transformed_gaussians)
-
-        # RGB Rendering
-        rendervar['means2D'].retain_grad()
-        im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
-        variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
-
-        # Depth & Silhouette Rendering
-        depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
-        depth = depth_sil[0, :, :].unsqueeze(0)
-        silhouette = depth_sil[1, :, :]
-        presence_sil_mask = (silhouette > sil_thres)
-        depth_sq = depth_sil[2, :, :].unsqueeze(0)
-        uncertainty = depth_sq - depth**2
-        uncertainty = uncertainty.detach()
-
-        # Mask with valid depth values (accounts for outlier depth values)
-        nan_mask = (~torch.isnan(depth)) & (~torch.isnan(uncertainty))
-        if ignore_outlier_depth_loss:
-            depth_error = torch.abs(curr_data['depth'] - depth) * (curr_data['depth'] > 0)
-            mask = (depth_error < 10*depth_error.median())
-            mask = mask & (curr_data['depth'] > 0)
-        else:
-            mask = (curr_data['depth'] > 0)
-
-        mask = mask & nan_mask
-        # Mask with presence silhouette mask (accounts for empty space)
-        if tracking and use_sil_for_loss:
-            mask = mask & presence_sil_mask
-
-        # Depth loss
-        if use_l1:
-            mask = mask.detach()
-            if tracking:
-                losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].sum()
-            else:
-                losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].mean()
-        
-        # RGB Loss
-        if tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
-            color_mask = torch.tile(mask, (3, 1, 1))
-            color_mask = color_mask.detach()
-            losses['im'] = torch.abs(curr_data['im'] - im)[color_mask].sum()
-        elif tracking:
-            losses['im'] = torch.abs(curr_data['im'] - im).sum()
-        else:
-            losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (1.0 - calc_ssim(im, curr_data['im']))
-        
-        # EMBEDDING LOSS
-        if self.dataset.load_embeddings:
-            pass
-            # losses['emb'] = curr_data['embeddings']
-
-        # Visualize the Diff Images
-        if tracking and visualize_tracking_loss:
-            fig, ax = plt.subplots(2, 4, figsize=(12, 6))
-            weighted_render_im = im * color_mask
-            weighted_im = curr_data['im'] * color_mask
-            weighted_render_depth = depth * mask
-            weighted_depth = curr_data['depth'] * mask
-            diff_rgb = torch.abs(weighted_render_im - weighted_im).mean(dim=0).detach().cpu()
-            diff_depth = torch.abs(weighted_render_depth - weighted_depth).mean(dim=0).detach().cpu()
-            viz_img = torch.clip(weighted_im.permute(1, 2, 0).detach().cpu(), 0, 1)
-            ax[0, 0].imshow(viz_img)
-            ax[0, 0].set_title("Weighted GT RGB")
-            viz_render_img = torch.clip(weighted_render_im.permute(1, 2, 0).detach().cpu(), 0, 1)
-            ax[1, 0].imshow(viz_render_img)
-            ax[1, 0].set_title("Weighted Rendered RGB")
-            ax[0, 1].imshow(weighted_depth[0].detach().cpu(), cmap="jet", vmin=0, vmax=6)
-            ax[0, 1].set_title("Weighted GT Depth")
-            ax[1, 1].imshow(weighted_render_depth[0].detach().cpu(), cmap="jet", vmin=0, vmax=6)
-            ax[1, 1].set_title("Weighted Rendered Depth")
-            ax[0, 2].imshow(diff_rgb, cmap="jet", vmin=0, vmax=0.8)
-            ax[0, 2].set_title(f"Diff RGB, Loss: {torch.round(losses['im'])}")
-            ax[1, 2].imshow(diff_depth, cmap="jet", vmin=0, vmax=0.8)
-            ax[1, 2].set_title(f"Diff Depth, Loss: {torch.round(losses['depth'])}")
-            ax[0, 3].imshow(presence_sil_mask.detach().cpu(), cmap="gray")
-            ax[0, 3].set_title("Silhouette Mask")
-            ax[1, 3].imshow(mask[0].detach().cpu(), cmap="gray")
-            ax[1, 3].set_title("Loss Mask")
-            # Turn off axis
-            for i in range(2):
-                for j in range(4):
-                    ax[i, j].axis('off')
-            # Set Title
-            fig.suptitle(f"Tracking Iteration: {tracking_iteration}", fontsize=16)
-            # Figure Tight Layout
-            fig.tight_layout()
-            os.makedirs(plot_dir, exist_ok=True)
-            plt.savefig(os.path.join(plot_dir, f"tmp.png"), bbox_inches='tight')
-            plt.close()
-            plot_img = cv2.imread(os.path.join(plot_dir, f"tmp.png"))
-            cv2.imshow('Diff Images', plot_img)
-            cv2.waitKey(1)
-            ## Save Tracking Loss Viz
-            # save_plot_dir = os.path.join(plot_dir, f"tracking_%04d" % iter_time_idx)
-            # os.makedirs(save_plot_dir, exist_ok=True)
-            # plt.savefig(os.path.join(save_plot_dir, f"%04d.png" % tracking_iteration), bbox_inches='tight')
-            # plt.close()
-
-        weighted_losses = {k: v * loss_weights[k] for k, v in losses.items()}
-        loss = sum(weighted_losses.values())
-
-        seen = radius > 0
-        variables['max_2D_radius'][seen] = torch.max(radius[seen], variables['max_2D_radius'][seen])
-        variables['seen'] = seen
-        weighted_losses['loss'] = loss
-
-        return loss, weighted_losses, variables
 
     def get_loss_dyno(self, params, variables, curr_data, iter_time_idx, cam_tracking=False, obj_tracking=False,
                 mapping=False, iter=0, config=None):
@@ -874,25 +740,6 @@ class RBDG_SLAMMER():
             self.variables['neighbor_dist'] = torch.cat((self.variables['neighbor_dist'], new_variables['neighbor_dist']), dim=0)
 
         return curr_data
-            
-    def initialize_camera_pose(self, curr_time_idx, forward_prop):
-        with torch.no_grad():
-            if curr_time_idx > 1 and forward_prop:
-                # Initialize the camera pose for the current frame based on a constant velocity model
-                # Rotation
-                prev_rot1 = F.normalize(self.params['cam_unnorm_rots'][..., curr_time_idx-1].detach())
-                prev_rot2 = F.normalize(self.params['cam_unnorm_rots'][..., curr_time_idx-2].detach())
-                new_rot = F.normalize(prev_rot1 + (prev_rot1 - prev_rot2))
-                self.params['cam_unnorm_rots'][..., curr_time_idx] = new_rot.detach()
-                # Translation
-                prev_tran1 = self.params['cam_trans'][..., curr_time_idx-1].detach()
-                prev_tran2 = self.params['cam_trans'][..., curr_time_idx-2].detach()
-                new_tran = prev_tran1 + (prev_tran1 - prev_tran2)
-                self.params['cam_trans'][..., curr_time_idx] = new_tran.detach()
-            else:
-                # Initialize the camera pose for the current frame
-                self.params['cam_unnorm_rots'][..., curr_time_idx] = self.params['cam_unnorm_rots'][..., curr_time_idx-1].detach()
-                self.params['cam_trans'][..., curr_time_idx] = self.params['cam_trans'][..., curr_time_idx-1].detach()
 
     def make_gaussians_static(self, curr_time_idx, delta_rot, delta_tran, determine_mov):
         mask = (curr_time_idx - self.variables['timestep'] >= 2).squeeze()
@@ -937,7 +784,20 @@ class RBDG_SLAMMER():
             else:
                 return delta_tran, delta_tran, delta_tran
     
-    def initialize_time_poses(self, curr_time_idx, params, variables, mov_init_by, mov_static_init, determine_mov, forward_prop=True):
+    
+    def support_trajs_to_xyz(self, support_trajs):
+        # Initialize point cloud
+        pts_cam = torch.stack((xx * depth_z, yy * depth_z, depth_z), dim=-1)
+        if transform_pts:
+            pix_ones = torch.ones(height * width, 1).cuda().float()
+            pts4 = torch.cat((pts_cam, pix_ones), dim=1)
+            c2w = torch.inverse(w2c)
+            pts = (c2w @ pts4.T).T[:, :3]
+        else:
+            pts = pts_cam
+    
+    
+    def initialize_time_poses(self, curr_time_idx, params, variables, mov_init_by, mov_static_init, determine_mov, forward_prop=True, support_trajs=None):
         # for timestamp 1
         mask = (curr_time_idx - variables['timestep'] == 1).squeeze()
         with torch.no_grad():
@@ -1020,15 +880,16 @@ class RBDG_SLAMMER():
         return params_to_store
     
     def initialize_first_timestep(self, scene_radius_depth_ratio, \
-            mean_sq_dist_method, gaussian_distribution=None):
+            mean_sq_dist_method, gaussian_distribution=None, support_trajs=None):
         # Get RGB-D Data & Camera Parameters
         embeddings = None
+        data = self.dataset[0]
+        color, depth, self.intrinsics, pose = data[0], data[1], data[2], data[3]
+        instseg = data[4].permute(2, 0, 1)
         if self.dataset.load_embeddings:
-            color, depth, self.intrinsics, pose, instseg, embeddings = self.dataset[0]
-            embeddings = embeddings.permute(2, 0, 1)
-        else:
-            color, depth, self.intrinsics, pose, instseg = self.dataset[0]
-        instseg = instseg.permute(2, 0, 1)
+            embeddings = data[5].permute(2, 0, 1)
+        if self.dataset.load_support_trajs:
+            support_trajs = data[6]
 
         # Process RGB-D Data
         color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
@@ -1057,7 +918,7 @@ class RBDG_SLAMMER():
         init_pt_cld, mean3_sq_dist, _ = self.get_pointcloud(color, depth, self.densify_intrinsics, w2c, 
                                                     mask=mask, compute_mean_sq_dist=True, 
                                                     mean_sq_dist_method=mean_sq_dist_method,
-                                                    instseg=instseg, embeddings=embeddings)
+                                                    instseg=instseg, embeddings=embeddings, support_trajs=support_trajs)
 
         pcd = o3d.geometry.PointCloud()
         v3d = o3d.utility.Vector3dVector
@@ -1067,7 +928,7 @@ class RBDG_SLAMMER():
         # quit()
         # Initialize Parameters
         self.initialize_params(
-            init_pt_cld, self.num_frames, mean3_sq_dist, gaussian_distribution)
+            init_pt_cld, self.num_frames, mean3_sq_dist, gaussian_distribution, support_trajs)
         
         # Initialize an estimate of scene radius for Gaussian-Splatting Densification
         self.variables['scene_radius'] = torch.max(depth)/scene_radius_depth_ratio
@@ -1128,59 +989,13 @@ class RBDG_SLAMMER():
         if self.num_frames == -1:
             self.num_frames = len(self.dataset)
 
-        # Init seperate dataloader for densification if required
-        if self.seperate_densification_res:
-            self.densify_dataset = get_dataset(
-                config_dict=self.gradslam_data_cfg,
-                basedir=self.dataset_config["basedir"],
-                sequence=os.path.basename(self.dataset_config["sequence"]),
-                start=self.dataset_config["start"],
-                end=self.dataset_config["end"],
-                stride=self.dataset_config["stride"],
-                desired_height=self.dataset_config["densification_image_height"],
-                desired_width=self.dataset_config["densification_image_width"],
-                device=self.device,
-                relative_pose=True,
-                ignore_bad=self.dataset_config["ignore_bad"],
-                use_train_split=self.dataset_config["use_train_split"],
-            )
-            # Initialize Parameters, Canonical & Densification Camera parameters
-            first_frame_w2c = self.initialize_first_timestep(
-                                            self.config['scene_radius_depth_ratio'],
-                                            self.config['mean_sq_dist_method'],
-                                            densify_dataset=self.densify_dataset,
-                                            gaussian_distribution=self.config['gaussian_distribution'])                                                                                                                  
-        else:
-            # Initialize Parameters & Canoncial Camera parameters
-            self.densify_cam, self.densify_intrinsics, self.densify_dataset = None, None, None
-            first_frame_w2c = self.initialize_first_timestep(
-                                            self.config['scene_radius_depth_ratio'],
-                                            self.config['mean_sq_dist_method'],
-                                            gaussian_distribution=self.config['gaussian_distribution'])
+        self.densify_cam, self.densify_intrinsics, self.densify_dataset = None, None, None
+        first_frame_w2c = self.initialize_first_timestep(
+                                        self.config['scene_radius_depth_ratio'],
+                                        self.config['mean_sq_dist_method'],
+                                        gaussian_distribution=self.config['gaussian_distribution'])
         
-        # Init seperate dataloader for tracking if required
-        if self.seperate_tracking_res:
-            self.tracking_dataset = get_dataset(
-                config_dict=self.gradslam_data_cfg,
-                basedir=self.dataset_config["basedir"],
-                sequence=os.path.basename(self.dataset_config["sequence"]),
-                start=self.dataset_config["start"],
-                end=self.dataset_config["end"],
-                stride=self.dataset_config["stride"],
-                desired_height=self.dataset_config["tracking_image_height"],
-                desired_width=self.dataset_config["tracking_image_width"],
-                device=self.device,
-                relative_pose=True,
-                ignore_bad=self.dataset_config["ignore_bad"],
-                use_train_split=self.dataset_config["use_train_split"],
-            )
-            tracking_color, _, self.tracking_intrinsics, _ = self.tracking_dataset[0]
-            tracking_color = tracking_color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-            self.tracking_intrinsics = self.tracking_intrinsics[:3, :3]
-            self.tracking_cam = setup_camera(tracking_color.shape[2], tracking_color.shape[1], 
-                                        self.tracking_intrinsics.cpu().numpy(), self.first_frame_w2c.detach().cpu().numpy())
-        else:
-            self.tracking_cam, self.tracking_intrinsics, self.tracking_dataset = None, None, None
+        self.tracking_cam, self.tracking_intrinsics, self.tracking_dataset = None, None, None
         
         return first_frame_w2c
 
@@ -1274,16 +1089,19 @@ class RBDG_SLAMMER():
         # Iterate over Scan
         for time_idx in tqdm(range(checkpoint_time_idx, self.num_frames)):
             # Load RGBD frames incrementally instead of all frames
-            embeddings = None
+            embeddings, support_trajs = None, None
+            data =  self.dataset[time_idx]
+            color, depth, self.intrinsics, gt_pose = data[0], data[1], data[2], data[3]
+            instseg = data[4]
             if self.dataset.load_embeddings:
-                color, depth, _, gt_pose, instseg, embeddings = self.dataset[time_idx]
-            else:
-                color, depth, _, gt_pose, instseg = self.dataset[time_idx]
+                embeddings = data[5].permute(2, 0, 1)
+            if self.dataset.load_support_trajs:
+                support_trajs = data[6]
 
             print(f"Optimizing time step {time_idx}...")
             gt_w2c_all_frames, keyframe_list, keyframe_time_indices = \
                 self.optimize_time(color, depth, gt_pose, time_idx, gt_w2c_all_frames, curr_data, \
-                    tracking_curr_data, densify_curr_data, keyframe_list, keyframe_time_indices, instseg, embeddings)
+                    tracking_curr_data, densify_curr_data, keyframe_list, keyframe_time_indices, instseg, embeddings, support_trajs)
 
         # Compute Average Runtimes
         if self.tracking_frame_time_sum == 0:
@@ -1349,7 +1167,7 @@ class RBDG_SLAMMER():
 
 
     def optimize_time(self, color, depth, gt_pose, time_idx, gt_w2c_all_frames, _curr_data, \
-        tracking_curr_data, densify_curr_data, keyframe_list, keyframe_time_indices, instseg, embeddings):
+        tracking_curr_data, densify_curr_data, keyframe_list, keyframe_time_indices, instseg, embeddings, support_trajs):
 
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
@@ -1360,7 +1178,7 @@ class RBDG_SLAMMER():
             instseg = instseg.permute(2, 0, 1)
         if embeddings is not None:
             embeddings = embeddings.permute(2, 0, 1)
-            
+
         gt_w2c_all_frames.append(gt_w2c)
         curr_gt_w2c = gt_w2c_all_frames
         # Optimize only current time step for tracking
@@ -1378,17 +1196,12 @@ class RBDG_SLAMMER():
             'w2c': _curr_data['w2c']}
 
         # Initialize the camera pose for the current frame in params
-        if time_idx > 0:
-            self.moving_forward_thresh = self.config['mov_thresh'] # (self.variables['moving'].median() / 4).cpu().item()
-            self.initialize_camera_pose(
-                time_idx, forward_prop=self.config['tracking']['forward_prop'])
-        else:
-            self.moving_forward_thresh = self.config['mov_thresh']
+        self.moving_forward_thresh = self.config['mov_thresh']
 
         if time_idx > 0:
             # Initialize Gaussian poses for the current frame in params
             params, variables = self.initialize_time_poses(
-                time_idx, self.params, self.variables, 'kNN', True, 'seg')
+                time_idx, self.params, self.variables, 'kNN', True, 'seg', support_trajs=support_trajs)
         else:
             params, variables = self.params, self.variables
 
@@ -1400,7 +1213,7 @@ class RBDG_SLAMMER():
         if time_idx > 0:
             # Initialize Gaussian poses for the current frame in params
             self.params, self.variables = self.initialize_time_poses(
-                time_idx, self.params, self.variables, self.config['mov_init_by'], self.config['mov_static_init'], self.config['determine_mov'])
+                time_idx, self.params, self.variables, self.config['mov_init_by'], self.config['mov_static_init'], self.config['determine_mov'], support_trajs=support_trajs)
 
         # Select key frames 
         selected_keyframes = self.select_keyframes(time_idx, keyframe_list, depth)
@@ -1415,23 +1228,6 @@ class RBDG_SLAMMER():
             # Reset Optimizer & Learning Rates for Full Map Optimization
             self.map(num_mapping_iters, time_idx, selected_keyframes, color, depth, instseg, embeddings,\
                     keyframe_list, gt_w2c_all_frames, curr_data)
-        
-        # Evaluate Trajectory
-        if time_idx == 0 or (time_idx+1) % self.config['report_global_progress_every'] == 0:
-            try:
-                # Report Trajectory Evaluation Progress
-                progress_bar = tqdm(range(1), desc=f"Trajectory Evaluation Time Step: {time_idx}")
-                with torch.no_grad():
-                    if self.config['use_wandb']:
-                        report_progress(self.params, curr_data, 1, progress_bar, time_idx, sil_thres=self.config['mapping']['sil_thres'], 
-                                        wandb_run=self.wandb_run, wandb_step=self.wandb_time_step, wandb_save_qual=self.config['wandb']['save_qual'],
-                                        mapping=True, online_time_idx=time_idx, global_logging=True)
-                    else:
-                        report_progress(self.params, curr_data, 1, progress_bar, time_idx, sil_thres=self.config['mapping']['sil_thres'], 
-                                        mapping=True, online_time_idx=time_idx)
-                progress_bar.close()
-            except:
-                print('Failed to evaluate trajectory.')
         
         # Add frame to keyframe list
         if ((time_idx == 0) or ((time_idx+1) % self.config['keyframe_every'] == 0) or \
@@ -1494,7 +1290,7 @@ class RBDG_SLAMMER():
                 for k, p in self.params.items():
                     if 'cam' in k:
                         continue
-                    if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                    if k not in ['rgb_colors', 'logit_opacities', 'log_scales'] :
                         continue
                     p.register_hook(get_hook(self.variables['timestep'] != iter_time_idx))
             
@@ -1514,28 +1310,9 @@ class RBDG_SLAMMER():
             # Backprop
             loss.backward()
 
-            '''# get gradients to determine visible
-            grads = {'sum': torch.zeros_like(self.params['logit_opacities']).squeeze().cpu()}
-            for k, p in self.params.items():
-                if 'cam' in k:
-                    continue
-                if p.grad is None:
-                    continue
-
-                if len(p.shape) == 3:
-                    grads[k] = torch.linalg.norm(p.grad.clone().detach().cpu()[:, :, iter_time_idx], dim=1)
-                elif len(p.shape) == 2:
-                    grads[k] = torch.linalg.norm(p.grad.clone().detach().cpu(), dim=1)
-                else:
-                    grads[k] = p.grad.clone().detach().cpu()
-                grads['sum'] += grads[k]
-            # print(torch.histogram(grads['sum'], 100))
-            # quit()'''
-            grads = None
-                
             if self.config['use_wandb']:
                 # Report Loss
-                self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True, params=self.params, grads=grads)
+                self.wandb_obj_tracking_step = report_loss(losses, self.wandb_run, self.wandb_obj_tracking_step, obj_tracking=True, params=self.params, grads=None)
 
             with torch.no_grad():
                 # Prune Gaussians
@@ -1596,106 +1373,6 @@ class RBDG_SLAMMER():
         tracking_end_time = time.time()
         self.tracking_obj_frame_time_sum += tracking_end_time - tracking_start_time
         self.tracking_obj_frame_time_sum += 1
-
-    def track_camera(self, time_idx, tracking_curr_data, iter_time_idx, curr_gt_w2c):       
-        tracking_start_time = time.time()
-        if time_idx > 0 and not self.config['tracking']['use_gt_poses']:
-            # Reset Optimizer & Learning Rates for tracking
-            optimizer = self.initialize_optimizer(self.params, self.config['tracking']['lrs'], tracking=True)
-            # Keep Track of Best Candidate Rotation & Translation
-            candidate_cam_unnorm_rot = self.params['cam_unnorm_rots'][..., time_idx].detach().clone()
-            candidate_cam_tran = self.params['cam_trans'][..., time_idx].detach().clone()
-            current_min_loss = float(1e20)
-            # Tracking Optimization
-            iter = 0
-            do_continue_slam = False
-            num_iters_tracking = self.config['tracking']['num_iters']
-            progress_bar = tqdm(range(num_iters_tracking), desc=f"Tracking Time Step: {time_idx}")
-            while True:
-                iter_start_time = time.time()
-                # Loss for current frame
-                loss, losses, self.variables = self.get_loss(self.params, self.variables, tracking_curr_data, iter_time_idx, \
-                    self.config['tracking']['loss_weights'], self.config['tracking']['use_sil_for_loss'], self.config['tracking']['sil_thres'],
-                    self.config['tracking']['use_l1'], self.config['tracking']['ignore_outlier_depth_loss'], tracking=True, 
-                    plot_dir=self.eval_dir, visualize_tracking_loss=self.config['tracking']['visualize_tracking_loss'], tracking_iteration=iter)
-                if self.config['use_wandb']:
-                    # Report Loss
-                    self.wandb_tracking_step = report_loss(losses, self.wandb_run, self.wandb_tracking_step, tracking=True)
-                # Backprop
-                loss.backward()
-                # Optimizer Update
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-                with torch.no_grad():
-                    # Save the best candidate rotation & translation
-                    if loss < current_min_loss:
-                        current_min_loss = loss
-                        candidate_cam_unnorm_rot = self.params['cam_unnorm_rots'][..., time_idx].detach().clone()
-                        candidate_cam_tran = self.params['cam_trans'][..., time_idx].detach().clone()
-                    # Report Progress
-                    if self.config['report_iter_progress']:
-                        if self.config['use_wandb']:
-                            report_progress(self.params, tracking_curr_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['tracking']['sil_thres'], tracking=True,
-                                            wandb_run=self.wandb_run, wandb_step=self.wandb_tracking_step, wandb_save_qual=self.config['wandb']['save_qual'])
-                        else:
-                            report_progress(self.params, tracking_curr_data, iter+1, progress_bar, iter_time_idx, sil_thres=self.config['tracking']['sil_thres'], tracking=True)
-                    else:
-                        progress_bar.update(1)
-                # Update the runtime numbers
-                iter_end_time = time.time()
-                self.tracking_iter_time_sum += iter_end_time - iter_start_time
-                self.tracking_frame_time_sum += 1
-                # Check if we should stop tracking
-                iter += 1
-                if iter == num_iters_tracking:
-                    if losses['depth'] < self.config['tracking']['depth_loss_thres'] and self.config['tracking']['use_depth_loss_thres']:
-                        break
-                    elif self.config['tracking']['use_depth_loss_thres'] and not do_continue_slam:
-                        do_continue_slam = True
-                        progress_bar = tqdm(range(num_iters_tracking), desc=f"Tracking Time Step: {time_idx}")
-                        num_iters_tracking = 2*num_iters_tracking
-                        if self.config['use_wandb']:
-                            self.wandb_run.log({"Tracking/Extra Tracking Iters Frames": time_idx,
-                                        "Tracking/step": self.wandb_time_step})
-                    else:
-                        break
-
-            progress_bar.close()
-            # Copy over the best candidate rotation & translation
-            with torch.no_grad():
-                self.params['cam_unnorm_rots'][..., time_idx] = candidate_cam_unnorm_rot
-                self.params['cam_trans'][..., time_idx] = candidate_cam_tran
-        elif time_idx > 0 and self.config['tracking']['use_gt_poses']:
-            with torch.no_grad():
-                # Get the ground truth pose relative to frame 0
-                rel_w2c = curr_gt_w2c[-1]
-                rel_w2c_rot = rel_w2c[:3, :3].unsqueeze(0).detach()
-                rel_w2c_rot_quat = matrix_to_quaternion(rel_w2c_rot)
-                rel_w2c_tran = rel_w2c[:3, 3].detach()
-                # Update the camera parameters
-                self.params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
-                self.params['cam_trans'][..., time_idx] = rel_w2c_tran
-        
-        # Update the runtime numbers
-        tracking_end_time = time.time()
-        self.tracking_frame_time_sum += tracking_end_time - tracking_start_time
-        self.tracking_frame_time_sum += 1
-
-        if time_idx == 0 or (time_idx+1) % self.config['report_global_progress_every'] == 0:
-            try:
-                # Report Final Tracking Progress
-                progress_bar = tqdm(range(1), desc=f"Tracking Result Time Step: {time_idx}")
-                with torch.no_grad():
-                    if self.config['use_wandb']:
-                        report_progress(self.params, tracking_curr_data, 1, progress_bar, iter_time_idx, sil_thres=self.config['tracking']['sil_thres'], tracking=True,
-                                        wandb_run=self.wandb_run, wandb_step=self.wandb_time_step, wandb_save_qual=self.config['wandb']['save_qual'], global_logging=True)
-                    else:
-                        report_progress(self.params, tracking_curr_data, 1, progress_bar, iter_time_idx, sil_thres=self.config['tracking']['sil_thres'], tracking=True)
-                progress_bar.close()
-            except:
-                ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
-                save_params_ckpt(self.params, ckpt_output_dir, time_idx)
-                print('Failed to evaluate trajectory.')
 
     def densify(self, time_idx, curr_data, curr_gt_w2c, densify_curr_data, keyframe_list, prev_time_idx, params, variables):
         if self.config['mapping']['add_new_gaussians'] and time_idx >= 1:
@@ -1805,8 +1482,6 @@ class RBDG_SLAMMER():
                 self.wandb_mapping_step = report_loss(losses, self.wandb_run, self.wandb_mapping_step, mapping=True)
             
             if (iter+1)%self.config['mapping']['batch_size'] == 0:
-                # Backprop
-                loss.backward()
 
                 if time_idx >= 2 and self.config['mapping']['disable_mov_grads']:
                     for k, p in self.params.items():
@@ -1823,14 +1498,14 @@ class RBDG_SLAMMER():
 
                 if self.config['mapping']['disable_rgb_grads_old']:
                     for k, p in self.params.items():
-                        if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                        if k not in ['rgb_colors', 'logit_opacities', 'log_scales'] :
                             continue
                         p.register_hook(
                             get_hook(self.variables['timestep'] != iter_time_idx))
                 
                 if time_idx >= 2 and self.config['mapping']['disable_rgb_grads_mov']:
                     for k, p in self.params.items():
-                        if k not in ['rgb_colors', 'logit_opacities', 'logit_scales'] :
+                        if k not in ['rgb_colors', 'logit_opacities', 'log_scales'] :
                             continue
                         if self.config['use_rendered_moving']:
                             p.register_hook(
@@ -1840,7 +1515,9 @@ class RBDG_SLAMMER():
                             p.register_hook(
                                 get_hook(
                                     (self.variables['moving'] > self.moving_forward_thresh) & (self.variables['timestep'] >= iter_time_idx - 2)))
-                    
+                # Backprop
+                loss.backward()
+                
                 # Optimizer Update
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
