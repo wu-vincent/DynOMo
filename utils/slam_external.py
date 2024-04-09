@@ -173,7 +173,6 @@ def remove_points(to_remove, params, variables, optimizer):
     variables['means2D_grad'] = variables['means2D_grad'][to_keep]
     variables['means2D'] = variables['means2D'][to_keep]
     variables['moving'] = variables['moving'][to_keep]
-    variables['dyno_mask'] = variables['dyno_mask'][to_keep]
 
     if 'instseg' in variables.keys():
         variables['instseg'] = variables['instseg'][to_keep]
@@ -270,7 +269,6 @@ def clone_vars(params, variables, to_clone):
     variables['means2D_grad'] = torch.cat((variables['means2D_grad'], variables['means2D_grad'][to_clone]), dim=0)
     variables['means2D'] = torch.cat((variables['means2D'], variables['means2D'][to_clone]), dim=0)
     variables['moving'] = torch.cat((variables['moving'], variables['moving'][to_clone]), dim=0)
-    variables['dyno_mask'] = torch.cat((variables['dyno_mask'], variables['dyno_mask'][to_clone]), dim=0)
 
     if 'normals' in variables.keys():
         variables['normals'] = torch.cat((variables['normals'], variables['normals'][to_clone]), dim=0)
@@ -302,7 +300,6 @@ def split_vars(params, variables, to_split, n):
     variables['means2D_grad'] = torch.cat((variables['means2D_grad'], variables['means2D_grad'][to_split].repeat(n, 1)), dim=0)
     variables['means2D'] = torch.cat((variables['means2D'], variables['means2D'][to_split].repeat(n, 1)), dim=0)
     variables['moving'] = torch.cat((variables['moving'], variables['moving'][to_split].repeat(n)), dim=0)
-    variables['dyno_mask'] = torch.cat((variables['dyno_mask'], variables['dyno_mask'][to_split].repeat(n)), dim=0)
     
     if 'normals' in variables.keys():
         variables['normals'] = torch.cat((variables['normals'], variables['normals'][to_split].repeat(n, 1)), dim=0)

@@ -346,8 +346,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         pose = self.transformed_poses[index]
 
         return_vals = [
-                color.to(self.device).type(self.dtype),
-                depth.to(self.device).type(self.dtype),
+                color.to(self.device).type(self.dtype).permute(2, 0, 1) / 255,
+                depth.to(self.device).type(self.dtype).permute(2, 0, 1),
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),]
 
@@ -356,13 +356,13 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
             # load and downsample to rgb size
             instseg = self._load_instseg(self.instseg_paths[index])
-            instseg = trans(torch.from_numpy(instseg).unsqueeze(0)).permute(1, 2, 0)
+            instseg = trans(torch.from_numpy(instseg).unsqueeze(0))            
             return_vals = return_vals + [instseg.to(self.device).type(self.dtype)]
         else:
             return_vals = return_vals + [None]
 
         if self.load_embeddings:
-            embedding = self.read_embedding_from_file(self.embedding_paths[index])
+            embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
             return_vals = return_vals + [embedding.to(self.device)],  # Allow embedding to be another dtype
         else:
             return_vals = return_vals + [None]

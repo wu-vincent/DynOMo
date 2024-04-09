@@ -105,7 +105,7 @@ def evaluate_ate(gt_traj, est_traj):
     return avg_trans_error
 
 
-def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False, params=None, grads=None):
+def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, obj_tracking=False, delta_optim=False, params=None, grads=None):
     # Update loss dict
     loss_dict = {'Loss': losses['loss'].item(),
                  'Image Loss': losses['im'].item(),
@@ -115,6 +115,12 @@ def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, ob
                  'Rotation Loss': losses['rot'].item(),
                  'Rigid Loss': losses['rigid'].item(),
                  'Isometry Loss': losses['iso'].item()}
+        loss_dict.update(moving_losses)
+    
+    if 'delta_im' in losses.keys():
+        moving_losses = {
+                 'Delta Image Loss': losses['delta_im'].item(),
+                 'Delta Depth Loss': losses['delta_depth'].item()}
         loss_dict.update(moving_losses)
         
     if tracking:
@@ -136,6 +142,11 @@ def report_loss(losses, wandb_run, wandb_step, tracking=False, mapping=False, ob
                 hist = np.histogram(v, 100)
                 tracking_loss_dict[f'Per Iteration Object Tracking/{k}_Gradient_Hist'] = wandb.Histogram(np_histogram=hist)'''
         wandb_run.log(tracking_loss_dict)
+    elif delta_optim:
+        tracking_loss_dict = {}
+        for k, v in loss_dict.items():
+            tracking_loss_dict[f"Per Iteration Delta Optim/{k}"] = v
+        tracking_loss_dict['Per Iteration Delta Optim/step'] = wandb_step
     elif mapping:
         mapping_loss_dict = {}
         for k, v in loss_dict.items():
@@ -501,24 +512,20 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
     gt_w2c_list = []
     import copy
 
-    for time_idx in tqdm(range(num_frames)):
+    for time_idx in tqdm(range(num_frames-1)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
         data = dataset[time_idx]
         color, depth, intrinsics, pose = data[0], data[1], data[2], data[3]
         instseg = data[4]
         if dataset.load_embeddings:
-            embeddings = data[5].permute(2, 0, 1)
+            embeddings = data[5]
         if dataset.load_support_trajs:
             support_trajs = data[6]
                 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
         intrinsics = intrinsics[:3, :3]
-
-        # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
 
         if time_idx == 0:
             # Process Camera Parameters
@@ -544,25 +551,22 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             moving = variables['moving'] > mov_thresh
 
         # Initialize Render Variables
-        rendervar = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx)
-        rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'])
+        rendervar, time_mask = transformed_params2rendervar(final_params_time, transformed_gaussians, time_idx, variables['timestep'])
         if time_idx == 0:
             time_mask_0 = time_mask
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
 
         # Render Depth & Silhouette
-        depth_sil_rendervar = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
-                                                                        transformed_gaussians, time_idx)
-        depth_sil_rendervar, _ = mask_timestamp(depth_sil_rendervar, time_idx, variables['timestep'])
+        depth_sil_rendervar, _ = transformed_params2depthsilinstseg(final_params_time, curr_data['w2c'],
+                                                                        transformed_gaussians, time_idx, variables['timestep'])
         depth_sil_inst, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
         rastered_depth = depth_sil_inst[0, :, :].unsqueeze(0)
         rastered_inst = depth_sil_inst[2, :, :].unsqueeze(0)
         rastered_sil = depth_sil_inst[1, :, :].unsqueeze(0)
 
         # Moving Gaussians
-        seg_rendervar = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
+        seg_rendervar, _ = transformed_params2instsegmov(final_params_time, curr_data['w2c'],
                                                         transformed_gaussians, time_idx, variables, moving)
-        seg_rendervar, _ = mask_timestamp(seg_rendervar, time_idx, variables['timestep'])
         instseg_mov, _, _, = Renderer(raster_settings=curr_data['cam'])(**seg_rendervar)
         rastered_moving = instseg_mov[1, :, :].unsqueeze(0)
         rastered_moving_viz = rastered_moving.detach()
@@ -669,18 +673,18 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
 
         if save_pc:
             _mask = time_mask & (variables['moving'] > mov_thresh)
-            print(final_params_time['means3D'][:, :, time_idx][_mask].shape)
+            print('moving', final_params_time['means3D'][:, :, time_idx][_mask].shape)
             pcd = o3d.geometry.PointCloud()
             v3d = o3d.utility.Vector3dVector
             pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
             o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_mov.xyz".format(time_idx)), pointcloud=pcd)
             _mask = time_mask & (variables['moving'] <= mov_thresh)
-            print(final_params_time['means3D'][:, :, time_idx][_mask].shape)
+            print('static', final_params_time['means3D'][:, :, time_idx][_mask].shape)
             pcd = o3d.geometry.PointCloud()
             v3d = o3d.utility.Vector3dVector
             pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
             o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_stat.xyz".format(time_idx)), pointcloud=pcd)
-            print(final_params_time['means3D'][:, :, time_idx][time_mask].shape)
+            print('all', final_params_time['means3D'][:, :, time_idx][time_mask].shape)
             pcd = o3d.geometry.PointCloud()
             v3d = o3d.utility.Vector3dVector
             pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
