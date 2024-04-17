@@ -42,7 +42,7 @@ def calculate_neighbors(params, variables, time_idx, num_knn=20):
 
 def calculate_neighbors_seg(
         params, variables, time_idx, instseg_mask, num_knn=20, existing_params=None, \
-            existing_instseg_mask=None, dist_to_use='rgb', use_old=False):
+            existing_instseg_mask=None, dist_to_use='rgb', use_old=False, inflate=2):
     embeddings_in_params = 'embeddings' in params.keys()
     device = params['means3D'].device
     if existing_params is not None:
@@ -112,15 +112,29 @@ def calculate_neighbors_seg(
                 k_embeddings = q_embeddings
 
         # get distances and indices
-        neighbor_dist, neighbor_indices = torch_3d_knn(q_pts.contiguous(), k_pts, num_knn=num_knn+num_knn+1)
+        neighbor_dist, neighbor_indices = torch_3d_knn(q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn)+1)
         # calculate weight of neighbors
         if dist_to_use == 'l2':
             neighbor_dist = neighbor_dist[:, 1:num_knn+1]
+            neighbor_indices = neighbor_indices[:, 1:num_knn+1]
         elif dist_to_use == 'rgb':
-            # print(neighbor_dist.shape)
-            k_colors = k_colors[neighbor_indices[:, 1:num_knn+1]]
-            q_colors = q_colors.unsqueeze(1)
-            neighbor_dist = torch.cdist(q_colors, k_colors).squeeze()
+            # get rbg distance from nearest neighbors in l2
+            neighbor_indices = neighbor_indices[:, 1:]
+            q_idx = torch.tile(
+                torch.arange(neighbor_indices.shape[0]).unsqueeze(1), (1, int(inflate*num_knn))).flatten()
+            neighbor_dist = torch.cdist(
+                q_colors[q_idx, :].unsqueeze(1), k_colors[neighbor_indices.flatten(), :].unsqueeze(1)).squeeze()
+            neighbor_dist = neighbor_dist.reshape(neighbor_indices.shape[0], -1)
+
+            # sort rgb neighbot distance and re-index to get closest points in 
+            # wrt rgb within closest points in l2
+            neighbor_dist = neighbor_dist.sort(dim=1, descending=True)
+            idx = neighbor_dist.indices[:, :num_knn]
+            q_idx = torch.tile(torch.arange(neighbor_indices.shape[0]).unsqueeze(1), (1, num_knn)).flatten()
+            neighbor_indices = neighbor_indices[
+                q_idx, idx.flatten()].squeeze().reshape(q_colors.shape[0], num_knn)
+            neighbor_dist = neighbor_dist.values[:, :num_knn]
+
         elif dist_to_use == 'dinov2':
             k_embeddings = k_embeddings[neighbor_indices[:, 1:num_knn+1]]
             q_embeddings = q_embeddings.unsqueeze(1)
@@ -130,10 +144,10 @@ def calculate_neighbors_seg(
 
         if existing_params is not None:
             num_samps = neighbor_indices.shape[0]
-            neighbor_indices = aranged_idx[k_bin_mask][neighbor_indices[:, 1:num_knn+1].flatten()]
+            neighbor_indices = aranged_idx[k_bin_mask][neighbor_indices.flatten()]
             neighbor_indices = neighbor_indices.reshape((num_samps, num_knn))
         else:
-            neighbor_indices = aranged_idx[bin_mask][neighbor_indices[:, 1:num_knn+1]]
+            neighbor_indices = aranged_idx[bin_mask][neighbor_indices]
 
         neighbor_weight = torch.nn.functional.softmax(-neighbor_dist, dim=1)
         # neighbor_weight = torch.exp(-2000 * torch.square(neighbor_dist))
@@ -154,3 +168,95 @@ def calculate_neighbors_seg(
     variables["self_indices"] = variables["self_indices"][non_neighbor_mask]
     
     return variables
+
+
+def calculate_neighbors_between_pc(
+        params, time_idx, other_params=None, other_time_idx=None, num_knn=20, dist_to_use='rgb', inflate=2):
+    embeddings_in_params = 'embeddings' in params.keys()
+    device = params['means3D'].device
+
+    # initalize matrices
+    indices = torch.zeros(params['means3D'].shape[0], num_knn).long().to(device)
+    weight = torch.zeros(params['means3D'].shape[0], num_knn).to(device)
+    dist = torch.zeros(params['means3D'].shape[0], num_knn).to(device)
+    
+    # get existing Gaussians and neighbor arranged indices
+    if other_params is not None:
+        other_colors = other_params['rgb_colors'].detach()
+        if embeddings_in_params:
+            other_embeddings = other_params['embeddings'].detach()
+        if len(other_params['means3D'].shape) == 3:
+            other_means = other_params['means3D'][:, :, other_time_idx].detach().contiguous()
+        else:
+            other_means = other_params['means3D'].detach().contiguous()
+        aranged_idx = torch.arange(other_means.shape[0]).to(device)
+    else:
+        other_means = None
+        aranged_idx = torch.arange(params['means3D'].shape[0]).to(device)
+
+    # Iterate over segment IDs
+    # mask query points per segment
+    if len(params['means3D'].shape) == 3:
+        q_pts = params['means3D'][:, :, time_idx].detach()
+    else:
+        q_pts = params['means3D'].detach()            
+    q_colors = params['rgb_colors'].detach()
+    if embeddings_in_params:
+        q_embeddings = params['embeddings'].detach()
+
+    # mask key points
+    if other_params is not None:
+        k_pts = other_means.contiguous()
+        k_colors = other_colors
+        if embeddings_in_params:
+            k_embeddings = other_embeddings
+    else:
+        k_pts = q_pts
+        k_colors = q_colors
+        if embeddings_in_params:
+            k_embeddings = q_embeddings
+
+    # get distances and indices
+    neighbor_dist, neighbor_indices = torch_3d_knn(q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn))
+    # calculate weight of neighbors
+    if dist_to_use == 'l2':
+        neighbor_dist = neighbor_dist[:, :num_knn]
+        neighbor_indices = neighbor_indices[:, :num_knn]
+    elif dist_to_use == 'rgb':
+        # get rbg distance from nearest neighbors in l2
+        neighbor_dist = torch.cdist(q_colors, k_colors).squeeze()
+        q_idx = torch.tile(
+            torch.arange(neighbor_indices.shape[0]).unsqueeze(1), (1, int(inflate*num_knn))).flatten()
+        neighbor_dist = neighbor_dist[
+            q_idx, neighbor_indices.flatten()].squeeze().reshape(q_colors.shape[0], int(inflate*num_knn))
+        
+        # sort rgb neighbot distance and re-index to get closest points in 
+        # wrt rgb within closest points in l2
+        _neighbor_dist = neighbor_dist.sort(dim=1, descending=True)
+        idx = _neighbor_dist.indices[:, :num_knn]
+        q_idx = torch.tile(torch.arange(neighbor_indices.shape[0]).unsqueeze(1), (1, num_knn)).flatten()
+        neighbor_indices = neighbor_indices[
+            q_idx, idx.flatten()].squeeze().reshape(q_colors.shape[0], num_knn)
+        neighbor_dist = _neighbor_dist.values[:, :num_knn]
+        
+    elif dist_to_use == 'l2_rgb':
+        k_colors = k_colors[neighbor_indices[:, num_knn]]
+        q_colors = q_colors.unsqueeze(1)
+        neighbor_dist = torch.cdist(q_colors, k_colors).squeeze() + neighbor_dist[:, num_knn]
+    elif dist_to_use == 'dinov2':
+        k_embeddings = k_embeddings[neighbor_indices[:, num_knn]]
+        q_embeddings = q_embeddings.unsqueeze(1)
+        neighbor_dist = torch.cdist(
+            torch.nn.functional.normalize(q_embeddings, dim=2),
+            torch.nn.functional.normalize(k_embeddings, dim=2)).squeeze()
+
+    neighbor_weight = torch.nn.functional.softmax(-torch.atleast_2d(neighbor_dist), dim=1).squeeze()
+    # neighbor_weight = torch.exp(-2000 * torch.square(neighbor_dist))
+    neighbor_dict = dict()
+    neighbor_dict["self_indices"] = torch.arange(
+        params['means3D'].shape[0]).unsqueeze(1).tile(num_knn).flatten().to(device)
+    neighbor_dict["neighbor_indices"] = neighbor_indices.flatten().long().contiguous()
+    neighbor_dict["neighbor_weight"] = neighbor_weight.flatten().float().contiguous()
+    neighbor_dict["neighbor_dist"] = neighbor_dist.flatten().float().contiguous()
+
+    return neighbor_dict

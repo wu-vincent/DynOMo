@@ -123,7 +123,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         relative_pose: bool = True,  # If True, the pose is relative to the first frame
         load_instseg: bool = False,
         precomp_intrinsics: bool = False,
-        load_support_trajs=False,
         **kwargs,
     ):
         super().__init__()
@@ -207,7 +206,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self.poses
         
         self.precomp_intrinsics = precomp_intrinsics
-        self.load_support_trajs = load_support_trajs
+        self.support_trajs = None
+        self.bg_paths = None
 
     def __len__(self):
         return self.num_imgs
@@ -351,24 +351,34 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),]
 
-        if self.load_instseg:
-            trans = torchvision.transforms.Resize(
+        trans_nearest = torchvision.transforms.Resize(
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
+        trans_bilinear = torchvision.transforms.Resize(
+                (color.shape[0], color.shape[1]), InterpolationMode.BILINEAR)
+        if self.load_instseg:
             # load and downsample to rgb size
-            instseg = self._load_instseg(self.instseg_paths[index])
-            instseg = trans(torch.from_numpy(instseg).unsqueeze(0))            
+            instseg = self._load_instseg(self.instseg_paths[index])            
+            instseg = trans_nearest(torch.from_numpy(instseg).unsqueeze(0))            
             return_vals = return_vals + [instseg.to(self.device).type(self.dtype)]
         else:
             return_vals = return_vals + [None]
 
         if self.load_embeddings:
             embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
+            embedding = trans_bilinear(embedding)
             return_vals = return_vals + [embedding.to(self.device)],  # Allow embedding to be another dtype
         else:
             return_vals = return_vals + [None]
         
-        if self.load_support_trajs:
-            return_vals = return_vals + [np.stack([self.support_trajs[0, 0, 0], self.support_trajs[0, 0, index]])]
+        if self.support_trajs is not None:
+            return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).cuda().long()]
+        else:
+            return_vals = return_vals + [None]
+        
+        if self.bg_paths is not None:
+            bg = self._load_bg(self.bg_paths[index])
+            bg = trans_nearest(torch.from_numpy(bg).unsqueeze(0)) 
+            return_vals = return_vals + [bg.to(self.device)]
         else:
             return_vals = return_vals + [None]
 

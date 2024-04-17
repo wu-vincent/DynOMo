@@ -145,16 +145,24 @@ def cat_params_to_optimizer(new_params, params, optimizer):
     return params
 
 
-def remove_points(to_remove, params, variables, optimizer):
+def remove_points(
+        to_remove,
+        params,
+        variables,
+        optimizer=None,
+        offset_0=None,
+        support_trajs_trans=None):
     to_keep = ~to_remove
     idxs_to_keep = torch.arange(params['means3D'].shape[0])[to_keep].to(
         variables['self_indices'].device)
     to_keep_idx_mask = torch.isin(variables['self_indices'], idxs_to_keep) 
     to_keep_idx_mask = to_keep_idx_mask & torch.isin(variables['neighbor_indices'], idxs_to_keep)
-    keys = [k for k in params.keys() if k not in ['cam_unnorm_rots', 'cam_trans']]
-    for k in keys:
+
+    # mask parameters
+    for k in [k for k in params.keys() if k not in ['cam_unnorm_rots', 'cam_trans']]:
         group = [g for g in optimizer.param_groups if g['name'] == k][0]
         stored_state = optimizer.state.get(group['params'][0], None)
+
         if stored_state is not None:
             stored_state["exp_avg"] = stored_state["exp_avg"][to_keep]
             stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][to_keep]
@@ -166,19 +174,27 @@ def remove_points(to_remove, params, variables, optimizer):
             group["params"][0] = torch.nn.Parameter(group["params"][0][to_keep].requires_grad_(True))
             params[k] = group["params"][0]
 
+    # mask variables
     variables['means2D_gradient_accum'] = variables['means2D_gradient_accum'][to_keep]
     variables['denom'] = variables['denom'][to_keep]
     variables['max_2D_radius'] = variables['max_2D_radius'][to_keep]
     variables['seen'] = variables['seen'][to_keep]
-    variables['means2D_grad'] = variables['means2D_grad'][to_keep]
-    variables['means2D'] = variables['means2D'][to_keep]
     variables['moving'] = variables['moving'][to_keep]
-
+    variables['x_coord_im'] = variables['x_coord_im'][to_keep]
+    variables['y_coord_im'] = variables['y_coord_im'][to_keep]
+    
+    if 'means2D_grad' in variables.keys():
+        variables['means2D_grad'] = variables['means2D_grad'][to_keep]
+    if 'means2D' in variables.keys():
+        variables['means2D'] = variables['means2D'][to_keep]
     if 'instseg' in variables.keys():
         variables['instseg'] = variables['instseg'][to_keep]
     if 'timestep' in variables.keys():
         variables['timestep'] = variables['timestep'][to_keep]
+    if 'bg' in variables.keys():
+        variables['bg'] = variables['bg'][to_keep]
     
+    # mask kNN and map indices to new indices
     variables['neighbor_indices'] = variables['neighbor_indices'][to_keep_idx_mask]
     variables['neighbor_weight'] = variables['neighbor_weight'][to_keep_idx_mask]
     variables['neighbor_dist'] = variables['neighbor_dist'][to_keep_idx_mask]
@@ -187,26 +203,31 @@ def remove_points(to_remove, params, variables, optimizer):
     mapping_tensor = torch.zeros(idxs_to_keep.max().item() + 1).long().to(idxs_to_keep.device)
     mapping_tensor[idxs_to_keep] = torch.arange(idxs_to_keep.shape[0]).long().to(idxs_to_keep.device)
 
-    '''mapping_dict = {v: i for i, v in enumerate(torch.unique(idxs_to_keep))}
-    mapping_func = lambda x: mapping_dict[x]
-    neighbor_indices.cpu().apply_(mapping_func)
-    neighbor_indices = neighbor_indices.cuda()
-    self_indices.cpu().apply_(mapping_func).cuda()
-    self_indices = self_indices.cuda()
-    # for i, v in enumerate(torch.unique(idxs_to_keep)):
-    #    neighbor_indices[variables['neighbor_indices']==v] = i
-    #    self_indices[variables['self_indices']==v] = i'''
     variables['neighbor_indices'] = mapping_tensor[variables['neighbor_indices']]
     variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
-    return params, variables
+    # mask offset_0 and support trajs
+    if offset_0 is not None:
+        offset_0 = offset_0[to_keep_idx_mask]
+    if support_trajs_trans is not None:
+        support_trajs_trans = support_trajs_trans[to_keep]
+
+    return params, variables, offset_0, support_trajs_trans
 
 
 def inverse_sigmoid(x):
     return torch.log(x / (1 - x))
 
 
-def prune_gaussians(params, variables, optimizer, iter, prune_dict, curr_time_idx):
+def prune_gaussians(
+        params,
+        variables,
+        optimizer,
+        iter,
+        prune_dict,
+        curr_time_idx,
+        offset_0,
+        support_trajs_trans):
     variables['means2D_grad'] = variables['means2D'].grad
     if iter <= prune_dict['stop_after']:
         if (iter >= prune_dict['start_after']) and (iter % prune_dict['prune_every'] == 0):
@@ -221,18 +242,30 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict, curr_time_id
             # recompute kNN distance
             with torch.no_grad():
                 pdist = torch.nn.PairwiseDistance(p=2)
-                dist = pdist(
+                offset_t_mag = pdist(
                     params['means3D'][variables["self_indices"], :, curr_time_idx-1],
                     params['means3D'][variables["neighbor_indices"], :, curr_time_idx-1])
-                far_away = scatter_add(dist, variables["self_indices"], dim=0) > prune_dict['kNN_dist_thresh'] * variables['scene_radius'] # prune_dict['kNN_dist_thresh']
-                to_remove = torch.logical_or(to_remove, far_away)
+                offset_t_mag = scatter_add(offset_t_mag, variables["self_indices"], dim=0)
+                
+                offset_0_mag = torch.linalg.norm(offset_0, dim=1)
+                offset_0_mag = scatter_add(offset_0_mag, variables["self_indices"], dim=0)
+
+                rel_drift = torch.abs(offset_t_mag-offset_0_mag) / offset_0_mag
+                drift = rel_drift > prune_dict['kNN_rel_drift']
+                to_remove = torch.logical_or(to_remove, drift)
 
             # Remove Gaussians that are too big
             if iter >= prune_dict['remove_big_after']:
                 big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
                 to_remove = torch.logical_or(to_remove, big_points_ws)
             if to_remove.sum():
-                params, variables = remove_points(to_remove, params, variables, optimizer)
+                params, variables, offset_0, support_trajs_trans = remove_points(
+                    to_remove,
+                    params,
+                    variables,
+                    optimizer,
+                    offset_0,
+                    support_trajs_trans)
             torch.cuda.empty_cache()
         
             print(f'Removed {to_remove.sum()} Gaussians during pruning at Iteration {iter}!')
@@ -242,7 +275,7 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict, curr_time_id
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
     
-    return params, variables
+    return params, variables, offset_0, support_trajs_trans
 
 def clone_vars(params, variables, to_clone):
     device = variables['self_indices'].device
