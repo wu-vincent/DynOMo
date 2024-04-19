@@ -26,6 +26,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import mediapy as media
 import numpy as np
+import os
+from matplotlib.collections import LineCollection
 
 
 # Generate random colormaps for visualizing different points.
@@ -752,3 +754,51 @@ def plot_tracks_tails(
     for fig in figs:
         plt.close(fig)
     return np.stack(disp, axis=0)
+
+
+def vis_tracked_points(results_dir, data):
+    """
+    Takes points in normalized form
+    """
+    traj_len = 10
+
+    points = data['points'] # N x T x 2
+    if points.sum() == 0:
+        points = data['points_projected']
+    N, T, _ = points.shape
+    rgb = data['video'][:T] # T x 480 x 854 x 3
+    h, w, _ = rgb[0].shape
+    occluded = data['occluded'][:, :T]
+
+    scale_factor = np.array([w, h])
+    points = points * scale_factor
+    painted_frames = plot_tracks_v2(
+            rgb,
+            points,
+            occluded)
+
+    os.makedirs(results_dir, exist_ok=True)
+
+    # pad with zeros
+    for time, img in enumerate(painted_frames):
+        fig, ax = plt.subplots()
+        ax.imshow(img)
+        from_time = max(0, time-traj_len)
+        for i in range(points.shape[0]):
+            x = np.clip(points[i, from_time:time+1, 0], a_min=0, a_max=w-1)
+            y = np.clip(points[i, from_time:time+1, 1], a_min=0, a_max=h-1)
+            color_len = np.arange(traj_len-1)
+            pts = np.array([x, y]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+
+            # Create a continuous norm to map from data points to colors
+            norm = plt.Normalize(color_len.min(), color_len.max())
+            lc = LineCollection(segments, cmap='hsv', norm=norm)
+            # Set the values used for colormapping
+            lc.set_array(color_len)
+            lc.set_linewidth(2)
+            line = ax.add_collection(lc)
+
+        plt.axis('off')
+        plt.savefig(os.path.join(results_dir, "gs_{:04d}.png".format(time)), bbox_inches='tight', pad_inches = 0)
+        plt.close(fig)

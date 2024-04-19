@@ -21,8 +21,8 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import wandb
 
-from utils.get_data import get_data
-from utils.common_utils import seed_everything, save_params_ckpt, save_params
+from utils.get_data import get_data, just_get_start_pix
+from utils.common_utils import seed_everything, save_params_ckpt, save_params, load_params_ckpt
 from utils.eval_helpers import report_loss, report_progress, eval
 from utils.camera_helpers import setup_camera
 from utils.slam_helpers import (
@@ -37,6 +37,7 @@ from utils.slam_helpers import (
 )
 from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, densify, normalize_quat, remove_points
 from utils.neighbor_search import calculate_neighbors_seg, calculate_neighbors_between_pc
+from utils.eval_traj import find_closest_to_start_pixels
 
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
@@ -45,8 +46,6 @@ import open3d as o3d
 import imageio
 import torchvision
 from torchvision.transforms.functional import InterpolationMode
-
-# from utils.trajectory_evaluation import eval_traj
 
 # Make deterministic
 import torch
@@ -57,7 +56,7 @@ import numpy as np
 np.random.seed(0)
 
 from utils.render_trajectories import just_render
-from utils.eval_traj import eval_traj
+from utils.eval_traj import eval_traj, vis_grid_trajs
 
 
 class RBDG_SLAMMER():
@@ -201,7 +200,8 @@ class RBDG_SLAMMER():
             time_idx=0,
             prev_instseg=None,
             support_trajs=None,
-            bg=None):
+            bg=None,
+            start_pix=None):
         
         self.pre_process_depth(depth, color)
 
@@ -210,11 +210,17 @@ class RBDG_SLAMMER():
         x_grid, y_grid = torch.meshgrid(torch.arange(width).cuda().float(), 
                                         torch.arange(height).cuda().float(),
                                         indexing='xy')
-        
+        # TODO
+        # Try +0.5 to get middle of pixel
+        # x_grid += 0.5
+        # y_grid += 0.5
+
         # downscale 
         color, depth, instseg, embeddings, mask, x_grid, y_grid = \
             self.resize_for_init(color, depth, instseg, embeddings, mask, x_grid, y_grid)
         width, height = color.shape[2], color.shape[1]
+
+        # get pixel grid into 3D
         mask = mask.reshape(-1)
         xx = (x_grid - intrinsics[0][2])/intrinsics[0][0]
         yy = (y_grid - intrinsics[1][2])/intrinsics[1][1]
@@ -275,8 +281,17 @@ class RBDG_SLAMMER():
             y_image_coord = y_grid.reshape(-1)[mask]
             if bg is not None:
                 bg = bg = bg.reshape(-1, 1)[mask]
+        
+        if start_pix is not None:
+            means2D = torch.stack((x_grid.reshape(-1), y_grid.reshape(-1)), dim=-1)
+            if mask is not None:
+                means2D = means2D[mask]
+            gauss_ids_to_track = find_closest_to_start_pixels(means2D, start_pix)
+            gauss_ids_to_track = torch.stack(gauss_ids_to_track)
+        else:
+            gauss_ids_to_track = None
 
-        return point_cld, mean3_sq_dist, x_image_coord, y_image_coord, bg
+        return point_cld, mean3_sq_dist, x_image_coord, y_image_coord, bg, gauss_ids_to_track
 
     def initialize_params(
             self,
@@ -444,8 +459,7 @@ class RBDG_SLAMMER():
                     curr_data,
                     config,
                     disable_grads=init_next,
-                    mov_thresh=self.config['mov_thresh'],
-                    prev_means2d=prev_means2d)
+                    mov_thresh=self.config['mov_thresh'])
     
         # intiialize next point cloud for delta tracking
         elif init_next:
@@ -456,11 +470,11 @@ class RBDG_SLAMMER():
                     iter_time_idx+1,
                     next_data,
                     config,
+                    mov_thresh=self.config['mov_thresh'],
                     prev_means2d=prev_means2d,
-                    mov_thresh=self.config['mov_thresh'])
+                    get_motion=config['use_flow']=='rendered')
 
-        use_flow = (init_next or not self.config['mov_init_by'] == 'sparse_flow')
-        if use_flow and config['use_flow'] == 'pytorch':
+        if init_next and config['use_flow'] == 'pytorch':
             # https://arxiv.org/pdf/2403.12365.pdf
             h, w = weight.shape[1], weight.shape[2]
             weight = weight.detach().clone()
@@ -482,16 +496,7 @@ class RBDG_SLAMMER():
             weight = _weight.values[:max_contrib_flow, :, :]
             
             # compute flow per pixel based on most influential ones
-            _weight = (weight / (weight.sum(dim=0)+1e-10)).unsqueeze(3)
-
-            if torch.isnan(prev_means2d).any() or torch.isnan(next_means2d).any() or torch.isnan(weight).any() or torch.isnan(visible).any():
-                print('nans next', torch.isnan(prev_means2d).any())
-                print('nans next', torch.isnan(next_means2d).any())
-                print('nans weight', torch.isnan(weight).any())
-                print('nans notmalozed weight', torch.isnan(_weight).any())
-                print('nans visible', torch.isnan(visible).any())
-                quit()
-            weight = _weight
+            weight = (weight / (weight.sum(dim=0)+1e-10)).unsqueeze(3)
             flow = (weight * (
                 next_means2d[visible.long()] - prev_means2d[visible.long()])).sum(dim=0)
 
@@ -501,40 +506,100 @@ class RBDG_SLAMMER():
             sparse_flow_gt = curr_data['support_trajs'][1, :] - curr_data['support_trajs'][0, :]
             losses['flow'] = l2_loss_v2(sparse_flow, sparse_flow_gt)
         
-        elif use_flow and config['use_flow'] == 'rendered' and iter_time_idx > 0:
+        elif init_next and config['use_flow'] == 'pytorch_simple':
+            # https://arxiv.org/pdf/2403.12365.pdf
+
+            # get values at positions of support
+            h, w = weight.shape[1], weight.shape[2]
+            weight = weight.detach().clone()
+            visible = visible.detach().clone()
+
+            # get pixels to supervise
+            x = curr_data['support_trajs'][0, :, 1]
+            y = curr_data['support_trajs'][0, :, 0]
+            weight = weight[:, x, y]
+            visible = visible[:, x, y]
+            pix_ids = torch.arange(weight.shape[1]).unsqueeze(1)
+            pix_ids = pix_ids.repeat((1, weight.shape[0])).to(visible.device)
+
+            # keep only visible ones
+            pix_ids = pix_ids.permute(1, 0)[visible != 0].flatten()
+            weight = weight[visible != 0].flatten()
+            visible = visible[visible != 0].flatten()
+            weighted_delta = weight.unsqueeze(1) * (
+                next_means2d[visible.long()] - prev_means2d[visible.long()])
+
+            # add flow
+            sparse_flow = scatter_add(weighted_delta, pix_ids, dim=0)
+            sparse_flow_gt = curr_data['support_trajs'][1, :] - curr_data['support_trajs'][0, :]
+
+            # compute loss
+            losses['flow'] = l1_loss_v1(sparse_flow, sparse_flow_gt)
+        
+        elif init_next and config['use_flow'] == 'rendered':
             motion2d = motion2d.permute(1, 2, 0)
+            # imageio.imwrite('arrow_flow.png', (norm_motion_y*255).astype(np.uint8))
             sparse_flow = motion2d[
                 curr_data['support_trajs'][0, :, 1], curr_data['support_trajs'][0, :, 0], :2]
+            
+            if iter == 995:
+                import matplotlib.pyplot as plt
+                use_supp = True
+                if not use_supp:
+                    pix_x = torch.arange(motion2d.shape[1]).unsqueeze(1).repeat((1, motion2d.shape[0])).numpy().flatten()
+                    pix_y = torch.arange(motion2d.shape[0]).unsqueeze(0).repeat((motion2d.shape[1], 1)).numpy().flatten()
+                    flow_x = motion2d[:, :, 0].clone().detach().cpu().numpy().flatten()
+                    flow_y = motion2d[:, :, 1].clone().detach().cpu().numpy().flatten()
+                    stride = 50
+                else:
+                    pix_y = curr_data['support_trajs'][0, :, 1].clone().detach().cpu().numpy()
+                    pix_x = curr_data['support_trajs'][0, :, 0].clone().detach().cpu().numpy()
+                    flow_x = sparse_flow[:, 0].clone().detach().cpu().numpy().flatten()
+                    flow_y = sparse_flow[:, 1].clone().detach().cpu().numpy().flatten()
+                    stride = 1
+                plt.scatter([0, 0, 640, 640], [0, 360, 0, 360])
+                for i in range(0, flow_x.shape[0], stride):
+                    # plt.arrow(supp[0, i, 0], supp[0, i, 1], flow[i, 1], flow[i, 0])
+                    plt.arrow(pix_x[i], pix_y[i], flow_x[i]*100, flow_y[i]*100, width=0.2)
+                plt.margins(0, 0)
+                plt.axis('off')
+                plt.savefig('flow_arrows.png', bbox_inches="tight")
+                plt.close()
+            
             sparse_flow_gt = curr_data['support_trajs'][1, :] - curr_data['support_trajs'][0, :]
             losses['flow'] = l1_loss_v1(sparse_flow, sparse_flow_gt)
 
         # Depth loss
         curr_gt_depth, next_gt_depth = curr_data['depth'], next_data['depth']
             
-        if config['use_l1'] and not init_next:
-            mask = mask.detach()
-            losses['depth'] = l2_loss_v2(curr_gt_depth, depth, mask, reduction='mean')
-            # losses['next_depth'] = l2_loss_v2(next_gt_depth, next_depth, next_mask, reduction='mean')
+        if config['use_l1']:
+            if not init_next:
+                mask = mask.detach()
+                losses['depth'] = l2_loss_v2(curr_gt_depth, depth, mask, reduction='mean')
+            else:
+                next_mask = next_mask.detach()
+                losses['next_depth'] = l2_loss_v2(next_gt_depth, next_depth, next_mask, reduction='mean')
         
         # RGB Loss
         curr_gt_im, next_gt_im = curr_data['im'], next_data['im']
 
-        if not init_next:
-            if (config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']) and not config['calc_ssmi']:
+        if init_next or config['use_sil_for_loss'] or config['ignore_outlier_depth_loss']:
+            if not init_next:
                 color_mask = torch.tile(mask, (3, 1, 1))
                 color_mask = color_mask.detach()
                 losses['im'] = torch.abs(curr_gt_im - im)[color_mask].mean()
-                # next_color_mask = torch.tile(mask, (3, 1, 1))
-                # next_color_mask = next_color_mask.detach()
-                # losses['next_im'] = torch.abs(next_gt_im - next_im)[next_color_mask].mean()
-            elif not config['calc_ssmi']:
-                losses['im'] = torch.abs(curr_gt_im - im).mean()
-                # losses['next_im'] = torch.abs(next_gt_im - next_im).mean()
             else:
-                losses['im'] = 0.8 * l1_loss_v1(im, curr_gt_im) + 0.2 * (
-                    1.0 - calc_ssim(im, curr_data['im']))
-                # losses['next_im'] = 0.8 * l1_loss_v1(next_im, next_gt_im) + 0.2 * (
-                #     1.0 - calc_ssim(next_im, next_gt_im))
+                next_color_mask = torch.tile(next_mask, (3, 1, 1))
+                next_color_mask = next_color_mask.detach()
+                losses['next_im'] = torch.abs(next_gt_im - next_im)[next_color_mask].mean()
+        elif not config['calc_ssmi']:
+            losses['im'] = torch.abs(curr_gt_im - im).mean()
+            # losses['next_im'] = torch.abs(next_gt_im - next_im).mean()
+        else:
+            losses['im'] = 0.8 * l1_loss_v1(im, curr_gt_im) + 0.2 * (
+                1.0 - calc_ssim(im, curr_data['im']))
+            # losses['next_im'] = 0.8 * l1_loss_v1(next_im, next_gt_im) + 0.2 * (
+            #     1.0 - calc_ssim(next_im, next_gt_im))
 
         # SEG LOSS
         if config['use_seg_loss']:
@@ -544,6 +609,11 @@ class RBDG_SLAMMER():
         # EMBEDDING LOSS
         if self.dataset.load_embeddings:
             pass
+
+        # BG REG
+        if config['bg_reg']:
+            losses['bg_reg'] = torch.abs(
+                transformed_gaussians['means3D'][:, :, time_idx] - transformed_gaussians['means3D'][:, :, time_idx-1]).sum()
 
         # ADD DYNO LOSSES LIKE RIGIDITY
         # DYNO LOSSES
@@ -579,7 +649,6 @@ class RBDG_SLAMMER():
             variables['seen'] = seen
         
         weighted_losses['loss'] = loss
-
         return loss, weighted_losses, variables, im, next_im, depth, next_depth, prev_means2d, visible, weight
 
     def initialize_new_params(
@@ -655,6 +724,7 @@ class RBDG_SLAMMER():
         else: 
             instseg_mask = torch.ones_like(instseg_mask).long().to(instseg_mask.device)
             existing_instseg_mask = torch.ones_like(self.params['instseg']).long().to(instseg_mask.device)
+
         with torch.no_grad():
             variables = calculate_neighbors_seg(
                     params, variables, 0, instseg_mask, num_knn=20,
@@ -754,18 +824,18 @@ class RBDG_SLAMMER():
             curr_w2c[:3, 3] = curr_cam_tran
             valid_depth_mask = (curr_data['depth'][0, :, :] > 0)
 
-            os.makedirs(os.path.join(self.eval_dir, 'presence_mask'), exist_ok=True)
-            imageio.imwrite(
-                os.path.join(self.eval_dir, 'presence_mask', 'gs_{:04d}.png'.format(time_idx)),
-                (~non_presence_mask).cpu().numpy().astype(np.uint8)*255)
+            # os.makedirs(os.path.join(self.eval_dir, 'presence_mask'), exist_ok=True)
+            # imageio.imwrite(
+            #     os.path.join(self.eval_dir, 'presence_mask', 'gs_{:04d}.png'.format(time_idx)),
+            #     (~non_presence_mask).cpu().numpy().astype(np.uint8)*255)
 
-            non_presence_mask = non_presence_mask & valid_depth_mask
-            os.makedirs(os.path.join(self.eval_dir, 'non_presence_mask'), exist_ok=True)
-            imageio.imwrite(
-                os.path.join(self.eval_dir, 'non_presence_mask', 'gs_{:04d}.png'.format(time_idx)),
-                non_presence_mask.cpu().numpy().astype(np.uint8)*255)
+            # non_presence_mask = non_presence_mask & valid_depth_mask
+            # os.makedirs(os.path.join(self.eval_dir, 'non_presence_mask'), exist_ok=True)
+            # imageio.imwrite(
+            #     os.path.join(self.eval_dir, 'non_presence_mask', 'gs_{:04d}.png'.format(time_idx)),
+            #     non_presence_mask.cpu().numpy().astype(np.uint8)*255)
 
-            new_pt_cld, mean3_sq_dist, x_coord_im, y_coord_im, bg = self.get_pointcloud(
+            new_pt_cld, mean3_sq_dist, x_coord_im, y_coord_im, bg, _ = self.get_pointcloud(
                 curr_data['im'],
                 curr_data['depth'],
                 curr_data['intrinsics'], 
@@ -925,7 +995,7 @@ class RBDG_SLAMMER():
                     mask = mask & ~variables['bg'].squeeze()
                 
                 # For moving objects set new rotation and translation
-                if mov_init_by == 'sparse_flow':
+                if mov_init_by == 'sparse_flow' or mov_init_by == 'sparse_flow_simple' or mov_init_by == 'im_loss' or mov_init_by == 'rendered_flow':
                     new_rot = params['unnorm_rotations'][:, :, curr_time_idx+1].detach()
                 else:
                     curr_rot = normalize_quat(params['unnorm_rotations'][:, :, curr_time_idx].detach())
@@ -946,7 +1016,7 @@ class RBDG_SLAMMER():
                 elif mov_init_by == 'support_trajs':
                     new_tran = (curr_tran + support_trajs_trans)[mask]
                     # new_tran[:, 2] = (curr_tran + kNN_trans)[mask, 2]
-                elif mov_init_by == 'sparse_flow':
+                elif mov_init_by == 'sparse_flow' or mov_init_by == 'sparse_flow_simple' or mov_init_by == 'im_loss' or mov_init_by == 'rendered_flow':
                     new_tran = params['means3D'][:, :, curr_time_idx+1].detach()[mask]
                 
                 new_tran = torch.nn.Parameter(new_tran.cuda().float().contiguous().requires_grad_(True))
@@ -991,10 +1061,22 @@ class RBDG_SLAMMER():
                 color.shape[1],
                 self.intrinsics.cpu().numpy(),
                 w2c.detach().cpu().numpy())
+            start_pix = just_get_start_pix(
+                self.config,
+                in_torch=True,
+                normalized=False,
+                h=self.cam.image_height,
+                w=self.cam.image_width,
+                rounded=True)
+        else:
+            start_pix = None
+    
+        if self.config['checkpoint'] != '' and timestep == 0:
+            return
 
         # Get Initial Point Cloud (PyTorch CUDA Tensor)
         mask = (depth > 0) # Mask out invalid depth values
-        init_pt_cld, mean3_sq_dist, x_coord_im, y_coord_im, bg = self.get_pointcloud(
+        init_pt_cld, mean3_sq_dist, x_coord_im, y_coord_im, bg, gauss_ids_to_track = self.get_pointcloud(
             color,
             depth,
             self.intrinsics,
@@ -1004,7 +1086,8 @@ class RBDG_SLAMMER():
             instseg=instseg,
             embeddings=embeddings,
             support_trajs=support_trajs,
-            bg=bg)
+            bg=bg,
+            start_pix=start_pix)
 
         # Initialize Parameters
         params, variables = self.initialize_params(
@@ -1016,6 +1099,10 @@ class RBDG_SLAMMER():
             y_coord_im,
             bg)
         
+        if timestep == 0:
+            # store gauss ids to track
+            variables['gauss_ids_to_track'] = gauss_ids_to_track
+
         # Initialize an estimate of scene radius for Gaussian-Splatting Densification
         variables['scene_radius'] = torch.max(depth)/scene_radius_depth_ratio
 
@@ -1029,14 +1116,27 @@ class RBDG_SLAMMER():
         self.num_frames = self.config["data"]["num_frames"]
         if self.num_frames == -1:
             self.num_frames = len(self.dataset)
+        
+        if self.config['checkpoint'] != '':
+            ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
+            self.params, self.variables = load_params_ckpt(ckpt_output_dir)
+            first_frame_w2c = self.variables['first_frame_w2c']
+            self.initialize_timestep(
+                self.config['scene_radius_depth_ratio'],
+                self.config['mean_sq_dist_method'],
+                gaussian_distribution=self.config['gaussian_distribution'],
+                timestep=0)
+            time_idx = int(self.variables['timestep'].max())
+        else:
+            first_frame_w2c, self.params, self.variables = self.initialize_timestep(
+                self.config['scene_radius_depth_ratio'],
+                self.config['mean_sq_dist_method'],
+                gaussian_distribution=self.config['gaussian_distribution'],
+                timestep=0)
+            self.variables['first_frame_w2c'] = first_frame_w2c
+            time_idx = 0
 
-        first_frame_w2c, self.params, self.variables = self.initialize_timestep(
-            self.config['scene_radius_depth_ratio'],
-            self.config['mean_sq_dist_method'],
-            gaussian_distribution=self.config['gaussian_distribution'],
-            timestep=0)
-                
-        return first_frame_w2c
+        return first_frame_w2c, time_idx
     
     def make_data_dict(self, time_idx, gt_w2c_all_frames, cam_data):
         embeddings, support_trajs = None, None
@@ -1062,7 +1162,8 @@ class RBDG_SLAMMER():
         return curr_data, gt_w2c_all_frames
 
     def rgbd_slam(self):        
-        self.first_frame_w2c = self.get_data()
+        self.first_frame_w2c, start_time_idx = self.get_data()
+        
         # Initialize list to keep track of Keyframes
         keyframe_list = []
         keyframe_time_indices = []
@@ -1083,8 +1184,10 @@ class RBDG_SLAMMER():
 
         prev_data = None
         self.prev_means2d, self.prev_weight, self.prev_visible = None, None, None
+        if start_time_idx != 0:
+            prev_data, gt_w2c_all_frames = self.make_data_dict(start_time_idx-1, gt_w2c_all_frames, cam_data)
         # Iterate over Scan
-        for time_idx in tqdm(range(self.num_frames-1)):
+        for time_idx in tqdm(range(start_time_idx, self.num_frames-1)):
             curr_data, gt_w2c_all_frames = self.make_data_dict(time_idx, gt_w2c_all_frames, cam_data)
             next_data, _ = self.make_data_dict(time_idx+1, gt_w2c_all_frames, cam_data)
             print(f"Optimizing time step {time_idx}...")
@@ -1097,6 +1200,11 @@ class RBDG_SLAMMER():
                     next_data,
                     prev_data)
             prev_data = curr_data
+
+            # Checkpoint every iteration
+            if time_idx % self.config["checkpoint_interval"] == 0 and self.config['save_checkpoints']:
+                ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
+                save_params_ckpt(self.params, self.variables, ckpt_output_dir)
 
         self.tracking_obj_iter_time_count = max(self.tracking_obj_iter_time_count, 1)
         self.tracking_cam_iter_time_count = max(self.tracking_cam_iter_time_count, 1)
@@ -1128,7 +1236,9 @@ class RBDG_SLAMMER():
                 wandb_save_qual=self.config['wandb']['eval_save_qual'],
                 eval_every=self.config['eval_every'],
                 variables=self.variables,
-                mov_thresh=self.config['mov_thresh'])
+                mov_thresh=self.config['mov_thresh'],
+                save_pc=self.config['viz']['save_pc'],
+                save_videos=self.config['viz']['save_videos'])
 
         # Add Camera Parameters to Save them
         self.params['timestep'] = self.variables['timestep']
@@ -1144,18 +1254,32 @@ class RBDG_SLAMMER():
             self.params['gt_w2c_all_frames'].append(gt_w2c_tensor.detach().cpu().numpy())
         self.params['gt_w2c_all_frames'] = np.stack(self.params['gt_w2c_all_frames'], axis=0)
         self.params['keyframe_time_indices'] = np.array(keyframe_time_indices)
+        self.params['gauss_ids_to_track'] = self.variables['gauss_ids_to_track'].cpu().numpy()
         
         # Save Parameters
         save_params(self.params, self.output_dir)
 
-        mean_mte, mean_d, mean_s = eval_traj(
-            self.config,
-            self.params,
-            curr_data['cam'])
+        with torch.no_grad():
+            metrics = eval_traj(
+                self.config,
+                self.params,
+                cam=curr_data['cam'],
+                results_dir=self.eval_dir, 
+                vis_trajs=self.config['viz']['vis_tracked'],
+                gauss_ids_to_track=self.variables['gauss_ids_to_track'])
+        print("Trajectory metrics: ",  metrics)
 
         # Close WandB Run
         if self.config['use_wandb']:
+            self.wandb_run.log(metrics)
             wandb.finish()
+        
+        if self.config['viz']['vis_grid']:
+            vis_grid_trajs(
+                self.config,
+                self.params, 
+                curr_data['cam'],
+                results_dir=self.eval_dir)
 
 
     def optimize_time(
@@ -1187,7 +1311,7 @@ class RBDG_SLAMMER():
                 curr_data,
                 next_data)
         
-        if self.config['tracking_obj']['num_iters'] != 0 and self.config['mov_init_by'] == 'sparse_flow':
+        if self.config['tracking_obj']['num_iters'] != 0 and (self.config['mov_init_by'] == 'sparse_flow' or self.config['mov_init_by'] == 'im_loss' or self.config['mov_init_by'] == 'sparse_flow_simple' or self.config['mov_init_by'] == 'rendered_flow') :
             with torch.no_grad():
                 self.params['means3D'][:, :, time_idx+1] = self.params['means3D'][:, :, time_idx]
                 self.params['unnorm_rotations'][:, :, time_idx+1] = self.params['unnorm_rotations'][:, :, time_idx]
@@ -1200,12 +1324,6 @@ class RBDG_SLAMMER():
         # remove floating points based on depth
         if self.config['remove_gaussians']['remove']:
             self.remove_gaussians_with_depth(curr_data, time_idx, optimizer)
-        
-        # Checkpoint every iteration
-        if time_idx % self.config["checkpoint_interval"] == 0 and self.config['save_checkpoints']:
-            ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
-            save_params_ckpt(self.params, ckpt_output_dir, time_idx)
-            np.save(os.path.join(ckpt_output_dir, f"keyframe_time_indices{time_idx}.npy"), np.array(keyframe_time_indices))
         
         # Increment WandB Time Step
         if self.config['use_wandb']:
@@ -1234,11 +1352,12 @@ class RBDG_SLAMMER():
             init_next=False):
         
         # intialize next point cloud
-        first_frame_w2c, next_params, next_variables = self.initialize_timestep(
-            self.config['scene_radius_depth_ratio'],
-            self.config['mean_sq_dist_method'],
-            gaussian_distribution=self.config['gaussian_distribution'],
-            timestep=time_idx+1)
+        # first_frame_w2c, next_params, next_variables = self.initialize_timestep(
+        #     self.config['scene_radius_depth_ratio'],
+        #     self.config['mean_sq_dist_method'],
+        #     gaussian_distribution=self.config['gaussian_distribution'],
+        #     timestep=time_idx+1)
+        first_frame_w2c, next_params, next_variables = None, None, None
         
         # get instance segementation mask for Gaussians
         tracking_start_time = time.time()
@@ -1286,7 +1405,7 @@ class RBDG_SLAMMER():
                     if not init_next:
                         p.register_hook(get_hook(self.variables['timestep'] != time_idx))
                     else:
-                        p.register_hook(get_hook(self.variables['timestep'] != -10))
+                        p.register_hook(get_hook(self.variables['timestep'] != time_idx+1))
 
             # Backprop
             loss.backward()
@@ -1502,5 +1621,4 @@ if __name__ == "__main__":
     rgbd_slammer = RBDG_SLAMMER(experiment.config)
     rgbd_slammer.rgbd_slam()
 
-    just_render(experiment.config, results_dir)
 

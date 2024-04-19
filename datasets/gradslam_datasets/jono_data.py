@@ -51,13 +51,13 @@ class JonoDynoSplatamDataset(ReplicaDataset):
     
     def get_bg_paths(self):
         if os.path.isdir(f"{self.input_folder.replace('ims', 'seg')}"):
-            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
+            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:]
         else:
             bg_paths = None
         return bg_paths
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))[2:]
         return instseg_paths
     
     def read_embedding_from_file(self, idx):
@@ -75,18 +75,18 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         return bg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[2:]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))[2:]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Embeddings')}/embeddings*.png"))
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Embeddings')}/embeddings*.png"))[2:]
         return color_paths, depth_paths, embedding_paths
     
     def load_support_trajs(self):
         # load
-        self.support_trajs = np.load(f"{os.path.dirname(os.path.dirname(self.input_folder))}/support_trajs_pips_48.npy").squeeze()
+        self.support_trajs = np.load(f"{self.input_folder.replace('ims', 'support_trajs')}/48_trajs.npy").squeeze()[2:]
         # sclae 
-        support_traj_shape = (512,896)
+        support_traj_shape = (352,640)
         scale_factors = (
             self.desired_width/support_traj_shape[1], self.desired_height/support_traj_shape[0])
         self.support_trajs[:, :, :, 0] = self.support_trajs[:, :, :, 0] * scale_factors[0]

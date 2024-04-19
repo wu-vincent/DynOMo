@@ -112,6 +112,7 @@ def calculate_neighbors_seg(
                 k_embeddings = q_embeddings
 
         # get distances and indices
+        print(q_pts.shape, k_pts.shape)
         neighbor_dist, neighbor_indices = torch_3d_knn(q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn)+1)
         # calculate weight of neighbors
         if dist_to_use == 'l2':

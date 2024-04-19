@@ -21,7 +21,7 @@ sys.path.insert(0, _BASE_DIR)
 print("System Paths:")
 for p in sys.path:
     print(p)
-from utils.recon_helpers import setup_camera
+from utils.camera_helpers import setup_camera
 from utils.colormap import colormap
 try:
     from diff_gaussian_rasterization import GaussianRasterizer as Renderer
@@ -91,8 +91,8 @@ def just_render(config, results_dir, len_traj=20):
     h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]
     os.makedirs(f"{results_dir}/rendered_for_traj_vis", exist_ok=True)
     params, moving_mask, first_occurance, k, w2c = load_scene_data(config, results_dir)
-    moving_mask = moving_mask.bool()
-    moving_mask = None
+
+    # sample points to plot
     num_timesteps = params['means3D'].shape[2]
     num_points_t0 = params['means3D'][params['timestep']==0].shape[0]
     trajectories_to_plot_idx = random.sample(list(range(num_points_t0)), 200) #list(range(0, num_points_t0, int(num_points_t0/200))) 

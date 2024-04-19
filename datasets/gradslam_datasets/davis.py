@@ -63,7 +63,7 @@ class DavisDynoSplatamDataset(ReplicaDataset):
     
     def load_support_trajs(self):
         # load
-        self.support_trajs = np.load(f"{self.input_folder.replace('JPEGImages', 'TRAJS')}/support_trajs_pips_5.npy").squeeze()
+        self.support_trajs = np.load(f"{self.input_folder.replace('JPEGImages', 'SUPPORT_TRAJS')}/48_trajs.npy").squeeze()
         # sclae 
         support_traj_shape = (512,896)
         scale_factors = (

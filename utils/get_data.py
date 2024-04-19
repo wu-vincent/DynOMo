@@ -106,3 +106,22 @@ def load_scene_data(config, results_dir, device="cuda:0"):
     params = dict(np.load(f"{results_dir}/params.npz"))
     params = {k: torch.tensor(v).to(device).float() for k, v in params.items()}
     return params, params['moving'], params['timestep'], params['intrinsics'], params['w2c']
+
+
+def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, rounded=True):
+    data = get_gt_traj(config, in_torch)
+    if data['points'].sum() == 0:
+        start_pix = data['points_projected'][:, 0, :]
+    else:
+        start_pix = data['points'][:, 0, :]
+        # visible = data['occluded'][:, 0] == 0
+        # start_pix = start_pix[visible]
+
+    if not normalized:
+        if w is None:
+            print("please give h and w if start pixels should be unnormalized!!")
+            quit()
+        start_pix[:, 0] = (start_pix[:, 0] * w) - 1
+        start_pix[:, 1] = (start_pix[:, 1] * h) - 1
+        start_pix = torch.round(start_pix).long()
+    return start_pix

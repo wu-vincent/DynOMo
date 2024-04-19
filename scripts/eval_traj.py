@@ -14,7 +14,7 @@ for p in sys.path:
     print(p)
 
 from utils.common_utils import seed_everything
-from utils.eval_traj import eval
+from utils.eval_traj import eval_traj, vis_grid_trajs
 
 
 if __name__ == "__main__":
@@ -36,4 +36,8 @@ if __name__ == "__main__":
         experiment.config["workdir"], experiment.config["run_name"]
     )
 
-    eval(experiment.config, results_dir)
+    metrics = eval_traj(experiment.config, results_dir=results_dir, vis_trajs=experiment.config['viz']['vis_tracked'])
+    print(metrics)
+    if experiment.config['viz']['vis_grid']:
+        vis_grid_trajs(experiment.config, params=None, cam=None, results_dir=results_dir)
+        print(f"Stored visualizations to {results_dir}...")

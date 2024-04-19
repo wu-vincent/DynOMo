@@ -1,14 +1,14 @@
 import os
 from os.path import join as p_join
 
-scenes = ["softball/ims/0"]
+scenes = ["softball/ims/27"]
 
 primary_device="cuda:0"
 seed = 0
 scene_name = scenes[0]
 
 add_every = 1
-tracking_iters = 100
+tracking_iters = 1000
 delta_optim_iters = 0
 tracking_iters_cam = 0
 mapping_iters = 0
@@ -20,6 +20,7 @@ run_name = f"splatam_{scene_name}_{seed}_{mov_init_by}"
 config = dict(
     workdir=f"./experiments/{group_name}",
     run_name=run_name,
+    checkpoint='',
     seed=seed,
     primary_device=primary_device,
     add_every=add_every, # Mapping every nth frame
@@ -27,8 +28,8 @@ config = dict(
     scene_radius_depth_ratio=3, # Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
-    save_checkpoints=False, # Save Checkpoints
-    checkpoint_interval=100, # Checkpoint Interval
+    save_checkpoints=True, # Save Checkpoints
+    checkpoint_interval=1, # Checkpoint Interval
     use_wandb=False,
     compute_normals=False,
     mov_static_init=False,
@@ -58,13 +59,13 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=10,
+        num_frames=95,
         load_embeddings=False
     ),
     add_gaussians=dict(
         add_new_gaussians=True,
         depth_error_factor=50,
-        use_depth_error_for_adding_gaussians=True,
+        use_depth_error_for_adding_gaussians=False,
         sil_thres_gaussians=0.5, # For Addition of new Gaussians
     ),
     remove_gaussians=dict(
@@ -112,6 +113,7 @@ config = dict(
         take_best_candidate=False,
         disable_rgb_grads_old=True,
         calc_ssmi=True,
+        bg_reg=False,
         use_flow=False, # 'rendered' # None
         loss_weights=dict(
             im=1.0,
@@ -130,7 +132,8 @@ config = dict(
             normals_neighbors=0.00000,
             mean_dx=0.0,
             moving=1.0,
-            embeddings=0.0
+            embeddings=0.0,
+            bg_reg=0.0001
         ),
         lrs=dict(
             means3D=0.00016,
@@ -171,14 +174,9 @@ config = dict(
         ),
     ),
     viz=dict(
-        render_mode='color', # ['color', 'depth' or 'centers']
-        offset_first_viz_cam=True, # Offsets the view camera back by 0.5 units along the view direction (For Final Recon Viz)
-        show_sil=False, # Show Silhouette instead of RGB
-        visualize_cams=True, # Visualize Camera Frustums and Trajectory
-        viz_w=600, viz_h=340,
-        viz_near=0.01, viz_far=100.0,
-        view_scale=2,
-        viz_fps=5, # FPS for Online Recon Viz
-        enter_interactive_post_online=True, # Enter Interactive Mode after Online Recon Viz
+        vis_grid=True,
+        vis_tracked=True,
+        save_pc=False,
+        save_videos=False
     ),
 )

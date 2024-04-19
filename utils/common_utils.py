@@ -42,14 +42,29 @@ def save_params(output_params, output_dir):
     np.savez(save_path, **to_save)
 
 
-def save_params_ckpt(output_params, output_dir, time_idx):
-    # Convert to CPU Numpy Arrays
-    to_save = params2cpu(output_params)
-    # Save the Parameters containing the Gaussian Trajectories
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"Saving parameters to: {output_dir}")
-    save_path = os.path.join(output_dir, "params"+str(time_idx)+".npz")
-    np.savez(save_path, **to_save)
+def save_params_ckpt(output_params, output_variables, output_dir):
+    for name, param in zip(["params", "variables"], [output_params, output_variables]):
+        # Convert to CPU Numpy Arrays
+        to_save = params2cpu(param)
+        # Save the Parameters containing the Gaussian Trajectories
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Saving parameters to: {output_dir}")
+        save_path = os.path.join(output_dir, f"temp_{name}.npz")
+        np.savez(save_path, **to_save)
+
+
+def load_params_ckpt(output_dir):
+    loaded_params = list()
+    for name in ["params", "variables"]:
+        print(f"Loading parameters from: {output_dir}")
+        save_path = os.path.join(output_dir, f"temp_{name}.npz")
+        params = np.load(save_path)
+        if name == 'params':
+            params = {k: torch.nn.Parameter(torch.from_numpy(v).cuda().float().contiguous().requires_grad_(True)) for k, v in params.items()}
+        else:
+            params = {k: torch.from_numpy(v).cuda() for k, v in params.items()}
+        loaded_params.append(params)
+    return loaded_params
 
 
 def save_seq_params(all_params, output_dir):
