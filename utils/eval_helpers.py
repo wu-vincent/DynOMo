@@ -29,7 +29,7 @@ import imageio
 import glob
 import open3d as o3d
 import wandb
-
+from sklearn.decomposition import PCA
 
   
 def make_vid(input_path): 
@@ -56,43 +56,32 @@ def report_loss(
         wandb_step,
         cam_tracking=False,
         obj_tracking=False,
-        delta_optim=False):
-    # Update loss dict
-    loss_dict = {'Loss': losses['loss'].item()}
-    if 'im' in losses.keys():
-        loss_dict.update({'Image Loss': losses['im'].item()})
-    
-    if 'depth' in losses.keys():
-        loss_dict.update({'Depth Loss': losses['depth'].item()})
+        delta_optim=False,
+        init_next=False):
 
-    if 'rot' in losses.keys():
-        moving_losses = {
-                 'Rotation Loss': losses['rot'].item(),
-                 'Rigid Loss': losses['rigid'].item(),
-                 'Isometry Loss': losses['iso'].item()}
-        loss_dict.update(moving_losses)
-    
-    if 'flow' in losses.keys():
-        moving_losses = {
-                 'Flow Loss': losses['flow'].item()}
-        loss_dict.update(moving_losses)
-        
+    # Update loss dict
     if cam_tracking:
         tracking_loss_dict = {}
-        for k, v in loss_dict.items():
-            tracking_loss_dict[f"Per Iteration Cam Tracking/{k}"] = v
+        for k, v in losses.items():
+            tracking_loss_dict[f"Per Iteration Cam Tracking/{k}"] = v.item()
         tracking_loss_dict['Per Iteration Cam Tracking/step'] = wandb_step
         wandb_run.log(tracking_loss_dict)
     elif obj_tracking:
         tracking_loss_dict = {}
-        for k, v in loss_dict.items():
-            tracking_loss_dict[f"Per Iteration Object Tracking/{k}"] = v
+        for k, v in losses.items():
+            tracking_loss_dict[f"Per Iteration Object Tracking/{k}"] = v.item()
         tracking_loss_dict['Per Iteration Object Tracking/step'] = wandb_step
+        wandb_run.log(tracking_loss_dict)
+    elif init_next:
+        tracking_loss_dict = {}
+        for k, v in losses.items():
+            tracking_loss_dict[f"Per Iteration Init Next/{k}"] = v.item()
+        tracking_loss_dict['Per Iteration Init Next/step'] = wandb_step
         wandb_run.log(tracking_loss_dict)
     elif delta_optim:
         delta_loss_dict = {}
-        for k, v in loss_dict.items():
-            delta_loss_dict[f"Per Iteration Delta Optim/{k}"] = v
+        for k, v in losses.items():
+            delta_loss_dict[f"Per Iteration Delta Optim/{k}"] = v.item()
         delta_loss_dict['Per Iteration Delta Optim/step'] = wandb_step
         wandb_run.log(delta_loss_dict)
     
@@ -297,11 +286,12 @@ def eval(
         mov_thresh=0.001,
         vis_gt=False,
         rendered_motion=True,
+        rendered_mov=False,
         rendered_silhouette=False,
-        rendered_instseg=False):
+        rendered_instseg=False,
+        get_embeddings=False):
 
     print("Evaluating Final Parameters ...")
-    dataset.load_embeddings = False
     psnr_list = []
     rmse_list = []
     l1_list = []
@@ -314,8 +304,13 @@ def eval(
         os.makedirs(render_rgb_dir, exist_ok=True)
         render_depth_dir = os.path.join(eval_dir, "rendered_depth")
         os.makedirs(render_depth_dir, exist_ok=True)
-        render_mov_dir = os.path.join(eval_dir, "rendered_mov")
-        os.makedirs(render_mov_dir, exist_ok=True)
+        if rendered_mov:
+            render_mov_dir = os.path.join(eval_dir, "rendered_mov")
+            os.makedirs(render_mov_dir, exist_ok=True)
+        render_emb_dir = os.path.join(eval_dir, "pca_emb")
+        os.makedirs(render_emb_dir, exist_ok=True)
+        render_emb_gt_dir = os.path.join(eval_dir, "pca_emb_gt")
+        os.makedirs(render_emb_gt_dir, exist_ok=True)
         if rendered_instseg:
             render_instseg_dir = os.path.join(eval_dir, "rendered_instseg")
             os.makedirs(render_instseg_dir, exist_ok=True)
@@ -339,16 +334,12 @@ def eval(
     gt_w2c_list = []
     import copy
     means2d = None
+    pca = None
     for time_idx in tqdm(range(num_frames-1)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
         data = dataset[time_idx]
-        color, depth, intrinsics, pose = data[0], data[1], data[2], data[3]
-        instseg = data[4]
-        if dataset.load_embeddings:
-            embeddings = data[5]
-        if dataset.load_support_trajs:
-            support_trajs = data[6]
+        color, depth, intrinsics, pose, instseg, embeddings, support_trajs = data[0], data[1], data[2], data[3], data[4], data[5], data[6]
                 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -365,9 +356,18 @@ def eval(
             continue
 
         # Define current frame data
-        curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'instseg': instseg}
+        curr_data = {
+            'cam': cam,
+            'im': color,
+            'depth': depth,
+            'id': time_idx,
+            'intrinsics': intrinsics,
+            'w2c': first_frame_w2c,
+            'instseg': instseg,
+            'embeddings': embeddings,
+            'support_trajs': support_trajs}
 
-        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, rastered_moving, rastered_sil = get_renderings(
+        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, rastered_moving, rastered_sil, rendered_embeddings = get_renderings(
             final_params_time,
             variables,
             time_idx,
@@ -378,7 +378,8 @@ def eval(
             track_cam=False,
             get_seg=True,
             get_motion=True,
-            prev_means2d=means2d)
+            prev_means2d=means2d,
+            get_embeddings=get_embeddings)
         
         if time_idx == 0:
             time_mask_0 = time_idx
@@ -398,8 +399,12 @@ def eval(
         weighted_im = im * valid_depth_mask
         weighted_gt_im = curr_data['im'] * valid_depth_mask
         psnr = calc_psnr(weighted_im, weighted_gt_im).mean()
-        ssim = ms_ssim(weighted_im.unsqueeze(0).cpu(), weighted_gt_im.unsqueeze(0).cpu(), 
+        try:
+            ssim = ms_ssim(weighted_im.unsqueeze(0).cpu(), weighted_gt_im.unsqueeze(0).cpu(), 
                         data_range=1.0, size_average=True)
+        except:
+            print("Img too small for ssim!!!")
+            ssim = torch.tensor(0)
         lpips_score = loss_fn_alex(torch.clamp(weighted_im.unsqueeze(0), 0.0, 1.0),
                                     torch.clamp(weighted_gt_im.unsqueeze(0), 0.0, 1.0)).item()
 
@@ -432,11 +437,43 @@ def eval(
             cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
 
             # moving
-            rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy()
-            smax, smin = rastered_moving_viz.max(), rastered_moving_viz.min()
-            normalized_instseg = np.clip((rastered_moving_viz - smin) / (smax - smin), 0, 1)
-            moving_colormap = cv2.applyColorMap((rastered_moving_viz * 255).astype(np.uint8), cv2.COLORMAP_JET)
-            cv2.imwrite(os.path.join(render_mov_dir, "gs_{:04d}.png".format(time_idx)), moving_colormap)
+            if rendered_mov:
+                rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy()
+                smax, smin = rastered_moving_viz.max(), rastered_moving_viz.min()
+                normalized_mov = np.clip((rastered_moving_viz - smin) / (smax - smin), 0, 1)
+                moving_colormap = cv2.applyColorMap((normalized_mov * 255).astype(np.uint8), cv2.COLORMAP_JET)
+                cv2.imwrite(os.path.join(render_mov_dir, "gs_{:04d}.png".format(time_idx)), moving_colormap)
+
+            # embeddings
+            rendered_embeddings = rendered_embeddings.permute(1, 2, 0).detach().cpu().numpy()
+            shape = rendered_embeddings.shape
+            print(rendered_embeddings.shape)
+            if shape[2] != 3:
+                if pca is None:
+                    pca = PCA(n_components=3)
+                    pca.fit(rendered_embeddings.reshape(-1, shape[2]))
+                else:
+                    print("USING THE SAME PCA")
+                rendered_embeddings = pca.transform(
+                    rendered_embeddings.reshape(-1, shape[2]))
+                rendered_embeddings = rendered_embeddings.reshape(
+                    (shape[0], shape[1], 3))
+            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+            emb_colormap = (normalized_emb * 255).astype(np.uint8)
+            imageio.imwrite(os.path.join(render_emb_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
+
+            rendered_embeddings = curr_data['embeddings'].permute(1, 2, 0).detach().cpu().numpy()
+            if shape[2] != 3:
+                shape = rendered_embeddings.shape
+                rendered_embeddings = pca.transform(
+                    rendered_embeddings.reshape(-1, shape[2]))
+                rendered_embeddings = rendered_embeddings.reshape(
+                    (shape[0], shape[1], 3))
+            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+            emb_colormap = (normalized_emb * 255).astype(np.uint8)
+            imageio.imwrite(os.path.join(render_emb_gt_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
 
             if rendered_silhouette:
                 # silouette
@@ -453,16 +490,37 @@ def eval(
                 cv2.imwrite(os.path.join(render_instseg_dir, "gs_{:04d}.png".format(time_idx)), instseg_colormap)
 
             if rendered_motion and time_idx > 0:
+                rastered_motion2d_viz = rastered_motion2d_viz.permute(1, 2, 0)
                 # motion
-                rastered_motion2d_viz = rastered_motion2d_viz[0].detach().cpu().numpy()
-                smax, smin = rastered_motion2d_viz.max(), rastered_motion2d_viz.min()
-                normalized_motion = np.clip((rastered_motion2d_viz - smin) / (smax - smin), 0, 1)
-                motion2d_colormap = cv2.applyColorMap((normalized_motion * 255).astype(np.uint8), cv2.COLORMAP_JET)
-                motion2d_colormap_x = motion2d_colormap[:, :, 0]
-                motion2d_colormap_y = motion2d_colormap[:, :, 1]
-                cv2.imwrite(os.path.join(render_motion_dir, "gs_{:04d}_x.png".format(time_idx)), motion2d_colormap_x)
-                cv2.imwrite(os.path.join(render_motion_dir, "gs_{:04d}_y.png".format(time_idx)), motion2d_colormap_y)
+                pix_x = torch.arange(rastered_motion2d_viz.shape[1]).unsqueeze(1).repeat((1, rastered_motion2d_viz.shape[0])).numpy().flatten()
+                pix_y = torch.arange(rastered_motion2d_viz.shape[0]).unsqueeze(0).repeat((rastered_motion2d_viz.shape[1], 1)).numpy().flatten()
+                flow_x = rastered_motion2d_viz[:, :, 0].clone().detach().cpu().numpy().flatten()
+                flow_y = rastered_motion2d_viz[:, :, 1].clone().detach().cpu().numpy().flatten()
+                stride = 25
+                plt.imshow(curr_data['im'].cpu().permute(1, 2, 0).numpy())
+                for i in range(0, flow_x.shape[0], stride):
+                    plt.arrow(pix_x[i], pix_y[i], flow_x[i], flow_y[i], width=0.2)
+                plt.margins(0, 0)
+                plt.axis('off')
+                plt.savefig(os.path.join(render_motion_dir, "flow_arrows_{:04d}.png".format(time_idx)), bbox_inches="tight")
+                plt.close()
 
+                # GT
+                gt_flows = curr_data['support_trajs']
+                pix_y = gt_flows[0, :, 1].clone().detach().cpu().numpy()
+                pix_x = gt_flows[0, :, 0].clone().detach().cpu().numpy()
+                flow_y = gt_flows[1, :, 1].clone().detach().cpu().numpy()-gt_flows[0, :, 1].clone().detach().cpu().numpy()
+                flow_x = gt_flows[1, :, 0].clone().detach().cpu().numpy()-gt_flows[0, :, 0].clone().detach().cpu().numpy()
+                stride = 1
+                plt.imshow(curr_data['im'].cpu().permute(1, 2, 0).numpy())
+                for i in range(0, flow_x.shape[0], stride):
+                    # plt.arrow(supp[0, i, 0], supp[0, i, 1], flow[i, 1], flow[i, 0])
+                    plt.arrow(pix_x[i], pix_y[i], flow_x[i], flow_y[i], width=0.2)
+                plt.margins(0, 0)
+                plt.axis('off')
+                plt.savefig(os.path.join(render_motion_dir, "gt_flow_arrows_{:04d}.png".format(time_idx)), bbox_inches="tight")
+                plt.close()
+                
             if vis_gt:
                 # Save GT RGB and Depth
                 viz_gt_im = torch.clamp(curr_data['im'], 0, 1)

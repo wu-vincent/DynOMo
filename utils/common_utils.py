@@ -42,7 +42,8 @@ def save_params(output_params, output_dir):
     np.savez(save_path, **to_save)
 
 
-def save_params_ckpt(output_params, output_variables, output_dir):
+def save_params_ckpt(output_params, output_variables, output_dir, time_idx):
+    output_variables['last_time_idx'] = torch.tensor(time_idx)
     for name, param in zip(["params", "variables"], [output_params, output_variables]):
         # Convert to CPU Numpy Arrays
         to_save = params2cpu(param)

@@ -1,14 +1,14 @@
 import os
 from os.path import join as p_join
 
-scenes = ["softball/ims/0"]
+scenes = ["softball/ims/27"]
 
 primary_device="cuda:0"
 seed = 0
 scene_name = scenes[0]
 
 add_every = 1
-tracking_iters = 1000
+tracking_iters = 100
 delta_optim_iters = 0
 tracking_iters_cam = 0
 mapping_iters = 0
@@ -29,8 +29,8 @@ config = dict(
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     save_checkpoints=True, # Save Checkpoints
-    checkpoint_interval=1, # Checkpoint Interval
-    use_wandb=False,
+    checkpoint_interval=10, # Checkpoint Interval
+    use_wandb=True,
     compute_normals=False,
     mov_static_init=False,
     make_bg_static=False,
@@ -51,22 +51,22 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/data",
+        basedir="/scratch/jseidens/data/data",
         gradslam_data_cfg="./configs/data/jono_data.yaml",
         sequence=scene_name,
-        desired_image_height=360,
-        desired_image_width=640,
+        desired_image_height=90, #360,
+        desired_image_width=160, #640,
         start=0,
         end=-1,
         stride=1,
-        num_frames=5,
-        load_embeddings=False
+        num_frames=32,
+        load_embeddings=True
     ),
     add_gaussians=dict(
         add_new_gaussians=True,
         depth_error_factor=50,
         use_depth_error_for_adding_gaussians=True,
-        sil_thres_gaussians=0.5, # For Addition of new Gaussians
+        sil_thres_gaussians=0.99, # For Addition of new Gaussians
     ),
     remove_gaussians=dict(
         remove=True,
@@ -113,20 +113,16 @@ config = dict(
         take_best_candidate=False,
         disable_rgb_grads_old=True,
         calc_ssmi=True,
-        bg_reg=False,
+        bg_reg=True,
         use_flow='rendered', # 'rendered' # None
         loss_weights=dict(
             im=1.0,
-            next_im=1.0,
-            depth=0.5,
-            next_depth=0.5,
+            depth=0,
             rot=4.0,
             rigid=4.0,
             iso=2.0,
-            flow=2.0,
-            instseg=1.0,
-            moving=1.0,
-            embeddings=0.0,
+            flow=50.0,
+            embeddings=1.0,
             bg_reg=0.0001
         ),
         lrs=dict(
@@ -139,9 +135,47 @@ config = dict(
             log_scales=0.001,
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
-            instseg=0.00016,
-            moving=0.001,
+            embeddings=0.00,
+            moving=0.0,
+            instseg=0.0
+        ),
+    ),
+    init_next=dict(
+        num_iters=tracking_iters,
+        sil_thres=0.9,
+        use_l1=True,
+        use_sil_for_loss=True,
+        ignore_outlier_depth_loss=False,
+        dyno_losses=True,
+        use_seg_loss=False,
+        take_best_candidate=False,
+        disable_rgb_grads_old=True,
+        calc_ssmi=True,
+        bg_reg=True,
+        use_flow='rendered', # 'rendered' # None
+        loss_weights=dict(
+            im=1.0,
+            depth=0,
+            rot=4.0,
+            rigid=4.0,
+            iso=2.0,
+            flow=50.0,
+            embeddings=1.0,
+            bg_reg=0.0001
+        ),
+        lrs=dict(
+            means3D=0.0016,
+            delta_means3D=0.0016,
+            rgb_colors=0.00,
+            unnorm_rotations=0.00,
+            delta_unnorm_rotations=0.00,
+            logit_opacities=0.00,
+            log_scales=0.00,
+            cam_unnorm_rots=0.0000,
+            cam_trans=0.0000,
             embeddings=0.0,
+            moving=0.0,
+            instseg=0.0
         ),
     ),
     tracking_cam=dict(
@@ -167,7 +201,7 @@ config = dict(
     viz=dict(
         vis_grid=True,
         vis_tracked=True,
-        save_pc=False,
+        save_pc=True,
         save_videos=False
     ),
 )

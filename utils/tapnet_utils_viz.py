@@ -133,7 +133,7 @@ def plot_tracks_v2(
     gt_points: Optional[np.ndarray] = None,
     gt_occluded: Optional[np.ndarray] = None,
     trackgroup: Optional[np.ndarray] = None,
-    point_size: int = 20,
+    point_size: int = 10,
 ) -> np.ndarray:
     """Plot tracks with matplotlib.
 
@@ -796,7 +796,7 @@ def vis_tracked_points(results_dir, data):
             lc = LineCollection(segments, cmap='hsv', norm=norm)
             # Set the values used for colormapping
             lc.set_array(color_len)
-            lc.set_linewidth(2)
+            lc.set_linewidth(1)
             line = ax.add_collection(lc)
 
         plt.axis('off')

@@ -10,6 +10,7 @@ from natsort import natsorted
 from .replica import ReplicaDataset
 import imageio
 import json
+from sklearn.decomposition import PCA
 
 
 class JonoDynoSplatamDataset(ReplicaDataset):
@@ -25,7 +26,7 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         desired_width: Optional[int] = 640,
         load_embeddings: Optional[bool] = False,
         embedding_dir: Optional[str] = "embeddings",
-        embedding_dim: Optional[int] = 512,
+        embedding_dim: Optional[int] = 64,
         **kwargs,
     ):
         self.input_folder = os.path.join(basedir, sequence)
@@ -48,26 +49,33 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         self.bg_paths = self.get_bg_paths()
         self.load_instseg = True
         self.load_support_trajs()
+        print(f"Length of sequence {len(self.color_paths)}")
     
     def get_bg_paths(self):
         if os.path.isdir(f"{self.input_folder.replace('ims', 'seg')}"):
-            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:]
+            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:36]
         else:
             bg_paths = None
         return bg_paths
     
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))[2:]
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))[2:36]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:36]
         return instseg_paths
     
-    def read_embedding_from_file(self, idx):
-        embedding = torch.from_numpy(np.load(self.embedding_paths[idx]).astype(dtype=np.int64))
-        embedding = torch.cat([torch.zeros(480, 80, 384), embedding, torch.zeros(480, 80, 384)], dim=1)
-        return embedding
+    def read_embedding_from_file(self, embedding_path):
+        embedding = np.load(embedding_path)
+        if self.embedding_downscale is not None:
+            shape = embedding.shape
+            embedding = self.embedding_downscale.transform(embedding.reshape(-1, shape[2]))
+            embedding = embedding.reshape((shape[0], shape[1], self.embedding_dim))
+        return torch.from_numpy(embedding)
 
     def _load_instseg(self, instseg_path):
-        instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
-        # instseg = np.asarray(imageio.imread(instseg_path), dtype=int)[:,:, 0]
+        if 'npy' in instseg_path:
+            instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
+        else:
+            instseg = np.asarray(imageio.imread(instseg_path), dtype=int)
         return instseg
 
     def _load_bg(self, bg_path):
@@ -75,11 +83,19 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         return bg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[2:]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))[2:]
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[2:36]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))[2:36]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Embeddings')}/embeddings*.png"))[2:]
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_features.npy"))[2:]
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img.npy"))[2:36]
+            features = np.load(embedding_paths[0])
+            if self.embedding_dim != features.shape[2]:
+                pca = PCA(n_components=self.embedding_dim)
+                self.embedding_downscale = pca.fit(features.reshape(-1, features.shape[2]))
+            else:
+                print('Features already have the right size...')
+                self.embedding_downscale = None
         return color_paths, depth_paths, embedding_paths
     
     def load_support_trajs(self):
@@ -92,6 +108,7 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         self.support_trajs[:, :, :, 0] = self.support_trajs[:, :, :, 0] * scale_factors[0]
         self.support_trajs[:, :, :, 1] = self.support_trajs[:, :, :, 1] * scale_factors[1]
         self.support_trajs = np.round(self.support_trajs)
+
         # clip to image boundaries
         self.support_trajs[:, :, :, 0] = np.clip(self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
         self.support_trajs[:, :, :, 1] = np.clip(self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)

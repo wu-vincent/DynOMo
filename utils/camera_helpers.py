@@ -4,6 +4,34 @@ try:
 except:
     pass
 
+import numpy as np
+
+
+def as_intrinsics_matrix(intrinsics):
+    """
+    Get matrix representation of intrinsics.
+
+    """
+    K = np.eye(3)
+    K[0, 0] = intrinsics[0]
+    K[1, 1] = intrinsics[1]
+    K[0, 2] = intrinsics[2]
+    K[1, 2] = intrinsics[3]
+    return K
+
+
+def from_intrinsics_matrix(K):
+    """
+    Get fx, fy, cx, cy from the intrinsics matrix
+
+    return 4 scalars
+    """
+    fx = to_scalar(K[0, 0])
+    fy = to_scalar(K[1, 1])
+    cx = to_scalar(K[0, 2])
+    cy = to_scalar(K[1, 2])
+    return fx, fy, cx, cy
+
 
 def get_camera_params(config):
     h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]

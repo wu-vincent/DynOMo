@@ -1,10 +1,11 @@
 import os
-from utils.get_data import get_gt_traj, load_scene_data
+from utils.get_data import get_gt_traj, load_scene_data, get_cam_data
 import numpy as np
 import torch
 from utils.camera_helpers import get_projection_matrix
 from utils.two2threeD_helpers import three2two, unnormalize_points, normalize_points
 from utils.tapnet_utils_viz import vis_tracked_points
+from utils.camera_helpers import setup_camera
 
 
 def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, start_pixels_normalized=True, gauss_ids=None):
@@ -36,8 +37,8 @@ def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, st
 
 
 def find_closest(means2D, pix):
-    for d_x in [0, -1, 1, 0, 0, -1, 1, -1, 1]:
-        for d_y in [0, 0, 0, -1, 1, -1, -1, 1, 1]:
+    for d_x in [0, -1, 1, 0, 0, -1, 1, -1, 1, -2, 2, 0, 0, -2, 2, -2, 2, -1, 1, 1, -1. -2, 2, -2, 2]:
+        for d_y in [0, 0, 0, -1, 1, -1, -1, 1, 1, 0, 0, -2, 2, -1, 1, 1, -1, -2, 2, -2, 2, -2, -2, 2, 2]:
             pix_mask =  torch.logical_and(
                 means2D[:, 0] == pix[0] + d_x,
                 means2D[:, 1] == pix[1] + d_y)
@@ -272,7 +273,13 @@ def reduce_masked_median(x, mask, keep_batch=False):
         return med.float()
 
 
-def eval_traj(config, params=None, results_dir='out', cam=None, vis_trajs=True, gauss_ids_to_track=None):
+def eval_traj(
+        config,
+        params=None,
+        results_dir='out',
+        cam=None,
+        vis_trajs=True,
+        gauss_ids_to_track=None):
     # get projectoin matrix
     if cam is None:
         params, _, _, k, w2c = load_scene_data(config, results_dir)
@@ -283,6 +290,7 @@ def eval_traj(config, params=None, results_dir='out', cam=None, vis_trajs=True, 
         proj_matrix = cam.projmatrix.squeeze()
         h = cam.image_height
         w = cam.image_width
+
     # get gt data
     data = get_gt_traj(config, in_torch=True)
 
@@ -337,13 +345,22 @@ def get_xy_grid(H, W, N=1024, B=1):
 
     return xy0
 
-def vis_grid_trajs(config, params=None, cam=None, results_dir=None):
+def vis_grid_trajs(config, params=None, cam=None, results_dir=None, orig_image_size=False):
     # get projectoin matrix
     if cam is None:
         params, _, _, k, w2c = load_scene_data(config, results_dir)
-        h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]
-        proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
+        if orig_image_size:
+            k, pose, h, w = get_cam_data(config, orig_image_size=orig_image_size)
+            w2c = torch.linalg.inv(pose)
+            proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
+        else:
+            h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]
+            proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
         results_dir = os.path.join(results_dir, 'eval')
+    elif orig_image_size:
+        k, pose, h, w = get_cam_data(config, orig_image_size=orig_image_size)
+        w2c = torch.linalg.inv(pose)
+        proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
     else:
         proj_matrix = cam.projmatrix.squeeze()
         h = cam.image_height

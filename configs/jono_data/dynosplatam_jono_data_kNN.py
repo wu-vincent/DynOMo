@@ -51,7 +51,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/data",
+        basedir="/scratch/jseidens/data/data",
         gradslam_data_cfg="./configs/data/jono_data.yaml",
         sequence=scene_name,
         desired_image_height=360,

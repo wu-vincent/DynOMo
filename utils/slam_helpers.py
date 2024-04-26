@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from utils.slam_external import build_rotation, normalize_quat
 from utils.two2threeD_helpers import three2two
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from diff_gaussian_rasterization_embeddings import GaussianRasterizerEmb as EmbeddingRenderer
 
 
 def l1_loss_v1(x, y, mask=None, reduction='mean'):
@@ -380,6 +381,61 @@ def transformed_params2dmotion(
 
     return rendervar, time_mask
 
+def transformed_params2emb(
+        params,
+        transformed_gaussians,
+        time_idx,
+        variables,
+        emb_idx,
+        max_idx):
+    # Check if Gaussians are Isotropic
+    if params['log_scales'].shape[1] == 1:
+        log_scales = torch.tile(params['log_scales'], (1, 3))
+    else:
+        log_scales = params['log_scales']
+
+    # Initialize Render Variables
+    embs = torch.ones([params['embeddings'].shape[0], 3]).cuda()
+    embs[:, :max_idx] = params['embeddings'][:, emb_idx:emb_idx+max_idx]
+    rendervar = {
+        'means3D': transformed_gaussians['means3D'],
+        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
+        'opacities': torch.sigmoid(params['logit_opacities']),
+        'scales': torch.exp(log_scales),
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'colors_precomp': embs.clone().detach()
+    }
+
+    rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'], strictly_less=False)
+
+    return rendervar, time_mask
+
+
+def transformed_params2emb_all(
+        params,
+        transformed_gaussians,
+        time_idx,
+        variables):
+    # Check if Gaussians are Isotropic
+    if params['log_scales'].shape[1] == 1:
+        log_scales = torch.tile(params['log_scales'], (1, 3))
+    else:
+        log_scales = params['log_scales']
+
+    # Initialize Render Variables
+    rendervar = {
+        'means3D': transformed_gaussians['means3D'],
+        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
+        'opacities': torch.sigmoid(params['logit_opacities']),
+        'scales': torch.exp(log_scales),
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'colors_precomp': params['embeddings']
+    }
+
+    rendervar, time_mask = mask_timestamp(rendervar, time_idx, variables['timestep'], strictly_less=False)
+
+    return rendervar, time_mask
+
 def transformed_params2depthsilinstseg(
         params,
         w2c,
@@ -552,7 +608,8 @@ def get_renderings(
         get_rgb=True,
         get_depth=True,
         get_motion=False,
-        get_seg=False):
+        get_seg=False,
+        get_embeddings=True):
 
     transformed_gaussians = transform_to_frame(params, iter_time_idx,
                                         gaussians_grad=True if not disable_grads and not track_cam else False,
@@ -633,5 +690,31 @@ def get_renderings(
         motion2d, _, _, _, _ = Renderer(raster_settings=data['cam'])(**mot_rendervar)
     else:
         motion2d = None
-
-    return variables, im, radius, depth, instseg, mask, transformed_gaussians, means2d, visible, weight, motion2d, time_mask, moving, silhouette
+    
+    if get_embeddings:
+        '''
+        emb_rendervar, _  = transformed_params2emb_all(
+                params,
+                transformed_gaussians,
+                iter_time_idx,
+                variables)
+        embeddings, _, _, _, _ = EmbeddingRenderer(raster_settings=data['cam'])(**emb_rendervar)
+        print(embeddings[3])
+        quit()
+        '''
+        embeddings = torch.zeros_like(data['embeddings'])
+        for emb_idx in range(0, params['embeddings'].shape[1], 3):
+            max_idx = min(params['embeddings'].shape[1]-emb_idx, 3)
+            emb_rendervar, _ = transformed_params2emb(
+                params,
+                transformed_gaussians,
+                iter_time_idx,
+                variables,
+                emb_idx,
+                max_idx)
+            _embeddings, _, _, _, _ = EmbeddingRenderer(raster_settings=data['cam'])(**emb_rendervar)
+            embeddings[emb_idx:emb_idx+max_idx] = _embeddings[:max_idx]
+        
+    else:
+        embeddings = None
+    return variables, im, radius, depth, instseg, mask, transformed_gaussians, means2d, visible, weight, motion2d, time_mask, moving, silhouette, embeddings

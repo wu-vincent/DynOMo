@@ -50,7 +50,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/DAVIS/JPEGImages/480p",
+        basedir="/scratch/jseidens/data/DAVIS/JPEGImages/480p",
         gradslam_data_cfg="./configs/data/davis.yaml",
         sequence=scene_name,
         desired_image_height=480,

@@ -20,7 +20,7 @@ run_name = f"splatam_{scene_name}_{seed}_{mov_init_by}"
 config = dict(
     workdir=f"./experiments/{group_name}",
     run_name=run_name,
-    checkpoint='',
+    checkpoint='experiments/dynosplatam_jono/splatam_softball/ims/27_0_support_trajs', #'experiments/dynosplatam_jono/splatam_softball/ims/27_0_support_trajs',
     seed=seed,
     primary_device=primary_device,
     add_every=add_every, # Mapping every nth frame
@@ -51,7 +51,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/data",
+        basedir="/scratch/jseidens/data/data",
         gradslam_data_cfg="./configs/data/jono_data.yaml",
         sequence=scene_name,
         desired_image_height=360,
@@ -59,7 +59,7 @@ config = dict(
         start=0,
         end=-1,
         stride=1,
-        num_frames=95,
+        num_frames=-1,
         load_embeddings=False
     ),
     add_gaussians=dict(

@@ -150,7 +150,6 @@ def remove_points(
         params,
         variables,
         optimizer=None,
-        offset_0=None,
         support_trajs_trans=None):
     to_keep = ~to_remove
     idxs_to_keep = torch.arange(params['means3D'].shape[0])[to_keep].to(
@@ -180,8 +179,6 @@ def remove_points(
     variables['max_2D_radius'] = variables['max_2D_radius'][to_keep]
     variables['seen'] = variables['seen'][to_keep]
     variables['moving'] = variables['moving'][to_keep]
-    variables['x_coord_im'] = variables['x_coord_im'][to_keep]
-    variables['y_coord_im'] = variables['y_coord_im'][to_keep]
     
     if 'means2D_grad' in variables.keys():
         variables['means2D_grad'] = variables['means2D_grad'][to_keep]
@@ -197,6 +194,7 @@ def remove_points(
     # mask kNN and map indices to new indices
     variables['neighbor_indices'] = variables['neighbor_indices'][to_keep_idx_mask]
     variables['neighbor_weight'] = variables['neighbor_weight'][to_keep_idx_mask]
+    variables['neighbor_weight_sm'] = variables['neighbor_weight_sm'][to_keep_idx_mask]
     variables['neighbor_dist'] = variables['neighbor_dist'][to_keep_idx_mask]
     variables['self_indices'] = variables['self_indices'][to_keep_idx_mask]
 
@@ -207,12 +205,12 @@ def remove_points(
     variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
     # mask offset_0 and support trajs
-    if offset_0 is not None:
-        offset_0 = offset_0[to_keep_idx_mask]
+    if 'offset_0' in variables.keys():
+        variables['offset_0'] = variables['offset_0'][to_keep_idx_mask]
     if support_trajs_trans is not None:
         support_trajs_trans = support_trajs_trans[to_keep]
 
-    return params, variables, offset_0, support_trajs_trans
+    return params, variables, support_trajs_trans
 
 
 def inverse_sigmoid(x):
@@ -226,7 +224,6 @@ def prune_gaussians(
         iter,
         prune_dict,
         curr_time_idx,
-        offset_0,
         support_trajs_trans):
     variables['means2D_grad'] = variables['means2D'].grad
     if iter <= prune_dict['stop_after']:
@@ -247,7 +244,7 @@ def prune_gaussians(
                     params['means3D'][variables["neighbor_indices"], :, curr_time_idx-1])
                 offset_t_mag = scatter_add(offset_t_mag, variables["self_indices"], dim=0)
                 
-                offset_0_mag = torch.linalg.norm(offset_0, dim=1)
+                offset_0_mag = torch.linalg.norm(variables['offset_0'], dim=1)
                 offset_0_mag = scatter_add(offset_0_mag, variables["self_indices"], dim=0)
 
                 rel_drift = torch.abs(offset_t_mag-offset_0_mag) / offset_0_mag
@@ -259,12 +256,11 @@ def prune_gaussians(
                 big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
                 to_remove = torch.logical_or(to_remove, big_points_ws)
             if to_remove.sum():
-                params, variables, offset_0, support_trajs_trans = remove_points(
+                params, variables, support_trajs_trans = remove_points(
                     to_remove,
                     params,
                     variables,
                     optimizer,
-                    offset_0,
                     support_trajs_trans)
             torch.cuda.empty_cache()
         
@@ -275,7 +271,7 @@ def prune_gaussians(
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
     
-    return params, variables, offset_0, support_trajs_trans
+    return params, variables, support_trajs_trans
 
 def clone_vars(params, variables, to_clone):
     device = variables['self_indices'].device
@@ -286,6 +282,8 @@ def clone_vars(params, variables, to_clone):
         (variables['neighbor_indices'], variables['neighbor_indices'][to_clone_self_idx]), dim=0)
     variables['neighbor_weight'] = torch.cat(
         (variables['neighbor_weight'], variables['neighbor_weight'][to_clone_self_idx]), dim=0)
+    variables['neighbor_weight_sm'] = torch.cat(
+        (variables['neighbor_weight_sm'], variables['neighbor_weight_sm'][to_clone_self_idx]), dim=0)
     variables['neighbor_dist'] = torch.cat(
         (variables['neighbor_dist'], variables['neighbor_dist'][to_clone_self_idx]), dim=0)
     self_idxs = variables['self_indices'][to_clone_self_idx]
@@ -317,6 +315,8 @@ def split_vars(params, variables, to_split, n):
         (variables['neighbor_indices'], variables['neighbor_indices'][to_split_self_idx].repeat(n)), dim=0)
     variables['neighbor_weight'] = torch.cat(
         (variables['neighbor_weight'], variables['neighbor_weight'][to_split_self_idx].repeat(n)), dim=0)
+    variables['neighbor_weight_sm'] = torch.cat(
+        (variables['neighbor_weight_sm'], variables['neighbor_weight_sm'][to_split_self_idx].repeat(n)), dim=0)
     variables['neighbor_dist'] = torch.cat(
         (variables['neighbor_dist'], variables['neighbor_dist'][to_split_self_idx].repeat(n)), dim=0)
     self_idxs = variables['self_indices'][to_split_self_idx]

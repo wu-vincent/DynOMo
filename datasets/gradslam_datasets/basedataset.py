@@ -12,7 +12,7 @@ import abc
 import glob
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union  
 
 import cv2
 import imageio
@@ -25,6 +25,7 @@ from .geometryutils import relative_transformation
 from . import datautils
 import torchvision
 from torchvision.transforms.functional import InterpolationMode
+from utils.camera_helpers import as_intrinsics_matrix, from_intrinsics_matrix
 
 
 def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
@@ -41,32 +42,6 @@ def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
     if isinstance(inp, torch.Tensor):
         assert inp.numel() == 1
         return inp.item()
-
-
-def as_intrinsics_matrix(intrinsics):
-    """
-    Get matrix representation of intrinsics.
-
-    """
-    K = np.eye(3)
-    K[0, 0] = intrinsics[0]
-    K[1, 1] = intrinsics[1]
-    K[0, 2] = intrinsics[2]
-    K[1, 2] = intrinsics[3]
-    return K
-
-
-def from_intrinsics_matrix(K):
-    """
-    Get fx, fy, cx, cy from the intrinsics matrix
-
-    return 4 scalars
-    """
-    fx = to_scalar(K[0, 0])
-    fy = to_scalar(K[1, 1])
-    cx = to_scalar(K[0, 2])
-    cy = to_scalar(K[1, 2])
-    return fx, fy, cx, cy
 
 
 def readEXR_onlydepth(filename):
@@ -312,7 +287,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = np.asarray(imageio.imread(color_path), dtype=float)
         if color.shape[2] > 3:
             color = color[:, :, :3]
-        
+        print(color.shape)
         color = self._preprocess_color(color)
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -321,6 +296,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             depth = np.load(depth_path, mmap_mode="r") # .astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
+        print(depth.shape)
 
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
@@ -365,13 +341,17 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         if self.load_embeddings:
             embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
+            print(embedding.shape)
             embedding = trans_bilinear(embedding)
-            return_vals = return_vals + [embedding.to(self.device)],  # Allow embedding to be another dtype
+            return_vals = return_vals + [embedding.to(self.device)] # Allow embedding to be another dtype
         else:
             return_vals = return_vals + [None]
         
         if self.support_trajs is not None:
-            return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).cuda().long()]
+            try:
+                return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).cuda().long()]
+            except:
+                return_vals = return_vals + [torch.atleast_3d(torch.from_numpy(self.support_trajs[-1, index-len(self.support_trajs):])).cuda().long()]
         else:
             return_vals = return_vals + [None]
         

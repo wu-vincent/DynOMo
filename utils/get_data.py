@@ -5,12 +5,15 @@ from datasets.gradslam_datasets import (
     SyntheticDynoSplatamDataset,
     PointOdysseeDynoSplatamDataset,
     DavisDynoSplatamDataset,
-    JonoDynoSplatamDataset
+    JonoDynoSplatamDataset,
+    datautils
 )
 import pickle
 import numpy as np
 import os
 import torch
+from utils.camera_helpers import as_intrinsics_matrix
+import numpy as np
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -64,6 +67,37 @@ def get_data(config):
         load_embeddings=dataset_config["load_embeddings"])
 
     return dataset
+
+
+def get_cam_data(config, orig_image_size=False):
+    config_dict = get_gradslam_data_cfg(config["data"])
+
+    if orig_image_size:
+        desired_image_height = config_dict["camera_params"]["image_height"]
+        desired_image_width = config_dict["camera_params"]["image_width"]
+    else:
+        desired_image_height = config['data']['desired_image_height']
+        desired_image_width = config['data']['desired_image_width']
+
+    orig_height = config_dict["camera_params"]["image_height"]
+    orig_width = config_dict["camera_params"]["image_width"]
+    fx = config_dict["camera_params"]["fx"]
+    fy = config_dict["camera_params"]["fy"]
+    cx = config_dict["camera_params"]["cx"]
+    cy = config_dict["camera_params"]["cy"]
+
+    height_downsample_ratio = float(desired_image_height) / orig_height
+    width_downsample_ratio = float(desired_image_width) / orig_width
+
+    K = as_intrinsics_matrix([fx, fy, cx, cy])
+    K = torch.from_numpy(K)
+    K = datautils.scale_intrinsics(K, height_downsample_ratio, width_downsample_ratio)
+    intrinsics = torch.eye(4).to(K)
+    intrinsics[:3, :3] = K
+
+    pose = torch.eye(4).float()
+
+    return intrinsics, pose, desired_image_height, desired_image_width
 
 
 def load_davis_all(in_torch=False):

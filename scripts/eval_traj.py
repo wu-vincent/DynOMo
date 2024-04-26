@@ -39,5 +39,10 @@ if __name__ == "__main__":
     metrics = eval_traj(experiment.config, results_dir=results_dir, vis_trajs=experiment.config['viz']['vis_tracked'])
     print(metrics)
     if experiment.config['viz']['vis_grid']:
-        vis_grid_trajs(experiment.config, params=None, cam=None, results_dir=results_dir)
+        vis_grid_trajs(
+            experiment.config,
+            params=None,
+            cam=None,
+            results_dir=results_dir,
+            orig_image_size=True)
         print(f"Stored visualizations to {results_dir}...")
