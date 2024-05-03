@@ -285,11 +285,13 @@ def eval(
         save_videos=False,
         mov_thresh=0.001,
         vis_gt=False,
-        rendered_motion=True,
+        rendered_motion=False,
         rendered_mov=False,
         rendered_silhouette=False,
         rendered_instseg=False,
-        get_embeddings=False):
+        get_embeddings=False,
+        rendered_bg=False,
+        time_window=1):
 
     print("Evaluating Final Parameters ...")
     psnr_list = []
@@ -323,6 +325,9 @@ def eval(
         if rendered_motion:
             render_motion_dir = os.path.join(eval_dir, "rendered_motion")
             os.makedirs(render_motion_dir, exist_ok=True)
+        if rendered_bg:
+            render_bg_dir = os.path.join(eval_dir, "rendered_bg")
+            os.makedirs(render_bg_dir, exist_ok=True)
         if vis_gt:
             rgb_dir = os.path.join(eval_dir, "rgb")
             os.makedirs(rgb_dir, exist_ok=True)
@@ -335,7 +340,7 @@ def eval(
     import copy
     means2d = None
     pca = None
-    for time_idx in tqdm(range(num_frames-1)):
+    for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
         data = dataset[time_idx]
@@ -367,7 +372,7 @@ def eval(
             'embeddings': embeddings,
             'support_trajs': support_trajs}
 
-        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, rastered_moving, rastered_sil, rendered_embeddings = get_renderings(
+        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, rastered_moving, rastered_sil, rendered_embeddings, rastered_bg = get_renderings(
             final_params_time,
             variables,
             time_idx,
@@ -379,7 +384,8 @@ def eval(
             get_seg=True,
             get_motion=True,
             prev_means2d=means2d,
-            get_embeddings=get_embeddings)
+            get_embeddings=get_embeddings,
+            time_window=time_window)
         
         if time_idx == 0:
             time_mask_0 = time_idx
@@ -403,7 +409,6 @@ def eval(
             ssim = ms_ssim(weighted_im.unsqueeze(0).cpu(), weighted_gt_im.unsqueeze(0).cpu(), 
                         data_range=1.0, size_average=True)
         except:
-            print("Img too small for ssim!!!")
             ssim = torch.tensor(0)
         lpips_score = loss_fn_alex(torch.clamp(weighted_im.unsqueeze(0), 0.0, 1.0),
                                     torch.clamp(weighted_gt_im.unsqueeze(0), 0.0, 1.0)).item()
@@ -444,16 +449,21 @@ def eval(
                 moving_colormap = cv2.applyColorMap((normalized_mov * 255).astype(np.uint8), cv2.COLORMAP_JET)
                 cv2.imwrite(os.path.join(render_mov_dir, "gs_{:04d}.png".format(time_idx)), moving_colormap)
 
+            # bg
+            if rendered_bg:
+                rastered_bg = rastered_bg[0].detach().cpu().numpy()
+                smax, smin = rastered_bg.max(), rastered_bg.min()
+                normalized_bg = np.clip((rastered_bg - smin) / (smax - smin), 0, 1)
+                bg_colormap = cv2.applyColorMap((normalized_bg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+                cv2.imwrite(os.path.join(render_bg_dir, "gs_{:04d}.png".format(time_idx)), bg_colormap)
+
             # embeddings
             rendered_embeddings = rendered_embeddings.permute(1, 2, 0).detach().cpu().numpy()
             shape = rendered_embeddings.shape
-            print(rendered_embeddings.shape)
             if shape[2] != 3:
                 if pca is None:
                     pca = PCA(n_components=3)
                     pca.fit(rendered_embeddings.reshape(-1, shape[2]))
-                else:
-                    print("USING THE SAME PCA")
                 rendered_embeddings = pca.transform(
                     rendered_embeddings.reshape(-1, shape[2]))
                 rendered_embeddings = rendered_embeddings.reshape(

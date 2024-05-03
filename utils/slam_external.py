@@ -205,10 +205,16 @@ def remove_points(
     variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
     # mask offset_0 and support trajs
-    if 'offset_0' in variables.keys():
+    if 'offset_0' in variables.keys() and variables['offset_0'] is not None:
         variables['offset_0'] = variables['offset_0'][to_keep_idx_mask]
     if support_trajs_trans is not None:
-        support_trajs_trans = support_trajs_trans[to_keep]
+        if len(support_trajs_trans.shape) == 3:
+            time_window = support_trajs_trans.shape[0]
+            to_keep_flat = to_keep.unsqueeze(0).repeat((time_window, 1)).flatten(0, 1)
+            support_trajs_trans = support_trajs_trans.flatten(0, 1)[to_keep_flat]
+            support_trajs_trans = support_trajs_trans.reshape((time_window, -1, support_trajs_trans.shape[1]))
+        else:
+            support_trajs_trans = support_trajs_trans[to_keep]
 
     return params, variables, support_trajs_trans
 

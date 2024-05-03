@@ -9,7 +9,7 @@ from utils.camera_helpers import setup_camera
 
 
 def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, start_pixels_normalized=True, gauss_ids=None):
-    means3D = params['means3D'][first_occurance==0]
+    means3D = params['means3D'][first_occurance==first_occurance.min().item()]
 
     # assign and get 3D trajectories
     means3D_t0 = means3D[:, :, 0]
@@ -23,7 +23,9 @@ def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, st
             means2D_t0,
             start_pixels)
 
-    gs_traj_3D = get_3D_trajs_for_track(gauss_ids, params)
+    gs_traj_3D, logit_opacities, logit_sclaes, rgb_colors = get_3D_trajs_for_track(
+        gauss_ids, params, return_all=True)
+    print(logit_opacities.squeeze())
     
     # get 2D trajectories
     gs_traj_2D = list()
@@ -59,17 +61,29 @@ def find_closest_to_start_pixels(means2D, start_pixels):
     return gauss_ids
         
 
-def get_3D_trajs_for_track(gauss_ids, params):
+def get_3D_trajs_for_track(gauss_ids, params, return_all=False):
     gs_traj_3D = list()
+    logit_opacities = list()
+    logit_scales = list()
+    rgb_colors = list()
     for gauss_id in gauss_ids:
         if gauss_id != -1:
             gs_traj_3D.append(
                     params['means3D'][gauss_id].squeeze())
+            logit_opacities.append(params['logit_opacities'][gauss_id])
+            rgb_colors.append(params['rgb_colors'][gauss_id])
+            logit_scales.append(params['log_scales'][gauss_id])
         else:
             gs_traj_3D.append(
                     torch.ones_like(params['means3D'][0]).squeeze()*-1)
-    return torch.stack(gs_traj_3D)
+            logit_opacities.append(torch.tensor(-1))
+            rgb_colors.append(torch.tensor(-1))
+            logit_scales.append(torch.tensor(-1))
 
+    if return_all:
+        return torch.stack(gs_traj_3D), torch.stack(logit_opacities), torch.stack(logit_scales), torch.stack(rgb_colors)
+    else:
+        return torch.stack(gs_traj_3D)
 
 def _eval_traj(
         params,
@@ -106,7 +120,7 @@ def _eval_traj(
         h,
         gt_traj_2D[:, 0].clone(),
         gauss_ids=gauss_ids_to_track)
-    
+
     # unnormalize gt to image pixels
     gt_traj_2D = unnormalize_points(gt_traj_2D, h, w)
 
@@ -286,6 +300,10 @@ def eval_traj(
         h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]
         proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
         results_dir = os.path.join(results_dir, 'eval')
+        if 'gauss_ids_to_track' in params.keys():
+            gauss_ids_to_track = params['gauss_ids_to_track'].long()
+        if gauss_ids_to_track.sum() == 0:
+            gauss_ids_to_track = None
     else:
         proj_matrix = cam.projmatrix.squeeze()
         h = cam.image_height

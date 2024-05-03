@@ -115,7 +115,7 @@ def calculate_neighbors_seg(
     weight_sm = torch.zeros(params['means3D'].shape[0], num_knn).to(device)
     dist = torch.zeros(params['means3D'].shape[0], num_knn).to(device)
     to_remove = torch.zeros(params['means3D'].shape[0], dtype=bool).to(device)
-    
+
     # get existing Gaussians and neighbor arranged indices
     if existing_params is not None:
         if use_old_and_new:
@@ -180,6 +180,7 @@ def calculate_neighbors_seg(
         to_remove_seg = neighbor_dist[:, 1:num_knn+1].min(dim=1).values > l2_thresh
 
         l2_neighbor_dists = neighbor_dist[:, 1:num_knn+1]
+
         # calculate weight of neighbors
         if dist_to_use == 'l2':
             neighbor_dist = neighbor_dist[:, 1:num_knn+1]
