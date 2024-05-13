@@ -6,8 +6,10 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from diff_gaussian_rasterization_embeddings import GaussianRasterizerEmb as EmbeddingRenderer
 
 
-def l1_loss_v1(x, y, mask=None, reduction='mean'):
+def l1_loss_v1(x, y, mask=None, reduction='mean', weight=None):
     l1 = torch.abs((x - y))
+    if weight is not None:
+        l1 = l1 * weight
     if mask is not None:
         l1 = l1[mask]
     if reduction == 'mean':
@@ -27,15 +29,16 @@ def weighted_l2_loss_v1(x, y, w):
 def weighted_l2_loss_v2(x, y, w):
     return torch.sqrt(((x - y) ** 2).sum(-1) * w + 1e-20).mean()
 
-def l2_loss_v2(x, y, mask=None, reduction='mean'):
+def l2_loss_v2(x, y, mask=None, weight=None, reduction='mean'):
+    l2 = torch.sqrt(((x - y) ** 2) + 1e-20)
+    if weight is not None:
+        l2 = l2 * weight
     if mask is not None:
-        loss = torch.sqrt(((x - y) ** 2) + 1e-20)[mask]
-    else:
-        loss = torch.sqrt(((x - y) ** 2) + 1e-20)
+        l2 = l2[mask]
     if reduction == 'mean':
-        return loss.mean()
+        return l2.mean()
     else:
-        return loss.sum()
+        return l2.sum()
 
 
 def quat_mult(q1, q2):
@@ -215,7 +218,7 @@ def get_depth_and_silhouette_and_instseg(pts_3D, w2c, instseg):
     return depth_silhouette
 
 
-def get_instsegmoving(tensor_shape, instseg, bg, moving):
+def get_instsegbg(tensor_shape, instseg, bg):
     """
     Function to compute depth and silhouette for each gaussian.
     These are evaluated at gaussian center.
@@ -223,7 +226,7 @@ def get_instsegmoving(tensor_shape, instseg, bg, moving):
     # Depth and Silhouette
     depth_silhouette = torch.zeros((tensor_shape, 3)).cuda().float()
     depth_silhouette[:, 0] = bg.float().squeeze()
-    depth_silhouette[:, 1] = moving.float().squeeze()
+    depth_silhouette[:, 1] = 1
     depth_silhouette[:, 2] = instseg.squeeze()
     return depth_silhouette
 
@@ -265,6 +268,7 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_
         log_scales = torch.tile(params['log_scales'], (1, 3))
     else:
         log_scales = params['log_scales']
+
     # Initialize Render Variables
     rendervar = {
         'means3D': transformed_gaussians['means3D'],
@@ -330,12 +334,11 @@ def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians, t
     return rendervar, time_mask
 
 
-def transformed_params2instsegmov(
+def transformed_params2instsegbg(
         params,
         transformed_gaussians,
         time_idx,
         variables,
-        moving,
         time_window=1):
     # Check if Gaussians are Isotropic
     if params['log_scales'].shape[1] == 1:
@@ -345,7 +348,7 @@ def transformed_params2instsegmov(
     # Initialize Render Variables
     rendervar = {
         'means3D': transformed_gaussians['means3D'],
-        'colors_precomp': get_instsegmoving(transformed_gaussians['means3D'].shape[0], params['instseg'], params['bg'], moving),
+        'colors_precomp': get_instsegbg(transformed_gaussians['means3D'].shape[0], params['instseg'], params['bg']),
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
@@ -400,6 +403,7 @@ def transformed_params2emb(
     # Initialize Render Variables
     embs = torch.ones([params['embeddings'].shape[0], 3]).cuda()
     embs[:, :max_idx] = params['embeddings'][:, emb_idx:emb_idx+max_idx]
+
     rendervar = {
         'means3D': transformed_gaussians['means3D'],
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
@@ -525,6 +529,7 @@ def transform_to_frame(
     pts4 = torch.cat((pts, pts_ones), dim=1)
     transformed_pts = (rel_w2c @ pts4.T).T[:, :3]
     transformed_gaussians['means3D'] = transformed_pts
+
     # Transform Rots of Gaussians to Camera Frame
     if transform_rots:
         norm_rots = F.normalize(unnorm_rots)
@@ -561,6 +566,14 @@ def get_hook(should_be_disabled):
         return grad
     return hook
 
+def get_hook_bg(should_be_shrinked, grad_weight):
+    def hook(grad):
+        grad = grad.clone() # NEVER change the given grad inplace
+        # Assumes 1D but can be generalized
+        grad[should_be_shrinked] = torch.clamp(1-grad_weight, min=0.5, max=1)[should_be_shrinked]
+        return grad
+    return hook
+
 
 def dyno_losses(
         params,
@@ -571,8 +584,16 @@ def dyno_losses(
         iter,
         use_iso,
         update_iso=False,
-        time_window=1):
+        time_window=1,
+        weight='bg',
+        post_init=False):
     losses = dict()
+    if weight == 'bg':
+        bg_weight = 1 - torch.abs(params['bg'][variables["self_indices"]].detach().clone() - params['bg'][variables["neighbor_indices"]].detach().clone())
+    if weight == 'none':
+        bg_weight = bg_weight*0+1
+    else:
+        bg_weight = variables["neighbor_weight"].unsqueeze(1)
 
     # get relative rotation
     other_rot = params["unnorm_rotations"][:, :, iter_time_idx - 1].clone().detach()
@@ -584,17 +605,20 @@ def dyno_losses(
 
     # Force same segment to have similar rotation and translation
     # mean_rel_rot_seg = scatter_mean(rel_rot, instseg_mask.squeeze(), dim=0)
-    losses['rot'] = weighted_l2_loss_v2(
+    # print('wrong?!', rel_rot[variables["neighbor_indices"]].shape, time_mask.shape)
+    losses['rot'] = l2_loss_v2(
         rel_rot[variables["neighbor_indices"]],
         rel_rot[variables["self_indices"]],
-        variables["neighbor_weight"])
+        weight=bg_weight)
 
     # rigid body
     curr_means = transformed_gaussians["means3D"] # params["means3D"][:, :, iter_time_idx]
     offset = curr_means[variables["self_indices"]] - curr_means[variables["neighbor_indices"]]
     offset_other_coord = (rel_rot_mat[variables["self_indices"]].transpose(2, 1) @ offset.unsqueeze(-1)).squeeze(-1)
     other_offset = other_means[variables["self_indices"]] - other_means[variables["neighbor_indices"]]
-    losses['rigid'] = l2_loss_v2(offset_other_coord, other_offset)
+    losses['rigid'] = l2_loss_v2(
+        offset_other_coord,
+        other_offset)
     
     # store offset_0 and compute isometry
     if use_iso:
@@ -603,14 +627,23 @@ def dyno_losses(
             if iter_time_idx == 1:
                 offset_0 = offset.clone().detach()
             else:
-                offset_0 = torch.cat(
-                    [offset_0,
-                    offset[variables['timestep'][
-                        variables["self_indices"]] == iter_time_idx+time_window-1].clone().detach()])
-        # bg = params['bg'][variables["self_indices"]]
-        # losses['iso_bg'] = l2_loss_v2(offset[bg], offset_0[bg])
-        # losses['iso_fg'] = l2_loss_v2(offset[~bg], offset_0[~bg])
-        losses['iso'] = l2_loss_v2(offset, offset_0)
+                if not post_init:
+                    offset_0 = torch.cat(
+                      [offset_0,
+                      offset[variables['timestep'][
+                           variables["self_indices"]] == iter_time_idx+time_window-1].clone().detach()])
+                else:
+                    offset_0 = torch.cat(
+                      [offset_0,
+                      offset[variables['timestep'][
+                           variables["self_indices"]] == iter_time_idx+time_window-2].clone().detach()])
+ 
+        losses['iso'] = l2_loss_v2(
+            torch.sqrt((offset ** 2).sum(-1) + 1e-20),
+            torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20))
+        # losses['iso'] = l2_loss_v2(
+        #     offset,
+        #     offset_0)
 
     return losses, offset_0
 
@@ -656,6 +689,7 @@ def get_renderings(
 
         if not disable_grads:
             rendervar['means2D'].retain_grad()
+
         im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 
         variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
     else:
@@ -671,6 +705,7 @@ def get_renderings(
             first_occurance=variables['timestep'],
             time_window=time_window)
         depth_sil, _, _, _, _  = Renderer(raster_settings=data['cam'])(**depth_sil_rendervar)
+        
         # silouette
         silhouette = depth_sil[1, :, :]
         presence_sil_mask = (silhouette > config['sil_thres'])
@@ -689,20 +724,18 @@ def get_renderings(
 
     if get_seg:
         # Instseg rendering
-        seg_rendervar, _ = transformed_params2instsegmov(
+        seg_rendervar, _ = transformed_params2instsegbg(
             params,
             transformed_gaussians,
             iter_time_idx,
             variables,
-            variables['moving'] > mov_thresh,
             time_window=time_window)
         instseg, _, _, _, _ = Renderer(raster_settings=data['cam'])(**seg_rendervar)
         # instseg 
         bg = instseg[0, :, :].unsqueeze(0)
-        moving = instseg[1, :, :].unsqueeze(0)
         instseg = instseg[2, :, :]
     else:
-        instseg, moving, bg = None, None, None
+        instseg, bg = None, None
 
     if get_motion and prev_means2d is not None:
         # render motion
@@ -731,7 +764,7 @@ def get_renderings(
         print(embeddings[3])
         quit()
         '''
-        embeddings = torch.zeros_like(data['embeddings'])
+        rendered_embeddings = torch.zeros_like(data['embeddings'])
         for emb_idx in range(0, params['embeddings'].shape[1], 3):
             max_idx = min(params['embeddings'].shape[1]-emb_idx, 3)
             emb_rendervar, _ = transformed_params2emb(
@@ -742,12 +775,12 @@ def get_renderings(
                 emb_idx,
                 max_idx,
                 time_window=time_window)
-            _embeddings, _, _, _, _ = EmbeddingRenderer(raster_settings=data['cam'])(**emb_rendervar)
-            embeddings[emb_idx:emb_idx+max_idx] = _embeddings[:max_idx]
+            _embeddings, _, _, _, _ = Renderer(raster_settings=data['cam'])(**emb_rendervar)
+            rendered_embeddings[emb_idx:emb_idx+max_idx] = _embeddings[:max_idx]
         
     else:
-        embeddings = None
-    return variables, im, radius, depth, instseg, mask, transformed_gaussians, means2d, visible, weight, motion2d, time_mask, moving, silhouette, embeddings, bg
+        rendered_embeddings = None
+    return variables, im, radius, depth, instseg, mask, transformed_gaussians, means2d, visible, weight, motion2d, time_mask, None, silhouette, rendered_embeddings, bg
 
 
 def get_renderings_batched(

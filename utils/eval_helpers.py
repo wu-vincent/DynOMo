@@ -290,7 +290,7 @@ def eval(
         rendered_silhouette=False,
         rendered_instseg=False,
         get_embeddings=False,
-        rendered_bg=False,
+        rendered_bg=True,
         time_window=1):
 
     print("Evaluating Final Parameters ...")
@@ -372,12 +372,12 @@ def eval(
             'embeddings': embeddings,
             'support_trajs': support_trajs}
 
-        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, rastered_moving, rastered_sil, rendered_embeddings, rastered_bg = get_renderings(
+        variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg = get_renderings(
             final_params_time,
             variables,
             time_idx,
             curr_data,
-            {'sil_thres': sil_thres, 'use_sil_for_loss': False, 'use_flow': 'rendered'},
+            {'sil_thres': sil_thres, 'use_sil_for_loss': False, 'use_flow': 'rendered', 'depth_cam': 'cam', 'embedding_cam': 'cam'},
             mov_thresh=mov_thresh, 
             disable_grads=True,
             track_cam=False,
@@ -394,7 +394,6 @@ def eval(
         rastered_depth_viz = rastered_depth.detach()
         rastered_inst_viz = rastered_inst.detach()
         rastered_sil_vis = rastered_sil.detach()
-        rastered_moving_viz = rastered_moving.detach()
         rastered_depth = rastered_depth * valid_depth_mask
         presence_sil_mask = (rastered_sil > sil_thres)
         rastered_sil = rastered_sil.unsqueeze(0)
@@ -441,14 +440,6 @@ def eval(
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
             cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
 
-            # moving
-            if rendered_mov:
-                rastered_moving_viz = rastered_moving_viz[0].detach().cpu().numpy()
-                smax, smin = rastered_moving_viz.max(), rastered_moving_viz.min()
-                normalized_mov = np.clip((rastered_moving_viz - smin) / (smax - smin), 0, 1)
-                moving_colormap = cv2.applyColorMap((normalized_mov * 255).astype(np.uint8), cv2.COLORMAP_JET)
-                cv2.imwrite(os.path.join(render_mov_dir, "gs_{:04d}.png".format(time_idx)), moving_colormap)
-
             # bg
             if rendered_bg:
                 rastered_bg = rastered_bg[0].detach().cpu().numpy()
@@ -458,32 +449,33 @@ def eval(
                 cv2.imwrite(os.path.join(render_bg_dir, "gs_{:04d}.png".format(time_idx)), bg_colormap)
 
             # embeddings
-            rendered_embeddings = rendered_embeddings.permute(1, 2, 0).detach().cpu().numpy()
-            shape = rendered_embeddings.shape
-            if shape[2] != 3:
-                if pca is None:
-                    pca = PCA(n_components=3)
-                    pca.fit(rendered_embeddings.reshape(-1, shape[2]))
-                rendered_embeddings = pca.transform(
-                    rendered_embeddings.reshape(-1, shape[2]))
-                rendered_embeddings = rendered_embeddings.reshape(
-                    (shape[0], shape[1], 3))
-            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
-            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
-            emb_colormap = (normalized_emb * 255).astype(np.uint8)
-            imageio.imwrite(os.path.join(render_emb_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
-
-            rendered_embeddings = curr_data['embeddings'].permute(1, 2, 0).detach().cpu().numpy()
-            if shape[2] != 3:
+            if rendered_embeddings is not None:
+                rendered_embeddings = rendered_embeddings.permute(1, 2, 0).detach().cpu().numpy()
                 shape = rendered_embeddings.shape
-                rendered_embeddings = pca.transform(
-                    rendered_embeddings.reshape(-1, shape[2]))
-                rendered_embeddings = rendered_embeddings.reshape(
-                    (shape[0], shape[1], 3))
-            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
-            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
-            emb_colormap = (normalized_emb * 255).astype(np.uint8)
-            imageio.imwrite(os.path.join(render_emb_gt_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
+                if shape[2] != 3:
+                    if pca is None:
+                        pca = PCA(n_components=3)
+                        pca.fit(rendered_embeddings.reshape(-1, shape[2]))
+                    rendered_embeddings = pca.transform(
+                        rendered_embeddings.reshape(-1, shape[2]))
+                    rendered_embeddings = rendered_embeddings.reshape(
+                        (shape[0], shape[1], 3))
+                smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+                normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+                emb_colormap = (normalized_emb * 255).astype(np.uint8)
+                imageio.imwrite(os.path.join(render_emb_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
+
+                rendered_embeddings = curr_data['embeddings'].permute(1, 2, 0).detach().cpu().numpy()
+                if shape[2] != 3:
+                    shape = rendered_embeddings.shape
+                    rendered_embeddings = pca.transform(
+                        rendered_embeddings.reshape(-1, shape[2]))
+                    rendered_embeddings = rendered_embeddings.reshape(
+                        (shape[0], shape[1], 3))
+                smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+                normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+                emb_colormap = (normalized_emb * 255).astype(np.uint8)
+                imageio.imwrite(os.path.join(render_emb_gt_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
 
             if rendered_silhouette:
                 # silouette
@@ -554,18 +546,6 @@ def eval(
                 cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
 
         if save_pc:
-            _mask = time_mask & variables['moving']
-            print('moving', final_params_time['means3D'][:, :, time_idx][_mask].shape)
-            pcd = o3d.geometry.PointCloud()
-            v3d = o3d.utility.Vector3dVector
-            pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
-            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_mov.xyz".format(time_idx)), pointcloud=pcd)
-            _mask = time_mask & ~variables['moving']
-            print('static', final_params_time['means3D'][:, :, time_idx][_mask].shape)
-            pcd = o3d.geometry.PointCloud()
-            v3d = o3d.utility.Vector3dVector
-            pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][_mask].cpu().numpy())
-            o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_stat.xyz".format(time_idx)), pointcloud=pcd)
             print('all', final_params_time['means3D'][:, :, time_idx][time_mask].shape)
             pcd = o3d.geometry.PointCloud()
             v3d = o3d.utility.Vector3dVector

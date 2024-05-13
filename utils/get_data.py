@@ -64,7 +64,9 @@ def get_data(config):
         relative_pose=True,
         ignore_bad=dataset_config["ignore_bad"],
         use_train_split=dataset_config["use_train_split"],
-        load_embeddings=dataset_config["load_embeddings"])
+        load_embeddings=dataset_config["load_embeddings"],
+        embedding_dim=dataset_config["embedding_dim"],
+        get_pc_jono=dataset_config["get_pc_jono"])
 
     return dataset
 
@@ -139,7 +141,7 @@ def get_gt_traj(config, in_torch=False):
 def load_scene_data(config, results_dir, device="cuda:0"):
     params = dict(np.load(f"{results_dir}/params.npz"))
     params = {k: torch.tensor(v).to(device).float() for k, v in params.items()}
-    return params, params['moving'], params['timestep'], params['intrinsics'], params['w2c']
+    return params, params['timestep'], params['intrinsics'], params['w2c']
 
 
 def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, rounded=True):

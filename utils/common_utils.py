@@ -59,11 +59,18 @@ def load_params_ckpt(output_dir):
     for name in ["params", "variables"]:
         print(f"Loading parameters from: {output_dir}")
         save_path = os.path.join(output_dir, f"temp_{name}.npz")
-        params = np.load(save_path)
+        params = np.load(save_path, allow_pickle=True)
         if name == 'params':
             params = {k: torch.nn.Parameter(torch.from_numpy(v).cuda().float().contiguous().requires_grad_(True)) for k, v in params.items()}
         else:
-            params = {k: torch.from_numpy(v).cuda() for k, v in params.items()}
+            _params = dict()
+            for k, v in params.items():
+                if (v != np.array(None)).all():
+                    _params[k] = torch.from_numpy(v).cuda()
+                else:
+                    _params[k] = v
+            params = _params
+            # params = {k: torch.from_numpy(v).cuda() for k, v in params.items() if v is not None}
         loaded_params.append(params)
     return loaded_params
 

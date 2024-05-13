@@ -60,6 +60,7 @@ class DavisDynoSplatamDataset(ReplicaDataset):
         self.bg_paths = self.get_bg_paths()
         self.load_instseg = True
         self.load_support_trajs()
+        print(f"Length of sequence {len(self.color_paths)}")
     
     def load_support_trajs(self):
         # load

@@ -1,6 +1,21 @@
 import faiss
 import faiss.contrib.torch_utils
 import torch
+import open3d as o3d
+import numpy as np
+
+
+def o3d_knn(pts, num_knn):
+    indices = []
+    sq_dists = []
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.ascontiguousarray(pts, np.float64))
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    for p in pcd.points:
+        [_, i, d] = pcd_tree.search_knn_vector_3d(p, num_knn + 1)
+        indices.append(i[1:])
+        sq_dists.append(d[1:])
+    return np.array(sq_dists), np.array(indices)
 
 
 def torch_3d_knn(q_pts, k_pts=None, num_knn=20, method="l2"):
@@ -88,7 +103,7 @@ def calculate_neighbors_seg_after_init(
     else:
         variables.update(new_variables)
 
-    return variables            
+    return variables, to_remove          
 
 
 def calculate_neighbors_seg(

@@ -6,32 +6,52 @@ from utils.camera_helpers import get_projection_matrix
 from utils.two2threeD_helpers import three2two, unnormalize_points, normalize_points
 from utils.tapnet_utils_viz import vis_tracked_points
 from utils.camera_helpers import setup_camera
+from utils.slam_helpers import transform_to_frame
+import copy
 
 
-def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, start_pixels_normalized=True, gauss_ids=None):
+def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, start_pixels_normalized=True, gauss_ids=None, norm=False):
     means3D = params['means3D'][first_occurance==first_occurance.min().item()]
 
     # assign and get 3D trajectories
     means3D_t0 = means3D[:, :, 0]
-    means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=True)
-
-    if start_pixels_normalized:
-        start_pixels = unnormalize_points(start_pixels, h, w, do_round=True)
+    if not norm:
+        means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=True)
+        if start_pixels_normalized:
+            start_pixels = unnormalize_points(start_pixels, h, w, do_round=True)
+            
+    else:
+        means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_normalize=True).float()
+        if not start_pixels_normalized:
+            start_pixels = normalize_points(start_pixels.float(), h, w)
+        start_pixels = start_pixels.to(means2D_t0.device).float()
 
     if gauss_ids is None:
         gauss_ids = find_closest_to_start_pixels(
             means2D_t0,
-            start_pixels)
+            start_pixels,
+            norm=norm)
 
-    gs_traj_3D, logit_opacities, logit_sclaes, rgb_colors = get_3D_trajs_for_track(
+    gs_traj_3D, logit_opacities, logit_sclaes, rgb_colors, unnorm_rotations = get_3D_trajs_for_track(
         gauss_ids, params, return_all=True)
     print(logit_opacities.squeeze())
     
+    params_gs_traj_3D = copy.deepcopy(params)
+    params_gs_traj_3D['means3D'] = gs_traj_3D
+    params_gs_traj_3D['unnorm_rotations'] = unnorm_rotations
     # get 2D trajectories
     gs_traj_2D = list()
     for time in range(gs_traj_3D.shape[-1]):
+        if gs_traj_3D[:, :, time].sum() == 0:
+            continue
+        transformed_gs_traj_3D = transform_to_frame(
+                params_gs_traj_3D,
+                time,
+                gaussians_grad=False,
+                camera_grad=False,
+                delta=0)
         gs_traj_2D.append(
-            three2two(proj_matrix, gs_traj_3D[:, :, time], w, h, do_normalize=False))
+            three2two(proj_matrix, transformed_gs_traj_3D['means3D'], w, h, do_normalize=False))
     gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
     gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
 
@@ -39,25 +59,36 @@ def get_gs_traj_pts(proj_matrix, params, first_occurance, w, h, start_pixels, st
 
 
 def find_closest(means2D, pix):
-    for d_x in [0, -1, 1, 0, 0, -1, 1, -1, 1, -2, 2, 0, 0, -2, 2, -2, 2, -1, 1, 1, -1. -2, 2, -2, 2]:
-        for d_y in [0, 0, 0, -1, 1, -1, -1, 1, 1, 0, 0, -2, 2, -1, 1, 1, -1, -2, 2, -2, 2, -2, -2, 2, 2]:
+    for d_x in [0, -1, 0, 1, 0, -1, 1, -1, 1, -2, 2, 0, 0, -2, 2, -2, 2, -1, 1, 1, -1. -2, 2, -2, 2]:
+        for d_y in [0, 0, -1, 0, 1, -1, -1, 1, 1, 0, 0, -2, 2, -1, 1, 1, -1, -2, 2, -2, 2, -2, -2, 2, 2]:
             pix_mask =  torch.logical_and(
                 means2D[:, 0] == pix[0] + d_x,
                 means2D[:, 1] == pix[1] + d_y)
             if pix_mask.sum() != 0:
                 return torch.nonzero(pix_mask)[0]
-    return False
+    return None
 
 
-def find_closest_to_start_pixels(means2D, start_pixels):
+def find_closest_norm(means2D, pix):
+    dist = torch.cdist(pix.unsqueeze(0).unsqueeze(0), means2D.unsqueeze(0)).squeeze()
+    gauss_id = dist.argmin()
+    return gauss_id
+
+
+def find_closest_to_start_pixels(means2D, start_pixels, norm=False):
     gauss_ids = list()
     gs_traj_3D = list()
     for i, pix in enumerate(start_pixels):
-        gauss_id = find_closest(means2D, pix)
-        if gauss_id:
+        if norm:
+            gauss_id = find_closest_norm(means2D, pix).unsqueeze(0)
+        else:
+            gauss_id = find_closest(means2D, pix)
+
+        if gauss_id is not None:
             gauss_ids.append(gauss_id)
         else:
             gauss_ids.append(torch.tensor([0]).to(means2D.device))
+
     return gauss_ids
         
 
@@ -66,22 +97,27 @@ def get_3D_trajs_for_track(gauss_ids, params, return_all=False):
     logit_opacities = list()
     logit_scales = list()
     rgb_colors = list()
+    unnorm_rotations = list()
+
     for gauss_id in gauss_ids:
-        if gauss_id != -1:
+        if gauss_id != -1 and params['bg'][gauss_id] < 0.5:
             gs_traj_3D.append(
                     params['means3D'][gauss_id].squeeze())
-            logit_opacities.append(params['logit_opacities'][gauss_id])
+            unnorm_rotations.append(params['unnorm_rotations'][gauss_id].squeeze())
+            logit_opacities.append(params['logit_opacities'][gauss_id].squeeze())
             rgb_colors.append(params['rgb_colors'][gauss_id])
             logit_scales.append(params['log_scales'][gauss_id])
         else:
             gs_traj_3D.append(
-                    torch.ones_like(params['means3D'][0]).squeeze()*-1)
-            logit_opacities.append(torch.tensor(-1))
-            rgb_colors.append(torch.tensor(-1))
-            logit_scales.append(torch.tensor(-1))
+                    (torch.ones_like(params['means3D'][0]).squeeze()*-1).to(params['means3D'].device))
+            logit_opacities.append(torch.tensor(-1).to(params['means3D'].device))
+            rgb_colors.append(torch.tensor([[-1, -1, -1]]).to(params['means3D'].device))
+            logit_scales.append(torch.tensor([[-1]]).to(params['means3D'].device))
+            unnorm_rotations.append(
+                (torch.ones_like(params['unnorm_rotations'][0]).squeeze()*-1).to(params['means3D'].device))
 
     if return_all:
-        return torch.stack(gs_traj_3D), torch.stack(logit_opacities), torch.stack(logit_scales), torch.stack(rgb_colors)
+        return torch.stack(gs_traj_3D), torch.stack(logit_opacities), torch.stack(logit_scales), torch.stack(rgb_colors), torch.stack(unnorm_rotations)
     else:
         return torch.stack(gs_traj_3D)
 
@@ -110,7 +146,7 @@ def _eval_traj(
         gt_traj_2D = data['points']
         occluded = data['occluded']
     valids = 1-occluded.float()
-
+    
     # get trajectories of Gaussians
     gs_traj_2D, gs_traj_3D, gauss_ids = get_gs_traj_pts(
         proj_matrix,
@@ -296,14 +332,15 @@ def eval_traj(
         gauss_ids_to_track=None):
     # get projectoin matrix
     if cam is None:
-        params, _, _, k, w2c = load_scene_data(config, results_dir)
+        params, _, k, w2c = load_scene_data(config, results_dir)
         h, w = config["data"]["desired_image_height"], config["data"]["desired_image_width"]
         proj_matrix = get_projection_matrix(w, h, k, w2c).squeeze()
         results_dir = os.path.join(results_dir, 'eval')
-        if 'gauss_ids_to_track' in params.keys():
+        '''if 'gauss_ids_to_track' in params.keys():
             gauss_ids_to_track = params['gauss_ids_to_track'].long()
         if gauss_ids_to_track.sum() == 0:
-            gauss_ids_to_track = None
+            gauss_ids_to_track = None'''
+        print(params['bg'])
     else:
         proj_matrix = cam.projmatrix.squeeze()
         h = cam.image_height
@@ -311,6 +348,9 @@ def eval_traj(
 
     # get gt data
     data = get_gt_traj(config, in_torch=True)
+    if "jono_data" in config["data"]["gradslam_data_cfg"]:
+        data['points'][:, 0] = (data['points'][:, 0] * w - 1)/w
+        data['points'][:, 1] = (data['points'][:, 1] * h - 1)/h
 
     # get metrics
     metrics = _eval_traj(
@@ -323,6 +363,7 @@ def eval_traj(
         results_dir=os.path.join(results_dir, 'tracked_points_vis'),
         vis_trajs=vis_trajs,
         gauss_ids_to_track=gauss_ids_to_track)
+
     return metrics
 
 
@@ -366,7 +407,7 @@ def get_xy_grid(H, W, N=1024, B=1):
 def vis_grid_trajs(config, params=None, cam=None, results_dir=None, orig_image_size=False):
     # get projectoin matrix
     if cam is None:
-        params, _, _, k, w2c = load_scene_data(config, results_dir)
+        params, _, k, w2c = load_scene_data(config, results_dir)
         if orig_image_size:
             k, pose, h, w = get_cam_data(config, orig_image_size=orig_image_size)
             w2c = torch.linalg.inv(pose)

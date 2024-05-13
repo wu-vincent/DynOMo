@@ -8,6 +8,7 @@ import torch
 from natsort import natsorted
 
 from .replica import ReplicaDataset
+from .basedataset import GradSLAMDataset
 import imageio
 import json
 from sklearn.decomposition import PCA
@@ -27,8 +28,12 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         load_embeddings: Optional[bool] = False,
         embedding_dir: Optional[str] = "embeddings",
         embedding_dim: Optional[int] = 64,
+        get_pc_jono=False,
         **kwargs,
     ):
+        self.get_pc_jono = get_pc_jono
+        if self.get_pc_jono:
+            kwargs['relative_pose'] = False
         self.input_folder = os.path.join(basedir, sequence)
         self.sequence = sequence
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
@@ -50,17 +55,17 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         self.load_instseg = True
         self.load_support_trajs()
         print(f"Length of sequence {len(self.color_paths)}")
-    
+
     def get_bg_paths(self):
         if os.path.isdir(f"{self.input_folder.replace('ims', 'seg')}"):
-            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:36]
+            bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:35]
         else:
             bg_paths = None
         return bg_paths
     
     def get_instsegpaths(self):
-        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))[2:36]
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:36]
+        # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))[2:35]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))[2:35]
         return instseg_paths
     
     def read_embedding_from_file(self, embedding_path):
@@ -83,12 +88,17 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         return bg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[2:36]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))[2:36]
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[2:35]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))[2:35]
         embedding_paths = None
         if self.load_embeddings:
-            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_features.npy"))[2:]
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img.npy"))[2:36]
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*gs_*.npy"))[2:35]
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img.npy"))[2:35]
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img_quat.npy"))[2:35]
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat.npy"))[2:35]
+            if len(embedding_paths) != len(color_paths):
+                print("Using SAM features")
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img_quat.npy"))[2:35]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
@@ -100,7 +110,8 @@ class JonoDynoSplatamDataset(ReplicaDataset):
     
     def load_support_trajs(self):
         # load
-        self.support_trajs = np.load(f"{self.input_folder.replace('ims', 'support_trajs')}/48_trajs.npy").squeeze()[2:]
+        self.support_trajs = np.load(
+            f"{self.input_folder.replace('ims', 'support_trajs')}/48_trajs.npy").squeeze()[2:35]
         # sclae 
         support_traj_shape = (352,640)
         scale_factors = (
@@ -110,17 +121,24 @@ class JonoDynoSplatamDataset(ReplicaDataset):
         self.support_trajs = np.round(self.support_trajs)
 
         # clip to image boundaries
-        self.support_trajs[:, :, :, 0] = np.clip(self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
-        self.support_trajs[:, :, :, 1] = np.clip(self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)
+        self.support_trajs[:, :, :, 0] = np.clip(
+            self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
+        self.support_trajs[:, :, :, 1] = np.clip(
+            self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)
 
     def load_poses(self):
+        if False: # self.get_pc_jono:
+            basedir = os.path.dirname(os.path.dirname(self.input_folder))
+            cam_id = int(os.path.basename(self.input_folder))
+            with open(f'{basedir}/meta.json', 'r') as jf:
+                data = json.load(jf)
+            idx = data['cam_id'][0].index(cam_id)
+            w2c = torch.tensor(data['w2c'][0][idx])
+            c2w = torch.linalg.inv(w2c)
+        else:
+            c2w = torch.eye(4).float()
+
         poses = []
         for i in range(self.num_imgs):
-            # c2w = torch.tensor([
-            #     [0.05361535669, 0.02356944191, 0.9982834642, 0.06302501384],
-            #     [0.6379545649, 0.7682889931, -0.05240225469, 1.060031278],
-            #     [-0.7682052894, 0.6396690586, 0.02615585534, 3.608606891],
-            #     [0.0, 0.0, 0.0, 1.0]])
-            c2w = torch.eye(4).float()
             poses.append(c2w)
         return poses

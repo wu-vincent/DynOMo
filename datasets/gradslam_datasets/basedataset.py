@@ -168,6 +168,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.load_embeddings:
             self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
         self.poses = self.poses[self.start : self.end : stride]
+        
         # Tensor of retained indices (indices of frames and poses that were retained)
         self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
         # Update self.num_images after subsampling the dataset
@@ -175,6 +176,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         # self.transformed_poses = datautils.poses_to_transforms(self.poses)
         self.poses = torch.stack(self.poses)
+
         if self.relative_pose:
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
@@ -287,7 +289,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = np.asarray(imageio.imread(color_path), dtype=float)
         if color.shape[2] > 3:
             color = color[:, :, :3]
-        print(color.shape)
         color = self._preprocess_color(color)
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -296,7 +297,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             depth = np.load(depth_path, mmap_mode="r") # .astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
-        print(depth.shape)
 
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
@@ -341,7 +341,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         if self.load_embeddings:
             embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
-            print(embedding.shape)
             embedding = trans_bilinear(embedding)
             return_vals = return_vals + [embedding.to(self.device)] # Allow embedding to be another dtype
         else:
