@@ -1,26 +1,53 @@
 import os
 from os.path import join as p_join
 
-scenes = ['goat', 'car-roundabout', 'motocross-jump', 'breakdance', 'drift-chicane', 'drift-straight', 'judo', 'soapbox', 'dogs-jump', 'parkour', 'india', 'pigs', 'cows', 'gold-fish', 'paragliding-launch', 'camel', 'blackswan', 'dog', 'bike-packing', 'shooting', 'lab-coat', 'kite-surf', 'bmx-trees', 'dance-twirl', 'car-shadow', 'libby', 'scooter-black', 'mbike-trick', 'loading', 'horsejump-high']
+scenes = ['motocross-jump', 'camel', 'pigs', 'car-roundabout', 'dance-twirl', 'goat', 'breakdance', 'drift-chicane', 'drift-straight', 'judo', 'soapbox', 'dogs-jump', 'parkour', 'india', 'pigs', 'cows', 'gold-fish', 'paragliding-launch', 'blackswan', 'dog', 'bike-packing', 'shooting', 'lab-coat', 'kite-surf', 'bmx-trees', 'car-shadow', 'libby', 'scooter-black', 'mbike-trick', 'loading', 'horsejump-high']
 
 primary_device="cuda:0"
 seed = 0
 scene_name = scenes[0]
 
+red_lr = True
 add_every = 1
-tracking_iters = 100
+tracking_iters = 500 if not red_lr else 100
+tracking_iters_init = 1000 if not red_lr else 100
 delta_optim_iters = 0
-tracking_iters_cam = 100
+tracking_iters_cam = 500 if not red_lr else 100
+num_frames = -1
+feature_dim = 32
+load_embeddings = True
+ssmi_all_mods = False
+mag_iso = True
+dyno_losses = True
+forward_prop = True
 mapping_iters = 0
 mov_init_by = 'kNN'
+l1_losses = 0
+bg_reg = 0
+embeddings_lr = 0.001
+
+# remove_gaussians = False
+# sil_thres_gaussians = 0.5
+
+remove_gaussians = False
+sil_thres_gaussians = 0.5
+
+remove_outliers_l2 = 100
+
+vis_all = False
 
 group_name = "dynosplatam_davis"
-run_name = f"splatam_{scene_name}_{seed}_{mov_init_by}"
+if load_embeddings:
+    run_name = f"splatam_{scene_name}/splatam_{scene_name}_{seed}_{mov_init_by}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}_{num_frames}_{feature_dim}_{dyno_losses}_{mag_iso}_{remove_gaussians}_{sil_thres_gaussians}_{l1_losses}_{bg_reg}_{embeddings_lr}_{forward_prop}_rem_outliers"
+else:
+    run_name = f"splatam_{scene_name}/splatam_{scene_name}_{seed}_{mov_init_by}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}_{num_frames}_{dyno_losses}_{mag_iso}_{remove_gaussians}_{sil_thres_gaussians}_{l1_losses}_{bg_reg}_{embeddings_lr}_{forward_prop}_rem_outliers"
 
 config = dict(
     workdir=f"./experiments/{group_name}",
     run_name=run_name,
-    checkpoint='',
+    num_threads=1,
+    checkpoint=False,
+    just_eval=False,
     seed=seed,
     primary_device=primary_device,
     add_every=add_every, # Mapping every nth frame
@@ -43,9 +70,12 @@ config = dict(
     zeodepth=False,
     dist_to_use='l2', # 'rgb', 'dinov2', 'l2'
     init_scale=1.0,
-    neighbors_init='pre',
+    neighbors_init='post',
     time_window=1,
-    remove_outliers_l2=0.01,
+    remove_outliers_l2=remove_outliers_l2, # 0.01,
+    eval_during=False,
+    motion_mlp=False,
+    re_init_scale=False,
     wandb=dict(
         project="DynoSplaTAM",
         group=group_name,
@@ -60,21 +90,22 @@ config = dict(
         desired_image_height=240, #480,
         desired_image_width=455, #910,
         start=0,
-        end=-1,
+        end=num_frames,
         stride=1,
-        num_frames=-1,
-        load_embeddings=False,
-        embedding_dim=64,
-        get_pc_jono=False
+        num_frames=num_frames,
+        load_embeddings=load_embeddings,
+        embedding_dim=feature_dim,
+        get_pc_jono=False,
+        jono_depth=False
     ),
     add_gaussians=dict(
         add_new_gaussians=True,
         depth_error_factor=50,
         use_depth_error_for_adding_gaussians=False,
-        sil_thres_gaussians=0.95, # For Addition of new Gaussians
+        sil_thres_gaussians=sil_thres_gaussians, # For Addition of new Gaussians
     ),
     remove_gaussians=dict(
-        remove=True,
+        remove=remove_gaussians,
         remove_factor=15,
         rem_opa_thresh=0.5,
         rem_scale_thresh=100000
@@ -111,20 +142,21 @@ config = dict(
     ),
     tracking_obj=dict(
         num_iters=tracking_iters,
+        num_iters_init=tracking_iters_init,
         sil_thres=0.95,
         use_l1=True,
         use_sil_for_loss=False,
         ignore_outlier_depth_loss=False,
-        dyno_losses=True,
+        dyno_losses=dyno_losses,
         use_seg_loss=False,
         take_best_candidate=False,
         disable_rgb_grads_old=True,
         make_grad_bg_smaller=False,
         calc_ssmi=True,
         bg_reg=True,
-        rgb_attention_bg=True,
+        rgb_attention_bg=False,
         attention_bg='attention',
-        rgb_attention_embeddings=True,
+        rgb_attention_embeddings=False,
         attention='multihead',
         attention_layers=1,
         attention_lrs=0.001,
@@ -132,27 +164,36 @@ config = dict(
         depth_cam='cam',
         embedding_cam='cam',
         dyno_weight='bg',
+        mag_iso=mag_iso,
+        weight_rot=True,
+        weight_rigid=True,
+        weight_iso=False,
+        ssmi_all_mods=ssmi_all_mods,
         loss_weights=dict(
             im=1.0,
-            depth=0.05,
+            depth=0.1,
             rot=4.0,
             rigid=4.0,
             iso=2.0,
             flow=0.0,
             embeddings=16.0,
-            bg_reg=0.000,
-            bg_loss=3
+            bg_reg=bg_reg,
+            bg_loss=3,
+            l1_bg=0,
+            l1_embeddings=l1_losses,
+            l1_scale=l1_losses,
+            l1_rgb=l1_losses
         ),
         lrs=dict(
-            means3D=0.0016,
+            means3D=0.0016 if not red_lr else 0.016,
             rgb_colors=0.0025,
-            unnorm_rotations=0.01,
-            logit_opacities=0.0005,
+            unnorm_rotations=0.01 if not red_lr else 0.1,
+            logit_opacities=0.0005 if not red_lr else 0.005,
             log_scales=0.001,
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
             instseg=0.00016,
-            embeddings=0.001,
+            embeddings=embeddings_lr if not red_lr and not embeddings_lr == 0 else 0.01,
             bg=0.0001
         ),
     ),
@@ -177,7 +218,7 @@ config = dict(
             iso=4.0,
             flow=0.0,
             embeddings=25.0,
-            bg_reg=0.0001,
+            bg_reg=bg_reg,
             bg_loss=0.0
         ),
         lrs=dict(
@@ -190,12 +231,13 @@ config = dict(
             cam_trans=0.0000,
             instseg=0.000,
             moving=0.00,
-            embeddings=0.0,
+            embeddings=embeddings_lr,
             bg=0.00
         ),
     ),
     tracking_cam=dict(
         num_iters=tracking_iters_cam,
+        forward_prop=forward_prop,
         sil_thres=0.9,
         use_l1=True,
         use_sil_for_loss=True,
@@ -211,8 +253,8 @@ config = dict(
             unnorm_rotations=0.000,
             logit_opacities=0.000,
             log_scales=0.000,
-            cam_unnorm_rots=0.001,
-            cam_trans=0.001,
+            cam_unnorm_rots=0.001 if not red_lr else 0.01,
+            cam_trans=0.001 if not red_lr else 0.01,
             instseg=0.000,
             embeddings=0.00,
             bg=0.000
@@ -223,6 +265,7 @@ config = dict(
         vis_tracked=True,
         save_pc=False,
         save_videos=False,
-        vis_gt=True
+        vis_gt=False,
+        vis_all=vis_all
     ),
 )

@@ -190,6 +190,16 @@ def remove_points(
         variables['timestep'] = variables['timestep'][to_keep]
     if 'bg' in variables.keys():
         variables['bg'] = variables['bg'][to_keep]
+    if 'visibility' in variables.keys():
+        variables['visibility'] = variables['visibility'][to_keep]
+    if 'prev_bg' in variables.keys():
+        variables['prev_bg'] = variables['prev_bg'][to_keep]
+    if 'prev_embeddings' in variables.keys():
+        variables['prev_embeddings'] = variables['prev_embeddings'][to_keep]
+    if 'prev_scales' in variables.keys():
+        variables['prev_scales'] = variables['prev_scales'][to_keep]
+    if 'prev_rgb' in variables.keys():
+        variables['prev_rgb'] = variables['prev_rgb'][to_keep]
     
     # mask kNN and map indices to new indices
     variables['neighbor_indices'] = variables['neighbor_indices'][to_keep_idx_mask]

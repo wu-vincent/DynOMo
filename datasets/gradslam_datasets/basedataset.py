@@ -159,6 +159,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
         self.num_imgs = len(self.color_paths)
         self.poses = self.load_poses()
+        self.load_support_trajs()
+        self.instseg_paths = self.get_instsegpaths()
+        self.bg_paths = self.get_bg_paths()
 
         if self.end == -1:
             self.end = self.num_imgs
@@ -167,6 +170,12 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.depth_paths = self.depth_paths[self.start : self.end : stride]
         if self.load_embeddings:
             self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
+        if self.load_instseg:
+            self.instseg_paths = self.instseg_paths[self.start : self.end : stride]
+        if self.bg_paths is not None:
+            self.bg_paths = self.bg_paths[self.start : self.end : stride]
+        if self.support_trajs is not None:
+            self.support_trajs = self.support_trajs[self.start : self.end : stride]
         self.poses = self.poses[self.start : self.end : stride]
         
         # Tensor of retained indices (indices of frames and poses that were retained)
@@ -183,8 +192,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self.poses
         
         self.precomp_intrinsics = precomp_intrinsics
-        self.support_trajs = None
-        self.bg_paths = None
 
     def __len__(self):
         return self.num_imgs
@@ -292,9 +299,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color = self._preprocess_color(color)
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-            depth = np.asarray(imageio.imread(depth_path)) #, dtype=np.int64)
+            depth = np.asarray(imageio.imread(depth_path)).squeeze() #, dtype=np.int64)
         elif 'npy' in depth_path:
-            depth = np.load(depth_path, mmap_mode="r") # .astype(dtype=np.int64)
+            depth = np.load(depth_path, mmap_mode="r").squeeze()  # .astype(dtype=np.int64)
         elif ".exr" in depth_path:
             depth = readEXR_onlydepth(depth_path)
 
@@ -348,9 +355,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         
         if self.support_trajs is not None:
             try:
-                return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).cuda().long()]
+                return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).to(self.device).long()]
             except:
-                return_vals = return_vals + [torch.atleast_3d(torch.from_numpy(self.support_trajs[-1, index-len(self.support_trajs):])).cuda().long()]
+                return_vals = return_vals + [torch.atleast_3d(torch.from_numpy(self.support_trajs[-1, index-len(self.support_trajs):])).to(self.device).long()]
         else:
             return_vals = return_vals + [None]
         

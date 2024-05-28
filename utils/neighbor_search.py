@@ -18,7 +18,7 @@ def o3d_knn(pts, num_knn):
     return np.array(sq_dists), np.array(indices)
 
 
-def torch_3d_knn(q_pts, k_pts=None, num_knn=20, method="l2"):
+def torch_3d_knn(q_pts, k_pts=None, num_knn=20, method="l2", gpu_id=0):
     # If query and key points are the same set
     if k_pts is None:
         k_pts = q_pts
@@ -34,7 +34,7 @@ def torch_3d_knn(q_pts, k_pts=None, num_knn=20, method="l2"):
     # Convert FAISS index to GPU
     if q_pts.get_device() != -1:
         res = faiss.StandardGpuResources()
-        index = faiss.index_cpu_to_gpu(res, 0, index)
+        index = faiss.index_cpu_to_gpu(res, gpu_id, index)
 
     # Add points to index and compute distances
     index.add(k_pts)
@@ -63,7 +63,8 @@ def calculate_neighbors_seg_after_init(
         dist_to_use='rgb',
         use_old_and_new=True,
         inflate=2,
-        l2_thresh=0.5):
+        l2_thresh=0.5,
+        primary_device="cuda:0"):
     
     if time_idx != 0:
         new_params = dict()
@@ -93,7 +94,9 @@ def calculate_neighbors_seg_after_init(
             dist_to_use=dist_to_use,
             use_old_and_new=use_old_and_new,
             inflate=inflate,
-            l2_thresh=l2_thresh)
+            l2_thresh=l2_thresh,
+            primary_device=primary_device)
+
     if time_idx != 0:
         variables['self_indices'] = torch.cat((variables['self_indices'], new_variables['self_indices']), dim=0)
         variables['neighbor_indices'] = torch.cat((variables['neighbor_indices'], new_variables['neighbor_indices']), dim=0)
@@ -117,8 +120,9 @@ def calculate_neighbors_seg(
         dist_to_use='rgb',
         use_old_and_new=True,
         inflate=2,
-        l2_thresh=0.5):
-
+        l2_thresh=0.5,
+        primary_device="cuda:0"):
+    
     embeddings_in_params = 'embeddings' in params.keys()
     device = params['means3D'].device
     if existing_params is not None:
@@ -191,7 +195,7 @@ def calculate_neighbors_seg(
 
         # get distances and indices
         neighbor_dist, neighbor_indices = torch_3d_knn(
-            q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn)+1)
+            q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn)+1, gpu_id=int(primary_device.split(':')[-1]))
         to_remove_seg = neighbor_dist[:, 1:num_knn+1].min(dim=1).values > l2_thresh
 
         l2_neighbor_dists = neighbor_dist[:, 1:num_knn+1]
@@ -260,10 +264,10 @@ def calculate_neighbors_seg(
 
 
 def calculate_neighbors_between_pc(
-        params, time_idx, other_params=None, other_time_idx=None, num_knn=20, dist_to_use='rgb', inflate=2):
+        params, time_idx, other_params=None, other_time_idx=None, num_knn=20, dist_to_use='rgb', inflate=2, primary_device="cuda:0"):
     embeddings_in_params = 'embeddings' in other_params.keys()
     device = params['means3D'].device
-
+    print(int(primary_device.split(':')[-1]))
     # initalize matrices
     indices = torch.zeros(params['means3D'].shape[0], num_knn).long().to(device)
     weight = torch.zeros(params['means3D'].shape[0], num_knn).to(device)
@@ -307,7 +311,7 @@ def calculate_neighbors_between_pc(
 
     # get distances and indices
     neighbor_dist, neighbor_indices = torch_3d_knn(
-        q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn))
+        q_pts.contiguous(), k_pts, num_knn=int(inflate*num_knn), gpu_id=int(primary_device.split(':')[-1]))
     # calculate weight of neighbors
     if dist_to_use == 'l2':
         neighbor_dist = neighbor_dist[:, :num_knn]

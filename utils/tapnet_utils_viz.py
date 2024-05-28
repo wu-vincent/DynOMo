@@ -192,7 +192,7 @@ def plot_tracks_v2(
         )
         points = np.maximum(points, 0.0)
         points = np.minimum(points, [rgb.shape[2], rgb.shape[1]])
-        plt.scatter(points[:, i, 0], points[:, i, 1], s=point_size, c=colalpha)
+        # plt.scatter(points[:, i, 0], points[:, i, 1], s=point_size, c=colalpha)
         occ2 = occluded[:, i : i + 1]
         if gt_occluded is not None:
             occ2 *= 1 - gt_occluded[:, i : i + 1]
@@ -219,9 +219,10 @@ def plot_tracks_v2(
             int(height), int(width), 3
         )
         disp.append(np.copy(img))
-
-    for fig in figs:
         plt.close(fig)
+
+    # for fig in figs:
+    #     plt.close(fig)
     return np.stack(disp, axis=0)
 
 
@@ -769,24 +770,30 @@ def vis_tracked_points(results_dir, data):
     rgb = data['video'][:T] # T x 480 x 854 x 3
     h, w, _ = rgb[0].shape
     occluded = data['occluded'][:, :T]
+    occluded = 1 - occluded
 
     scale_factor = np.array([w, h])
     points = points * scale_factor
-    painted_frames = plot_tracks_v2(
-            rgb,
-            points,
-            occluded)
-
+    # painted_frames = plot_tracks_v2(
+    #         rgb,
+    #         points,
+    #         occluded,
+    #         point_size=2)
+    # print("point_size", 2)
     os.makedirs(results_dir, exist_ok=True)
 
     # pad with zeros
-    for time, img in enumerate(painted_frames):
+    for time, img in enumerate(rgb):
         fig, ax = plt.subplots()
-        ax.imshow(img)
+        ax.imshow(img / 255.0)
         from_time = max(0, time-traj_len)
         for i in range(points.shape[0]):
+            plt.scatter(points[i, time, 0], points[i, time, 1], c='red', s=2)
             x = np.clip(points[i, from_time:time+1, 0], a_min=0, a_max=w-1)
             y = np.clip(points[i, from_time:time+1, 1], a_min=0, a_max=h-1)
+            # if time > 2:
+            #     poly = np.polynomial.polynomial.Polynomial.fit(x, y, deg=min(time, 3))
+            #     y = poly(y)
             color_len = np.arange(traj_len-1)
             pts = np.array([x, y]).T.reshape(-1, 1, 2)
             segments = np.concatenate([pts[:-1], pts[1:]], axis=1)

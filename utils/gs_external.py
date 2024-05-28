@@ -25,7 +25,7 @@ from math import exp
 def build_rotation(q):
     norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3])
     q = q / norm[:, None]
-    rot = torch.zeros((q.size(0), 3, 3), device='cuda')
+    rot = torch.zeros((q.size(0), 3, 3), device=q.device)
     r = q[:, 0]
     x = q[:, 1]
     y = q[:, 2]
@@ -200,14 +200,14 @@ def densify(params, variables, optimizer, iter, densify_dict):
             new_params = {k: v[to_clone] for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
 
             if 'timestep' in variables.keys():
-                new_timestep_vars = torch.zeros(new_params['means3D'].shape[0], device="cuda")
+                new_timestep_vars = torch.zeros(new_params['means3D'].shape[0], device=params['means3D'].device)
                 new_timestep_vars = variables['timestep'][to_clone]            
                 variables['timestep'] = torch.cat((variables['timestep'], new_timestep_vars), dim=0)
 
             params = cat_params_to_optimizer(new_params, params, optimizer)
             num_pts = params['means3D'].shape[0]
 
-            padded_grad = torch.zeros(num_pts, device="cuda")
+            padded_grad = torch.zeros(num_pts, device=params['means3D'].device)
             padded_grad[:grads.shape[0]] = grads
             to_split = torch.logical_and(padded_grad >= grad_thresh,
                                          torch.max(torch.exp(params['log_scales']), dim=1).values > 0.01 * variables[
@@ -217,12 +217,12 @@ def densify(params, variables, optimizer, iter, densify_dict):
 
             #track new variables for new formed points
             if 'timestep' in variables.keys():
-                new_timestep_vars = torch.zeros(new_params['means3D'].shape[0], device="cuda")
+                new_timestep_vars = torch.zeros(new_params['means3D'].shape[0], device=params['means3D'].device)
                 new_timestep_vars = variables['timestep'][to_split].repeat(n)
                 variables['timestep'] = torch.cat((variables['timestep'], new_timestep_vars), dim=0)
 
             stds = torch.exp(params['log_scales'])[to_split].repeat(n, 3)
-            means = torch.zeros((stds.size(0), 3), device="cuda")
+            means = torch.zeros((stds.size(0), 3), device=params['means3D'].device)
             samples = torch.normal(mean=means, std=stds)
             rots = build_rotation(params['unnorm_rotations'][to_split]).repeat(n, 1, 1)
             new_params['means3D'] += torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
@@ -230,11 +230,11 @@ def densify(params, variables, optimizer, iter, densify_dict):
             params = cat_params_to_optimizer(new_params, params, optimizer)
             num_pts = params['means3D'].shape[0]
             
-            variables['means2D_gradient_accum'] = torch.zeros(num_pts, device="cuda")
-            variables['denom'] = torch.zeros(num_pts, device="cuda")
-            variables['max_2D_radius'] = torch.zeros(num_pts, device="cuda")
+            variables['means2D_gradient_accum'] = torch.zeros(num_pts, device=params['means3D'].device)
+            variables['denom'] = torch.zeros(num_pts, device=params['means3D'].device)
+            variables['max_2D_radius'] = torch.zeros(num_pts, device=params['means3D'].device)
 
-            to_remove = torch.cat((to_split, torch.zeros(n * to_split.sum(), dtype=torch.bool, device="cuda")))
+            to_remove = torch.cat((to_split, torch.zeros(n * to_split.sum(), dtype=torch.bool, device=params['means3D'].device)))
             params, variables = remove_points(to_remove, params, variables, optimizer)
 
             if iter == densify_dict['stop_after']:

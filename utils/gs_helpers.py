@@ -13,7 +13,7 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from pytorch_msssim import ms_ssim
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
-loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).cuda()
+loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True)
 
 def l1_loss_v1(x, y):
     return torch.abs((x - y)).mean()
@@ -264,7 +264,7 @@ def get_depth_and_silhouette(pts_3D, w2c):
     depth_z_sq = torch.square(depth_z) # [num_gaussians, 1]
 
     # Depth and Silhouette
-    depth_silhouette = torch.zeros((pts_3D.shape[0], 3)).cuda().float()
+    depth_silhouette = torch.zeros((pts_3D.shape[0], 3)).to(pts_3D.device).float()
     depth_silhouette[:, 0] = depth_z.squeeze(-1)
     depth_silhouette[:, 1] = 1.0
     depth_silhouette[:, 2] = depth_z_sq.squeeze(-1)
@@ -316,7 +316,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad):
     else:
         cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
         cam_tran = params['cam_trans'][..., time_idx].detach()
-    rel_w2c = torch.eye(4).cuda().float()
+    rel_w2c = torch.eye(4).to(params['means3D'].device).float()
     rel_w2c[:3, :3] = build_rotation(cam_rot)
     rel_w2c[:3, 3] = cam_tran
 
@@ -327,7 +327,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad):
         pts = params['means3D'].detach()
     
     # Transform Centers and Unnorm Rots of Gaussians to Camera Frame
-    pts_ones = torch.ones(pts.shape[0], 1).cuda().float()
+    pts_ones = torch.ones(pts.shape[0], 1).to(params['means3D'].device).float()
     pts4 = torch.cat((pts, pts_ones), dim=1)
     transformed_pts = (rel_w2c @ pts4.T).T[:, :3]
 
@@ -501,6 +501,7 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres, mapping_iters, 
         valid_depth_mask = (curr_data['depth'] > 0)
         silhouette = depth_sil[1, :, :]
         presence_sil_mask = (silhouette > sil_thres)
+        loss_fn_alex = loss_fn_alex.to(im.device)
         
         # Render RGB and Calculate PSNR
         im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)

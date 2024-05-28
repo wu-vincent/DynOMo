@@ -54,23 +54,23 @@ def save_params_ckpt(output_params, output_variables, output_dir, time_idx):
         np.savez(save_path, **to_save)
 
 
-def load_params_ckpt(output_dir):
+def load_params_ckpt(output_dir, device):
     loaded_params = list()
     for name in ["params", "variables"]:
         print(f"Loading parameters from: {output_dir}")
         save_path = os.path.join(output_dir, f"temp_{name}.npz")
         params = np.load(save_path, allow_pickle=True)
         if name == 'params':
-            params = {k: torch.nn.Parameter(torch.from_numpy(v).cuda().float().contiguous().requires_grad_(True)) for k, v in params.items()}
+            params = {k: torch.nn.Parameter(torch.from_numpy(v).to(device).float().contiguous().requires_grad_(True)) for k, v in params.items()}
         else:
             _params = dict()
             for k, v in params.items():
                 if (v != np.array(None)).all():
-                    _params[k] = torch.from_numpy(v).cuda()
+                    _params[k] = torch.from_numpy(v).to(device)
                 else:
                     _params[k] = v
             params = _params
-            # params = {k: torch.from_numpy(v).cuda() for k, v in params.items() if v is not None}
+            # params = {k: torch.from_numpy(v).to(device) for k, v in params.items() if v is not None}
         loaded_params.append(params)
     return loaded_params
 

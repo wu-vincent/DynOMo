@@ -139,7 +139,7 @@ def params2rendervar(params):
         'rotations': F.normalize(params['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     return rendervar
 
@@ -174,7 +174,7 @@ def params2silhouette(params):
         'rotations': F.normalize(params['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     return rendervar
 
@@ -191,7 +191,7 @@ def get_depth_and_silhouette(pts_3D, w2c):
     depth_z_sq = torch.square(depth_z) # [num_gaussians, 1]
 
     # Depth and Silhouette
-    depth_silhouette = torch.zeros((pts_3D.shape[0], 3)).cuda().float()
+    depth_silhouette = torch.zeros((pts_3D.shape[0], 3), device=pts_3D.device).float()
     depth_silhouette[:, 0] = depth_z.squeeze(-1)
     depth_silhouette[:, 1] = 1.0
     depth_silhouette[:, 2] = depth_z_sq.squeeze(-1)
@@ -210,7 +210,7 @@ def get_depth_and_silhouette_and_instseg(pts_3D, w2c, instseg):
     depth_z = pts_in_cam[:, 2].unsqueeze(-1) # [num_gaussians, 1]
 
     # Depth and Silhouette
-    depth_silhouette = torch.zeros((pts_3D.shape[0], 3)).cuda().float()
+    depth_silhouette = torch.zeros((pts_3D.shape[0], 3), device=pts_3D.device).float()
     depth_silhouette[:, 0] = depth_z.squeeze(-1)
     depth_silhouette[:, 1] = 1.0
     depth_silhouette[:, 2] = instseg.squeeze()
@@ -224,7 +224,7 @@ def get_instsegbg(tensor_shape, instseg, bg):
     These are evaluated at gaussian center.
     """
     # Depth and Silhouette
-    depth_silhouette = torch.zeros((tensor_shape, 3)).cuda().float()
+    depth_silhouette = torch.zeros((tensor_shape, 3), device=bg.device).float()
     depth_silhouette[:, 0] = bg.float().squeeze()
     depth_silhouette[:, 1] = 1
     depth_silhouette[:, 2] = instseg.squeeze()
@@ -237,7 +237,7 @@ def get_2D_motion(tensor_shape, gauss_flow):
     These are evaluated at gaussian center.
     """
     # Depth and Silhouette
-    motion2d = torch.zeros((tensor_shape, 3)).cuda().float()
+    motion2d = torch.zeros((tensor_shape, 3), device=gauss_flow.device).float()
     motion2d[:, 0] = gauss_flow[:, 0]
     motion2d[:, 1] = gauss_flow[:, 1]
     motion2d[:, 2] = 1.0
@@ -257,7 +257,7 @@ def params2depthplussilhouette(params, w2c):
         'rotations': F.normalize(params['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     return rendervar
 
@@ -276,7 +276,7 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     rendervar, time_mask =  mask_timestamp(rendervar, time_idx+time_window-1, first_occurance, moving_mask=None)
     return rendervar, time_mask
@@ -310,7 +310,7 @@ def transformed_params2silhouette(params, transformed_gaussians):
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     return rendervar
 
@@ -328,7 +328,7 @@ def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians, t
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, first_occurance)
     return rendervar, time_mask
@@ -352,7 +352,7 @@ def transformed_params2instsegbg(
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
     }
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'])
     return rendervar, time_mask
@@ -379,7 +379,7 @@ def transformed_params2dmotion(
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
         'colors_precomp': get_2D_motion(gauss_flow.shape[0], gauss_flow)
     }
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], strictly_less=True)
@@ -401,16 +401,18 @@ def transformed_params2emb(
         log_scales = params['log_scales']
 
     # Initialize Render Variables
-    embs = torch.ones([params['embeddings'].shape[0], 3]).cuda()
-    embs[:, :max_idx] = params['embeddings'][:, emb_idx:emb_idx+max_idx]
+    # embs = torch.ones([params['embeddings'].shape[0], 3], device=params['embeddings'].device)
+    embs = params['embeddings'][:, emb_idx:emb_idx+max_idx]
+    if max_idx < 3:
+        embs = torch.cat((embs, torch.ones((embs.shape[0], 1), device=embs.device)), dim=-1).float()
 
     rendervar = {
         'means3D': transformed_gaussians['means3D'],
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
-        'colors_precomp': embs.clone().detach()
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
+        'colors_precomp': embs
     }
 
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], strictly_less=False)
@@ -436,7 +438,7 @@ def transformed_params2emb_all(
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
         'colors_precomp': params['embeddings']
     }
 
@@ -463,7 +465,7 @@ def transformed_params2depthsilinstseg(
         'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device="cuda") + 0,
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
     }
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, first_occurance)
     return rendervar, time_mask
@@ -474,7 +476,8 @@ def transform_to_frame(
         time_idx,
         gaussians_grad,
         camera_grad=False,
-        delta=0):
+        delta=0,
+        motion_mlp=None):
     """
     Function to transform Isotropic or Anisotropic Gaussians from world frame to camera frame.
     
@@ -494,7 +497,7 @@ def transform_to_frame(
     else:
         cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
         cam_tran = params['cam_trans'][..., time_idx].detach()
-    rel_w2c = torch.eye(4).cuda().float()
+    rel_w2c = torch.eye(4, device=params['means3D'].device).float()
     rel_w2c[:3, :3] = build_rotation(cam_rot)
     rel_w2c[:3, 3] = cam_tran
 
@@ -509,8 +512,13 @@ def transform_to_frame(
         pts = params['means3D'][:, :, time_idx]
         unnorm_rots = params['unnorm_rotations'][:, :, time_idx]
     else:
-        pts = params['means3D'][:, :, time_idx].detach()
-        unnorm_rots = params['unnorm_rotations'][:, :, time_idx].detach()
+        if motion_mlp is not None:
+            pts = params['means3D'][:, :, time_idx-1].detach()
+            unnorm_rots = params['unnorm_rotations'][:, :, time_idx-1]
+            pts = pts + motion_mlp(pts, time_idx-1).squeeze()
+        else:
+            pts = params['means3D'][:, :, time_idx].detach()
+            unnorm_rots = params['unnorm_rotations'][:, :, time_idx].detach()
     
     if delta:
         for i in range(delta):
@@ -525,7 +533,7 @@ def transform_to_frame(
 
     transformed_gaussians = {}
     # Transform Centers of Gaussians to Camera Frame
-    pts_ones = torch.ones(pts.shape[0], 1).cuda().float()
+    pts_ones = torch.ones(pts.shape[0], 1, device=params['means3D'].device).float()
     pts4 = torch.cat((pts, pts_ones), dim=1)
     transformed_pts = (rel_w2c @ pts4.T).T[:, :3]
     transformed_gaussians['means3D'] = transformed_pts
@@ -560,7 +568,7 @@ def get_smallest_axis(params, iter_time_idx, return_idx=False):
 
 def get_hook(should_be_disabled):
     def hook(grad):
-        grad = grad.clone() # NEVER change the given grad inplace
+        # grad = grad.clone() # NEVER change the given grad inplace
         # Assumes 1D but can be generalized
         grad[should_be_disabled, :] = 0
         return grad
@@ -568,9 +576,9 @@ def get_hook(should_be_disabled):
 
 def get_hook_bg(should_be_shrinked, grad_weight):
     def hook(grad):
-        grad = grad.clone() # NEVER change the given grad inplace
+        # grad = grad.clone() # NEVER change the given grad inplace
         # Assumes 1D but can be generalized
-        grad[should_be_shrinked] = torch.clamp(1-grad_weight, min=0.5, max=1)[should_be_shrinked]
+        grad[should_be_shrinked] = 0
         return grad
     return hook
 
@@ -586,19 +594,23 @@ def dyno_losses(
         update_iso=False,
         time_window=1,
         weight='bg',
-        post_init=False):
+        post_init=False,
+        mag_iso=False,
+        weight_rot=True,
+        weight_rigid=True,
+        weight_iso=True):
     losses = dict()
     if weight == 'bg':
         bg_weight = 1 - torch.abs(params['bg'][variables["self_indices"]].detach().clone() - params['bg'][variables["neighbor_indices"]].detach().clone())
-    if weight == 'none':
-        bg_weight = bg_weight*0+1
+    elif weight == 'none':
+        bg_weight = params['bg'][variables["self_indices"]].detach().clone()*0+1
     else:
         bg_weight = variables["neighbor_weight"].unsqueeze(1)
 
     # get relative rotation
-    other_rot = params["unnorm_rotations"][:, :, iter_time_idx - 1].clone().detach()
+    other_rot = params["unnorm_rotations"][:, :, iter_time_idx - 1].detach().clone()
     other_rot[:, 1:] = -1 * other_rot[:, 1:]
-    other_means = params["means3D"][:, :, iter_time_idx - 1].clone().detach()
+    other_means = params["means3D"][:, :, iter_time_idx - 1].detach().clone()
     curr_rot = transformed_gaussians["unnorm_rotations"]
     rel_rot = quat_mult(curr_rot, other_rot)
     rel_rot_mat = build_rotation(rel_rot)
@@ -609,7 +621,7 @@ def dyno_losses(
     losses['rot'] = l2_loss_v2(
         rel_rot[variables["neighbor_indices"]],
         rel_rot[variables["self_indices"]],
-        weight=bg_weight)
+        weight=bg_weight if weight_rot else None)
 
     # rigid body
     curr_means = transformed_gaussians["means3D"] # params["means3D"][:, :, iter_time_idx]
@@ -618,32 +630,36 @@ def dyno_losses(
     other_offset = other_means[variables["self_indices"]] - other_means[variables["neighbor_indices"]]
     losses['rigid'] = l2_loss_v2(
         offset_other_coord,
-        other_offset)
+        other_offset,
+        weight=bg_weight if weight_rigid else None)
     
     # store offset_0 and compute isometry
     if use_iso:
         offset = curr_means[variables["self_indices"]] - curr_means[variables["neighbor_indices"]]
         if iter == 0 and update_iso:
             if iter_time_idx == 1:
-                offset_0 = offset.clone().detach()
+                offset_0 = offset.detach().clone()
             else:
                 if not post_init:
                     offset_0 = torch.cat(
                       [offset_0,
                       offset[variables['timestep'][
-                           variables["self_indices"]] == iter_time_idx+time_window-1].clone().detach()])
+                           variables["self_indices"]] == iter_time_idx+time_window-1].detach().clone()])
                 else:
                     offset_0 = torch.cat(
                       [offset_0,
                       offset[variables['timestep'][
-                           variables["self_indices"]] == iter_time_idx+time_window-2].clone().detach()])
- 
-        losses['iso'] = l2_loss_v2(
-            torch.sqrt((offset ** 2).sum(-1) + 1e-20),
-            torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20))
-        # losses['iso'] = l2_loss_v2(
-        #     offset,
-        #     offset_0)
+                           variables["self_indices"]] == iter_time_idx+time_window-2].detach().clone()])
+        if mag_iso:
+            losses['iso'] = l2_loss_v2(
+                torch.sqrt((offset ** 2).sum(-1) + 1e-20),
+                torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20),
+                weight=bg_weight if weight_iso else None)
+        else:
+            losses['iso'] = l2_loss_v2(
+                offset,
+                offset_0,
+                weight=bg_weight if weight_iso else None)
 
     return losses, offset_0
 
@@ -664,19 +680,13 @@ def get_renderings(
         get_seg=False,
         get_embeddings=True,
         time_window=1,
-        delta=False):
-
+        delta=False,
+        motion_mlp=None):
     transformed_gaussians = transform_to_frame(params, iter_time_idx,
-                                        gaussians_grad=True if not disable_grads and not track_cam else False,
+                                        gaussians_grad=True if not disable_grads and not track_cam and motion_mlp is None else False,
                                         camera_grad=track_cam,
-                                        delta=delta)
-    
-    # project means to 2d for flow
-    means2d = three2two(
-            data['cam'].projmatrix.squeeze(),
-            transformed_gaussians['means3D'],
-            data['cam'].image_width,
-            data['cam'].image_height)
+                                        delta=delta,
+                                        motion_mlp=motion_mlp)
     
     if get_rgb:
         # RGB Rendering
@@ -689,12 +699,11 @@ def get_renderings(
 
         if not disable_grads:
             rendervar['means2D'].retain_grad()
-
         im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 
         variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
     else:
         im, radius, weight, visible = None, None, None, None
-    
+
     if get_depth:
         # Depth & Silhouette Rendering
         depth_sil_rendervar, _ = transformed_params2depthplussilhouette(
@@ -737,6 +746,12 @@ def get_renderings(
     else:
         instseg, bg = None, None
 
+    # project means to 2d for flow
+    means2d = three2two(
+            data['cam'].projmatrix.squeeze(),
+            transformed_gaussians['means3D'],
+            data['cam'].image_width,
+            data['cam'].image_height)
     if get_motion and prev_means2d is not None:
         # render motion
         prev_transformed_gaussians = transform_to_frame(params, iter_time_idx-1,
@@ -754,17 +769,7 @@ def get_renderings(
         motion2d = None
     
     if get_embeddings:
-        '''
-        emb_rendervar, _  = transformed_params2emb_all(
-                params,
-                transformed_gaussians,
-                iter_time_idx,
-                variables)
-        embeddings, _, _, _, _ = EmbeddingRenderer(raster_settings=data['cam'])(**emb_rendervar)
-        print(embeddings[3])
-        quit()
-        '''
-        rendered_embeddings = torch.zeros_like(data['embeddings'])
+        rendered_embeddings = list()
         for emb_idx in range(0, params['embeddings'].shape[1], 3):
             max_idx = min(params['embeddings'].shape[1]-emb_idx, 3)
             emb_rendervar, _ = transformed_params2emb(
@@ -776,8 +781,8 @@ def get_renderings(
                 max_idx,
                 time_window=time_window)
             _embeddings, _, _, _, _ = Renderer(raster_settings=data['cam'])(**emb_rendervar)
-            rendered_embeddings[emb_idx:emb_idx+max_idx] = _embeddings[:max_idx]
-        
+            rendered_embeddings.append(_embeddings[:max_idx])
+        rendered_embeddings = torch.cat(rendered_embeddings, dim=0)
     else:
         rendered_embeddings = None
     return variables, im, radius, depth, instseg, mask, transformed_gaussians, means2d, visible, weight, motion2d, time_mask, None, silhouette, rendered_embeddings, bg

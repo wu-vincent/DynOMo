@@ -8,10 +8,10 @@ import numpy as np
 def intersect_and_union2D(pred1: torch.tensor, pred2: torch.tensor):
     num_p1 = torch.unique(pred1).shape[0]
     num_p2 = torch.unique(pred2).shape[0]
-    intersect = torch.zeros(num_p1, num_p2).cuda()
-    union = torch.zeros(num_p1, num_p2).cuda()
-    area1 = torch.zeros(num_p1).cuda()
-    area2 = torch.zeros(num_p2).cuda()
+    intersect = torch.zeros(num_p1, num_p2).to(pred1.device)
+    union = torch.zeros(num_p1, num_p2).to(pred1.device)
+    area1 = torch.zeros(num_p1).to(pred1.device)
+    area2 = torch.zeros(num_p2).to(pred1.device)
     
     for i, p1 in enumerate(torch.unique(pred1)):
         for j, p2 in enumerate(torch.unique(pred2)):

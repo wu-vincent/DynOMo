@@ -7,12 +7,13 @@ import numpy as np
 import torch
 from natsort import natsorted
 
-from .replica import ReplicaDataset
+from .basedataset import GradSLAMDataset
 import imageio
 import pickle
+from sklearn.decomposition import PCA
 
 
-class DavisDynoSplatamDataset(ReplicaDataset):
+class DavisDynoSplatamDataset(GradSLAMDataset):
     def __init__(
         self,
         config_dict,
@@ -24,28 +25,29 @@ class DavisDynoSplatamDataset(ReplicaDataset):
         desired_height: Optional[int] = 480,
         desired_width: Optional[int] = 640,
         load_embeddings: Optional[bool] = False,
+        load_instseg=True,
         embedding_dir: Optional[str] = "embeddings",
         embedding_dim: Optional[int] = 512,
         load_support_trajs=False,
         **kwargs,
     ):  
-        with open('data/tapvid_davis/tapvid_davis.pkl', 'rb') as f:
+        with open('/scratch/jseidens/data/tapvid_davis/tapvid_davis.pkl', 'rb') as f:
             data = pickle.load(f)
             dat = data[sequence]
 
         rgbs = dat['video'] # list of H,W,C uint8 images
+        # desired_height = rgbs.shape[1]
+        # desired_width = rgbs.shape[2]
+        self.start_frame = 0 #18
         self.max_len = rgbs.shape[0]
-        trajs = dat['points'] # N,S,2 array
-        valids = 1-dat['occluded'] # N,S array
-
-        desired_height = rgbs.shape[1]
-        desired_width = rgbs.shape[2]
+        del rgbs
+        # trajs = dat['points'] # N,S,2 array
+        # valids = 1-dat['occluded'] # N,S array
                 
         self.input_folder = os.path.join(basedir, sequence)
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
+        self.load_instseg = True
         super().__init__(config_dict,
-            basedir,
-            sequence,
             stride=stride,
             start=start,
             end=end,
@@ -54,40 +56,43 @@ class DavisDynoSplatamDataset(ReplicaDataset):
             load_embeddings=load_embeddings,
             embedding_dir=embedding_dir,
             embedding_dim=embedding_dim,
+            load_instseg=load_instseg,
             **kwargs,
         )
-        self.instseg_paths = self.get_instsegpaths()
-        self.bg_paths = self.get_bg_paths()
-        self.load_instseg = True
-        self.load_support_trajs()
         print(f"Length of sequence {len(self.color_paths)}")
     
     def load_support_trajs(self):
-        # load
-        self.support_trajs = np.load(f"{self.input_folder.replace('JPEGImages', 'SUPPORT_TRAJS')}/48_trajs.npy").squeeze()
-        # sclae 
-        support_traj_shape = (512,896)
-        scale_factors = (
-            self.desired_width/support_traj_shape[1], self.desired_height/support_traj_shape[0])
-        self.support_trajs[:, :, :, 0] = self.support_trajs[:, :, :, 0] * scale_factors[0]
-        self.support_trajs[:, :, :, 1] = self.support_trajs[:, :, :, 1] * scale_factors[1]
-        self.support_trajs = np.round(self.support_trajs)
-        # clip to image boundaries
-        self.support_trajs[:, :, :, 0] = np.clip(self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
-        self.support_trajs[:, :, :, 1] = np.clip(self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)
+        try:
+            # load
+            self.support_trajs = np.load(f"{self.input_folder.replace('JPEGImages', 'SUPPORT_TRAJS')}/48_trajs.npy").squeeze()
+            # sclae 
+            support_traj_shape = (512,896)
+            scale_factors = (
+                self.desired_width/support_traj_shape[1], self.desired_height/support_traj_shape[0])
+            self.support_trajs[:, :, :, 0] = self.support_trajs[:, :, :, 0] * scale_factors[0]
+            self.support_trajs[:, :, :, 1] = self.support_trajs[:, :, :, 1] * scale_factors[1]
+            self.support_trajs = np.round(self.support_trajs)
+            # clip to image boundaries
+            self.support_trajs[:, :, :, 0] = np.clip(self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
+            self.support_trajs[:, :, :, 1] = np.clip(self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)
+        except:
+            self.support_trajs = None
 
     def get_instsegpaths(self):
-        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[:self.max_len]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start_frame:self.max_len]
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))
         return instseg_paths
     
     def get_bg_paths(self):
-        return self.instseg_paths[:self.max_len]
+        return self.instseg_paths
     
-    def read_embedding_from_file(self, idx):
-        embedding = torch.from_numpy(np.load(self.embedding_paths[idx]).astype(dtype=np.int64))
-        embedding = torch.cat([torch.zeros(480, 80, 384), embedding, torch.zeros(480, 80, 384)], dim=1)
-        return embedding
+    def read_embedding_from_file(self, embedding_path):
+        embedding = np.load(embedding_path)
+        if self.embedding_downscale is not None:
+            shape = embedding.shape
+            embedding = self.embedding_downscale.transform(embedding.reshape(-1, shape[2]))
+            embedding = embedding.reshape((shape[0], shape[1], self.embedding_dim))
+        return torch.from_numpy(embedding)
 
     def _load_instseg(self, instseg_path):
         # instseg = np.load(instseg_path, mmap_mode="r").astype(dtype=np.int64)
@@ -107,11 +112,20 @@ class DavisDynoSplatamDataset(ReplicaDataset):
         return bg
     
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[:self.max_len]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'DEPTH')}/depth*.npy"))[:self.max_len]
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[self.start_frame:self.max_len]
+        print(self.start, self.max_len)
+        depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'DEPTH')}/depth*.npy"))[self.start_frame:self.max_len]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Embeddings')}/embeddings*.png"))[:self.max_len]
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'FEATS')}/*dino_img_quat_4_1.npy"))[self.start_frame:self.max_len]
+            features = np.load(embedding_paths[0])
+            if self.embedding_dim != features.shape[2]:
+                pca = PCA(n_components=self.embedding_dim)
+                self.embedding_downscale = pca.fit(features.reshape(-1, features.shape[2]))
+            else:
+                print('Features already have the right size...')
+                self.embedding_downscale = None
+
         return color_paths, depth_paths, embedding_paths
 
     def load_poses(self):

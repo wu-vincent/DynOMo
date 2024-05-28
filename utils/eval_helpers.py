@@ -20,7 +20,6 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from pytorch_msssim import ms_ssim
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
-loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).cuda()
 
 import imageio.v2 as iio
 import numpy as np
@@ -163,7 +162,7 @@ def report_progress(params, data, i, progress_bar, iter_time_idx, sil_thres, eve
                     continue
                 interm_cam_rot = F.normalize(params['cam_unnorm_rots'][..., idx].detach())
                 interm_cam_trans = params['cam_trans'][..., idx].detach()
-                intermrel_w2c = torch.eye(4).cuda().float()
+                intermrel_w2c = torch.eye(4).to(params['means3D'].device).float()
                 intermrel_w2c[:3, :3] = build_rotation(interm_cam_rot)
                 intermrel_w2c[:3, 3] = interm_cam_trans
                 latest_est_w2c = intermrel_w2c
@@ -260,14 +259,14 @@ def report_progress(params, data, i, progress_bar, iter_time_idx, sil_thres, eve
                                  wandb_title=f"{stage} Qual Viz")
 
 
-def tensor2param(tensor):
+def tensor2param(tensor, device):
     if not isinstance(tensor, torch.Tensor):
-        return torch.nn.Parameter(torch.tensor(tensor).cuda().float().contiguous().requires_grad_(True))
+        return torch.nn.Parameter(torch.tensor(tensor).to(device).float().contiguous().requires_grad_(True))
     else:
-        return torch.nn.Parameter(tensor.cuda().float().contiguous().requires_grad_(True))
+        return torch.nn.Parameter(tensor.to(device).float().contiguous().requires_grad_(True))
 
-def param2tensor(param):
-    return torch.nn.Tensor(param.cuda().float())
+def param2tensor(param, device):
+    return torch.nn.Tensor(param.to(device).float())
 
 
 def eval(
@@ -291,7 +290,9 @@ def eval(
         rendered_instseg=False,
         get_embeddings=False,
         rendered_bg=True,
-        time_window=1):
+        time_window=1,
+        save_depth=True,
+        save_rendered_embeddings=True):
 
     print("Evaluating Final Parameters ...")
     psnr_list = []
@@ -302,49 +303,21 @@ def eval(
     plot_dir = os.path.join(eval_dir, "plots")
     os.makedirs(plot_dir, exist_ok=True)
     if save_frames:
-        render_rgb_dir = os.path.join(eval_dir, "rendered_rgb")
-        os.makedirs(render_rgb_dir, exist_ok=True)
-        render_depth_dir = os.path.join(eval_dir, "rendered_depth")
-        os.makedirs(render_depth_dir, exist_ok=True)
-        if rendered_mov:
-            render_mov_dir = os.path.join(eval_dir, "rendered_mov")
-            os.makedirs(render_mov_dir, exist_ok=True)
-        render_emb_dir = os.path.join(eval_dir, "pca_emb")
-        os.makedirs(render_emb_dir, exist_ok=True)
-        render_emb_gt_dir = os.path.join(eval_dir, "pca_emb_gt")
-        os.makedirs(render_emb_gt_dir, exist_ok=True)
-        if rendered_instseg:
-            render_instseg_dir = os.path.join(eval_dir, "rendered_instseg")
-            os.makedirs(render_instseg_dir, exist_ok=True)
-        if rendered_silhouette:
-            render_sil_dir = os.path.join(eval_dir, "rendered_sil")
-            os.makedirs(render_sil_dir, exist_ok=True)
-        if save_pc:
-            pc_dir = os.path.join(eval_dir, "pc")
-            os.makedirs(pc_dir, exist_ok=True)
-        if rendered_motion:
-            render_motion_dir = os.path.join(eval_dir, "rendered_motion")
-            os.makedirs(render_motion_dir, exist_ok=True)
-        if rendered_bg:
-            render_bg_dir = os.path.join(eval_dir, "rendered_bg")
-            os.makedirs(render_bg_dir, exist_ok=True)
-        if vis_gt:
-            rgb_dir = os.path.join(eval_dir, "rgb")
-            os.makedirs(rgb_dir, exist_ok=True)
-            depth_dir = os.path.join(eval_dir, "depth")
-            os.makedirs(depth_dir, exist_ok=True)
-            instseg_dir = os.path.join(eval_dir, "instseg")
-            os.makedirs(instseg_dir, exist_ok=True)
+        render_rgb_dir, render_depth_dir, render_mov_dir, render_emb_dir, render_emb_gt_dir, \
+        render_instseg_dir, render_sil_dir, pc_dir, render_motion_dir, render_bg_dir, rgb_dir, depth_dir, instseg_dir, bg_dir = \
+            make_dirs(eval_dir, rendered_mov, rendered_instseg, rendered_silhouette, save_pc, rendered_motion, rendered_bg, vis_gt, save_depth, save_rendered_embeddings)
 
     gt_w2c_list = []
     import copy
     means2d = None
     pca = None
+    loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True)
+    loss_fn_alex = loss_fn_alex.to(final_params['means3D'].device)
     for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
         data = dataset[time_idx]
-        color, depth, intrinsics, pose, instseg, embeddings, support_trajs = data[0], data[1], data[2], data[3], data[4], data[5], data[6]
+        color, depth, intrinsics, pose, instseg, embeddings, support_trajs, bg = data
                 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -354,7 +327,12 @@ def eval(
             # Process Camera Parameters
             first_frame_w2c = torch.linalg.inv(pose)
             # Setup Camera
-            cam = setup_camera(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), first_frame_w2c.detach().cpu().numpy())
+            cam = setup_camera(
+                color.shape[2],
+                color.shape[1],
+                intrinsics.cpu().numpy(),
+                first_frame_w2c.detach().cpu().numpy(),
+                device=final_params_time['means3D'].device)
         
         # Skip frames if not eval_every
         if time_idx != 0 and (time_idx+1) % eval_every != 0:
@@ -370,7 +348,8 @@ def eval(
             'w2c': first_frame_w2c,
             'instseg': instseg,
             'embeddings': embeddings,
-            'support_trajs': support_trajs}
+            'support_trajs': support_trajs,
+            'bg': bg}
 
         variables, im, _, rastered_depth, rastered_inst, mask, transformed_gaussians, means2d, visible, weight, rastered_motion2d, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg = get_renderings(
             final_params_time,
@@ -386,7 +365,7 @@ def eval(
             prev_means2d=means2d,
             get_embeddings=get_embeddings,
             time_window=time_window)
-        
+
         if time_idx == 0:
             time_mask_0 = time_idx
         
@@ -528,22 +507,27 @@ def eval(
                 viz_gt_im = torch.clamp(curr_data['im'], 0, 1)
                 viz_gt_im = viz_gt_im.detach().cpu().permute(1, 2, 0).numpy()
                 # depth
-                viz_gt_depth = curr_data['depth'][0].detach().cpu().numpy()
                 vmin = 0 # viz_gt_depth.min() # 0
-                vmax = viz_gt_depth.max() # 6
-                imageio.imwrite('test.png', viz_gt_depth.astype(np.uint8))
+                vmax = 6 # viz_gt_depth.max() # 6
+                viz_gt_depth = torch.clamp(curr_data['depth'], 0, vmax)
+                viz_gt_depth = viz_gt_depth[0].detach().cpu().numpy()
                 normalized_depth = np.clip((viz_gt_depth - vmin) / (vmax - vmin), 0, 1)
-                imageio.imwrite('test_norm.png', normalized_depth.astype(np.uint8))
                 depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
                 # instseg
                 viz_gt_instseg = curr_data['instseg'][0].detach().cpu().numpy()
                 smax, smin = viz_gt_instseg.max(), viz_gt_instseg.min()
                 normalized_instseg = np.clip((viz_gt_instseg - smin) / (smax - smin), 0, 1)
                 instseg_colormap = cv2.applyColorMap((normalized_instseg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+                # bg 
+                viz_gt_bg = curr_data['bg'][0].detach().cpu().float().numpy()
+                smax, smin = viz_gt_bg.max(), viz_gt_bg.min()
+                normalized_bg = np.clip((viz_gt_bg - smin) / (smax - smin), 0, 1)
+                bg_colormap = cv2.applyColorMap((normalized_bg * 255).astype(np.uint8), cv2.COLORMAP_JET)
 
                 cv2.imwrite(os.path.join(rgb_dir, "gt_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_gt_im*255, cv2.COLOR_RGB2BGR))
                 cv2.imwrite(os.path.join(depth_dir, "gt_{:04d}.png".format(time_idx)), depth_colormap)
                 cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
+                cv2.imwrite(os.path.join(bg_dir, "gt_{:04d}.png".format(time_idx)), bg_colormap)
 
         if save_pc:
             print('all', final_params_time['means3D'][:, :, time_idx][time_mask].shape)
@@ -636,4 +620,232 @@ def eval(
         wandb_run.log({"Eval/Metrics": fig})
     plt.close()
 
+
+def make_dirs(eval_dir, rendered_mov, rendered_instseg, rendered_silhouette, save_pc, rendered_motion, rendered_bg, vis_gt, save_depth, save_rendered_embeddings):
+    render_rgb_dir = os.path.join(eval_dir, "rendered_rgb")
+    os.makedirs(render_rgb_dir, exist_ok=True)
+    
+    render_depth_dir = os.path.join(eval_dir, "rendered_depth")
+    if save_depth:
+        os.makedirs(render_depth_dir, exist_ok=True)
+    
+    render_mov_dir = os.path.join(eval_dir, "rendered_mov")
+    if rendered_mov:
+        os.makedirs(render_mov_dir, exist_ok=True)
+
+    render_emb_dir = os.path.join(eval_dir, "pca_emb")
+    render_emb_gt_dir = os.path.join(eval_dir, "pca_emb_gt")
+    if save_rendered_embeddings:
+        os.makedirs(render_emb_dir, exist_ok=True)
+        os.makedirs(render_emb_gt_dir, exist_ok=True)
+
+    render_instseg_dir = os.path.join(eval_dir, "rendered_instseg")
+    if rendered_instseg:
+        os.makedirs(render_instseg_dir, exist_ok=True)
+
+    render_sil_dir = os.path.join(eval_dir, "rendered_sil")
+    if rendered_silhouette:
+        os.makedirs(render_sil_dir, exist_ok=True)
+
+    pc_dir = os.path.join(eval_dir, "pc")
+    if save_pc:
+        os.makedirs(pc_dir, exist_ok=True)
+
+    render_motion_dir = os.path.join(eval_dir, "rendered_motion")
+    if rendered_motion:
+        os.makedirs(render_motion_dir, exist_ok=True)
+
+    render_bg_dir = os.path.join(eval_dir, "rendered_bg")
+    if rendered_bg:
+        os.makedirs(render_bg_dir, exist_ok=True)
+    
+    rgb_dir = os.path.join(eval_dir, "rgb")
+    depth_dir = os.path.join(eval_dir, "depth")
+    instseg_dir = os.path.join(eval_dir, "instseg")
+    bg_dir = os.path.join(eval_dir, "bg")
+    
+    if vis_gt:
+        os.makedirs(rgb_dir, exist_ok=True)
+        os.makedirs(depth_dir, exist_ok=True)
+        os.makedirs(instseg_dir, exist_ok=True)
+        os.makedirs(bg_dir, exist_ok=True)
+    
+    return render_rgb_dir, render_depth_dir, render_mov_dir, render_emb_dir, render_emb_gt_dir, \
+        render_instseg_dir, render_sil_dir, pc_dir, render_motion_dir, render_bg_dir, rgb_dir, depth_dir, instseg_dir, bg_dir
+
+
+def eval_during(
+        curr_data,
+        curr_params,
+        time_idx,
+        eval_dir,
+        sil_thres,
+        im,
+        rastered_depth,
+        rastered_sil,
+        rastered_bg,
+        rendered_embeddings,
+        pca=None,
+        wandb_run=None,
+        wandb_save_qual=False, 
+        save_frames=True,
+        variables=None,
+        save_pc=True,
+        save_videos=False,
+        mov_thresh=0.001,
+        vis_gt=False,
+        rendered_motion=False,
+        rendered_mov=False,
+        rendered_silhouette=False,
+        rendered_instseg=False,
+        get_embeddings=False,
+        save_rendered_embeddings=False,
+        rendered_bg=False,
+        save_depth=False,
+        time_window=1):
+
+    psnr_list = []
+    rmse_list = []
+    l1_list = []
+    lpips_list = []
+    ssim_list = []
+    plot_dir = os.path.join(eval_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+    if save_frames:
+        render_rgb_dir, render_depth_dir, render_mov_dir, render_emb_dir, render_emb_gt_dir, \
+            render_instseg_dir, render_sil_dir, pc_dir, render_motion_dir, render_bg_dir, rgb_dir, depth_dir, instseg_dir, bg_dir = \
+                make_dirs(eval_dir, rendered_mov, rendered_instseg, rendered_silhouette, save_pc, rendered_motion, rendered_bg, vis_gt, save_depth, save_rendered_embeddings)
+
+    gt_w2c_list = []
+    loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True)
+    loss_fn_alex = loss_fn_alex.to(curr_params['means3D'].device)
+        # Get RGB-D Data & Camera Parameters
+
+    valid_depth_mask = (curr_data['depth'] > 0)
+    rastered_depth_viz = rastered_depth.detach()
+    rastered_sil_vis = rastered_sil.detach()
+    rastered_depth = rastered_depth * valid_depth_mask
+    presence_sil_mask = (rastered_sil > sil_thres)
+    rastered_sil = rastered_sil.unsqueeze(0)
+
+    # Render RGB and Calculate PSNR
+    weighted_im = im * valid_depth_mask
+    weighted_gt_im = curr_data['im'] * valid_depth_mask
+    psnr = calc_psnr(weighted_im, weighted_gt_im).mean()
+    try:
+        ssim = ms_ssim(weighted_im.unsqueeze(0).cpu(), weighted_gt_im.unsqueeze(0).cpu(), 
+                    data_range=1.0, size_average=True)
+    except:
+        ssim = torch.tensor(0)
+    lpips_score = loss_fn_alex(torch.clamp(weighted_im.unsqueeze(0), 0.0, 1.0),
+                                torch.clamp(weighted_gt_im.unsqueeze(0), 0.0, 1.0)).item()
+
+    diff_depth_rmse = torch.sqrt((((rastered_depth - curr_data['depth'])) ** 2))
+    diff_depth_rmse = diff_depth_rmse * valid_depth_mask
+    rmse = diff_depth_rmse.sum() / valid_depth_mask.sum()
+    diff_depth_l1 = torch.abs((rastered_depth - curr_data['depth']))
+    diff_depth_l1 = diff_depth_l1 * valid_depth_mask
+    depth_l1 = diff_depth_l1.sum() / valid_depth_mask.sum()
+
+    if save_frames:
+        # Save Rendered RGB and Depth
+        viz_render_im = torch.clamp(im, 0, 1)
+        viz_render_im = viz_render_im.detach().cpu().permute(1, 2, 0).numpy()
+        cv2.imwrite(os.path.join(render_rgb_dir, "gs_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_render_im*255, cv2.COLOR_RGB2BGR))
+        
+        if save_depth:
+            # depth
+            viz_render_depth = rastered_depth_viz[0].detach().cpu().numpy()
+            vmin = 0
+            vmax = viz_render_depth.max()
+            normalized_depth = np.clip((viz_render_depth - vmin) / (vmax - vmin), 0, 1)
+            depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            cv2.imwrite(os.path.join(render_depth_dir, "gs_{:04d}.png".format(time_idx)), depth_colormap)
+
+        # bg
+        if rendered_bg:
+            rastered_bg = rastered_bg[0].detach().cpu().numpy()
+            smax, smin = rastered_bg.max(), rastered_bg.min()
+            normalized_bg = np.clip((rastered_bg - smin) / (smax - smin), 0, 1)
+            bg_colormap = cv2.applyColorMap((normalized_bg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            cv2.imwrite(os.path.join(render_bg_dir, "gs_{:04d}.png".format(time_idx)), bg_colormap)
+
+        # embeddings
+        if rendered_embeddings is not None and save_rendered_embeddings:
+            rendered_embeddings = rendered_embeddings.permute(1, 2, 0).detach().cpu().numpy()
+            shape = rendered_embeddings.shape
+            if shape[2] != 3:
+                if pca is None:
+                    pca = PCA(n_components=3)
+                    pca.fit(rendered_embeddings.reshape(-1, shape[2]))
+                rendered_embeddings = pca.transform(
+                    rendered_embeddings.reshape(-1, shape[2]))
+                rendered_embeddings = rendered_embeddings.reshape(
+                    (shape[0], shape[1], 3))
+            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+            emb_colormap = (normalized_emb * 255).astype(np.uint8)
+            imageio.imwrite(os.path.join(render_emb_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
+
+            rendered_embeddings = curr_data['embeddings'].permute(1, 2, 0).detach().cpu().numpy()
+            if shape[2] != 3:
+                shape = rendered_embeddings.shape
+                rendered_embeddings = pca.transform(
+                    rendered_embeddings.reshape(-1, shape[2]))
+                rendered_embeddings = rendered_embeddings.reshape(
+                    (shape[0], shape[1], 3))
+            smax, smin = rendered_embeddings.max(), rendered_embeddings.min()
+            normalized_emb = np.clip((rendered_embeddings - smin) / (smax - smin), 0, 1)
+            emb_colormap = (normalized_emb * 255).astype(np.uint8)
+            imageio.imwrite(os.path.join(render_emb_gt_dir, "gs_{:04d}.png".format(time_idx)), emb_colormap)
+
+        if rendered_silhouette:
+            # silouette
+            rastered_sil_vis = torch.clamp(rastered_sil_vis , 0, 1)[0].detach().cpu().numpy()
+            sil_colormap = (rastered_sil_vis * 255).astype(np.uint8)
+            cv2.imwrite(os.path.join(render_sil_dir, "gs_{:04d}.png".format(time_idx)), sil_colormap)
+
+        if rendered_instseg:
+            # instseg
+            viz_render_instseg = rastered_inst_viz[0].detach().cpu().numpy()
+            smax, smin = viz_render_instseg.max(), viz_render_instseg.min()
+            normalized_instseg = np.clip((viz_render_instseg - smin) / (smax - smin), 0, 1)
+            instseg_colormap = cv2.applyColorMap((normalized_instseg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            cv2.imwrite(os.path.join(render_instseg_dir, "gs_{:04d}.png".format(time_idx)), instseg_colormap)
+            
+        if vis_gt:
+            # Save GT RGB and Depth
+            viz_gt_im = torch.clamp(curr_data['im'], 0, 1)
+            viz_gt_im = viz_gt_im.detach().cpu().permute(1, 2, 0).numpy()
+            # depth
+            vmin = 0 # viz_gt_depth.min() # 0
+            vmax = 6 # viz_gt_depth.max() # 6
+            viz_gt_depth = torch.clamp(curr_data['depth'], 0, vmax)
+            viz_gt_depth = viz_gt_depth[0].detach().cpu().numpy()
+            normalized_depth = np.clip((viz_gt_depth - vmin) / (vmax - vmin), 0, 1)
+            depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            # instseg
+            viz_gt_instseg = curr_data['instseg'][0].detach().cpu().numpy()
+            smax, smin = viz_gt_instseg.max(), viz_gt_instseg.min()
+            normalized_instseg = np.clip((viz_gt_instseg - smin) / (smax - smin), 0, 1)
+            instseg_colormap = cv2.applyColorMap((normalized_instseg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            # bg 
+            viz_gt_bg = curr_data['bg'][0].detach().cpu().float().numpy()
+            smax, smin = viz_gt_bg.max(), viz_gt_bg.min()
+            normalized_bg = np.clip((viz_gt_bg - smin) / (smax - smin), 0, 1)
+            bg_colormap = cv2.applyColorMap((normalized_bg * 255).astype(np.uint8), cv2.COLORMAP_JET)
+
+            cv2.imwrite(os.path.join(rgb_dir, "gt_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_gt_im*255, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(depth_dir, "gt_{:04d}.png".format(time_idx)), depth_colormap)
+            cv2.imwrite(os.path.join(instseg_dir, "gt_{:04d}.png".format(time_idx)), instseg_colormap)
+            cv2.imwrite(os.path.join(bg_dir, "gt_{:04d}.png".format(time_idx)), bg_colormap)
+
+    if save_pc:
+        print('all', curr_params['means3D'][:, :, time_idx][time_mask].shape)
+        pcd = o3d.geometry.PointCloud()
+        v3d = o3d.utility.Vector3dVector
+        pcd.points = v3d(curr_params['means3D'][:, :, time_idx][time_mask].cpu().numpy())
+        o3d.io.write_point_cloud(filename=os.path.join(pc_dir, "pc_{:04d}_all.xyz".format(time_idx)), pointcloud=pcd)
+    
+    return psnr, rmse, depth_l1, ssim, lpips_score, pca
 

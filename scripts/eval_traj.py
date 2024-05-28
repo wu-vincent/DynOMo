@@ -36,9 +36,13 @@ if __name__ == "__main__":
         experiment.config["workdir"], experiment.config["run_name"]
     )
 
-    metrics = eval_traj(experiment.config, results_dir=results_dir, vis_trajs=experiment.config['viz']['vis_tracked'])
+    metrics = eval_traj(
+        experiment.config,
+        results_dir=results_dir,
+        vis_trajs=experiment.config['viz']['vis_tracked'],
+        load_gaussian_tracks=False)
     print(metrics)
-    if experiment.config['viz']['vis_grid']:
+    if False: #experiment.config['viz']['vis_grid']:
         vis_grid_trajs(
             experiment.config,
             params=None,

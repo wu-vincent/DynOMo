@@ -1,9 +1,5 @@
 from datasets.gradslam_datasets import (
     load_dataset_config,
-    ReplicaDataset,
-    DynoSplatamDataset,
-    SyntheticDynoSplatamDataset,
-    PointOdysseeDynoSplatamDataset,
     DavisDynoSplatamDataset,
     JonoDynoSplatamDataset,
     datautils
@@ -17,15 +13,7 @@ import numpy as np
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
-    if config_dict["dataset_name"].lower() in ["replica"]:
-        return ReplicaDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["dynosplatam"]:
-        return DynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["synthetic"]:
-        return SyntheticDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["pointodyssee"]:
-        return PointOdysseeDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["davis"]:
+    if config_dict["dataset_name"].lower() in ["davis"]:
         return DavisDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
         return JonoDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
@@ -66,7 +54,8 @@ def get_data(config):
         use_train_split=dataset_config["use_train_split"],
         load_embeddings=dataset_config["load_embeddings"],
         embedding_dim=dataset_config["embedding_dim"],
-        get_pc_jono=dataset_config["get_pc_jono"])
+        get_pc_jono=dataset_config["get_pc_jono"],
+        jono_depth=dataset_config["jono_depth"],)
 
     return dataset
 
@@ -103,7 +92,7 @@ def get_cam_data(config, orig_image_size=False):
 
 
 def load_davis_all(in_torch=False):
-    with open('data/tapvid_davis/tapvid_davis.pkl', 'rb') as jf:
+    with open('/scratch/jseidens/data/tapvid_davis/tapvid_davis.pkl', 'rb') as jf:
         gt = pickle.load(jf)
     if in_torch:
         gt = {seq: {k: torch.from_numpy(v) for k, v in data.items()} for seq, data in gt.items()}
@@ -115,7 +104,7 @@ def load_davis(sequence, in_torch=False):
 
 
 def load_jono_all(cam_id, in_torch=False):
-    path = 'data/data/annotations/traj_tap_vid_format_gs_{:04d}.pickle'.format(int(cam_id))
+    path = '/scratch/jseidens/data/data/annotations/traj_tap_vid_format_gs_{:04d}.pickle'.format(int(cam_id))
     with open(path, 'rb') as pf:
         gt = pickle.load(pf)
     if in_torch:
@@ -139,10 +128,28 @@ def get_gt_traj(config, in_torch=False):
 
 
 def load_scene_data(config, results_dir, device="cuda:0"):
-    params = dict(np.load(f"{results_dir}/params.npz"))
-    params = {k: torch.tensor(v).to(device).float() for k, v in params.items()}
-    return params, params['timestep'], params['intrinsics'], params['w2c']
+    params = dict(np.load(f"{results_dir}/params.npz", allow_pickle=True))
+    _params = dict()
+    for k, v in params.items():
+        if (v != np.array(None)).all():
+            _params[k] = torch.tensor(v).to(device).float()
+        else:
+            _params[k] = None
+    params = _params
+    if "timestep" in params.keys():
+        return params, params['timestep'], params['intrinsics'], params['w2c']
+    else:
+        params['means3D'] = params['means3D'].permute(1, 2, 0)[:, :, 2:]
+        params['unnorm_rotations'] = params['unnorm_rotations'].permute(1, 2, 0)[:, :, 2:]
+        params['bg'] = params['seg_colors'][:, 2]
+        params['rgb_colors'] = params['rgb_colors'].permute(1, 2, 0)[:, :, 0]
+        params['timestep'] = torch.zeros(params['means3D'].shape[0])
+        cam_rots = np.tile([1, 0, 0, 0], (1, 1))
+        cam_rots = torch.from_numpy(np.tile(cam_rots[:, :, None], (1, 1, params['means3D'].shape[2])))
+        params['cam_unnorm_rots'] = cam_rots.to(params['means3D'].device).float()
+        params['cam_trans'] = torch.from_numpy(np.zeros((1, 3, params['means3D'].shape[2]))).to(params['means3D'].device).float()
 
+        return params, None, None, None
 
 def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, rounded=True):
     data = get_gt_traj(config, in_torch)
@@ -157,7 +164,14 @@ def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, 
         if w is None:
             print("please give h and w if start pixels should be unnormalized!!")
             quit()
-        start_pix[:, 0] = (start_pix[:, 0] * w) - 1
-        start_pix[:, 1] = (start_pix[:, 1] * h) - 1
-        start_pix = torch.round(start_pix).long()
+        if 'jono' in config['data']["gradslam_data_cfg"]:
+            start_pix[:, 0] = (start_pix[:, 0] * w)
+            start_pix[:, 1] = (start_pix[:, 1] * h)
+        else:
+            start_pix[:, 0] = (start_pix[:, 0] * w) - 1
+            start_pix[:, 1] = (start_pix[:, 1] * h) - 1
+
+        if rounded:
+            start_pix = torch.round(start_pix).long()
+
     return start_pix
