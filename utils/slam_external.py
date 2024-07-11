@@ -174,11 +174,13 @@ def remove_points(
             params[k] = group["params"][0]
 
     # mask variables
+    if 'offset_0' in variables.keys() and variables['offset_0'] is not None:
+        variables['offset_0'] = variables['offset_0'][to_keep_idx_mask[variables['timestep'][variables['self_indices']] < variables['timestep'].max()]]
+    
     variables['means2D_gradient_accum'] = variables['means2D_gradient_accum'][to_keep]
     variables['denom'] = variables['denom'][to_keep]
     variables['max_2D_radius'] = variables['max_2D_radius'][to_keep]
     variables['seen'] = variables['seen'][to_keep]
-    variables['moving'] = variables['moving'][to_keep]
     
     if 'means2D_grad' in variables.keys():
         variables['means2D_grad'] = variables['means2D_grad'][to_keep]
@@ -215,8 +217,6 @@ def remove_points(
     variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
     # mask offset_0 and support trajs
-    if 'offset_0' in variables.keys() and variables['offset_0'] is not None:
-        variables['offset_0'] = variables['offset_0'][to_keep_idx_mask]
     if support_trajs_trans is not None:
         if len(support_trajs_trans.shape) == 3:
             time_window = support_trajs_trans.shape[0]

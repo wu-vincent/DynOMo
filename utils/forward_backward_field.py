@@ -1,6 +1,96 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+from utils.slam_external import build_rotation
+
+
+class TemporalEncoding(torch.nn.Module):
+    def __init__(self, d_model=52, max_time=5000, device="cuda:0"):
+        super(TemporalEncoding, self).__init__()
+        
+        # Create a long enough `time_encoding` matrix
+        time_encoding = torch.zeros((max_time, d_model), device=device)
+        
+        for time in range(max_time):
+            for i in range(0, d_model, 2):
+                time_encoding[time, i] = np.sin(time / (max_time ** ((2 * i)/d_model)))
+                if i + 1 < d_model:
+                    time_encoding[time, i + 1] = np.cos(time / (max_time ** ((2 * i)/d_model)))
+        
+        self.register_buffer('time_encoding', time_encoding)
+
+    def forward(self, time):
+        return self.time_encoding[time, :]
+
+
+class TransformationMLP(torch.nn.Module):
+    def __init__(
+        self,
+        device="cuda:0",
+        num_basis_transformations=10,
+        h_dim=256,
+        in_dim=52,
+        max_time=50000
+        ):
+        super().__init__()
+        self.MLP = torch.nn.Sequential(
+                torch.nn.Linear(in_dim, h_dim),
+                torch.nn.Linear(h_dim, h_dim),
+                torch.nn.Linear(h_dim, h_dim)
+            ).to(device)
+        self.num_basis_transformations = num_basis_transformations
+        self.rotation_head = torch.nn.Linear(h_dim, 4*num_basis_transformations).to(device)
+        self.translation_head = torch.nn.Linear(h_dim, 3*num_basis_transformations).to(device)
+        self.temporal_encoding = TemporalEncoding(max_time=max_time).to(device)
+        self.coefficients = None
+        self.device = device
+    
+    def init_new_time(self, num_gaussians):
+        coefficients = torch.ones(num_gaussians, self.num_basis_transformations, 1)
+        if self.coefficients is not None:
+            coefficients[:self.coefficients.shape[0]] = self.coefficients.detach().clone()
+        self.coefficients = torch.nn.Parameter(coefficients.to(self.device).float().contiguous().requires_grad_(True))
+
+    def forward(self, means3D, unnorm_rotations, time_idx):
+        x = self.MLP(self.temporal_encoding(time_idx))
+        translations = self.translation_head(x).reshape(self.num_basis_transformations, 3)
+        rotations = self.rotation_head(x).reshape(self.num_basis_transformations, 4)
+
+        means3D = means3D + (self.coefficients.repeat(1, 1, 3) * translations).sum(dim=1)
+        unnorm_rotations = unnorm_rotations + (self.coefficients.repeat(1, 1, 4) * rotations).sum(dim=1)
+        return means3D, unnorm_rotations, self.coefficients
+
+
+class BaseTransformations(torch.nn.Module):
+    def __init__(
+        self,
+        device="cuda:0",
+        num_basis_transformations=10,
+        ):
+        super().__init__()
+        self.num_basis_transformations = num_basis_transformations
+        self.device = device
+        rotations = torch.zeros((num_basis_transformations, 4))
+        rotations[:, 0] = 1
+        self.rotations = torch.nn.Parameter(rotations.to(device).float().contiguous().requires_grad_(True))
+        translations = torch.zeros((num_basis_transformations, 3))
+        self.translations = torch.nn.Parameter(translations.to(device).float().contiguous().requires_grad_(True))
+        self.coefficients = None
+    
+    def init_new_time(self, num_gaussians):
+        coefficients = torch.ones(num_gaussians, self.num_basis_transformations, 1)
+        if self.coefficients is not None:
+            coefficients[:self.coefficients.shape[0]] = self.coefficients.detach().clone()
+        self.coefficients = torch.nn.Parameter(coefficients.to(self.device).float().contiguous().requires_grad_(True))
+
+    def forward(self, means3D, unnorm_rotations, time_idx=None, transform_means_only=False):
+        if transform_means_only:
+            rot_mats = build_rotation((self.coefficients.repeat(1, 1, 4) * self.rotations).sum(dim=1)).squeeze()
+            means3D = torch.bmm(rot_mats, means3D.unsqueeze(2)).squeeze() + (self.coefficients.repeat(1, 1, 3) * self.translations).sum(dim=1)
+        else:
+            means3D = means3D + (self.coefficients.repeat(1, 1, 3) * self.translations).sum(dim=1)
+            unnorm_rotations = unnorm_rotations + (self.coefficients.repeat(1, 1, 4) * self.rotations).sum(dim=1)
+        return means3D, unnorm_rotations, self.coefficients
 
 
 class MotionMLP(torch.nn.Module):

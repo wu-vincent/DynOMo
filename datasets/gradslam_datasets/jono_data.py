@@ -30,6 +30,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         embedding_dim: Optional[int] = 64,
         get_pc_jono=False,
         jono_depth=False,
+        feats_224=False,
         **kwargs,
     ):
         start = start + 2
@@ -40,6 +41,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         self.input_folder = os.path.join(basedir, sequence)
         self.sequence = sequence
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
+        self.feats_224 = feats_224
         super().__init__(config_dict,
             stride=stride,
             start=start,
@@ -100,13 +102,13 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
             # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*gs_*.npy"))
             # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img.npy"))
             # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img_quat.npy"))
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat.npy"))
-            if len(embedding_paths) != len(color_paths):
-                print("Using DINO 4/1 features")
-                if os.path.isfile(f"{self.input_folder.replace('ims', 'feats')}/000000dino_img_quat_4_1_64.npy"):
-                    embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1_64.npy"))
-                else:
-                    embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))
+            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat.npy"))
+            
+            print("Using DINO 4/1 features")
+            if os.path.isfile(f"{self.input_folder.replace('ims', 'feats')}/000000dino_img_quat_4_1_64.npy"):
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1_64.npy"))
+            else:
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))
 
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:

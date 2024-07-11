@@ -28,6 +28,12 @@ import mediapy as media
 import numpy as np
 import os
 from matplotlib.collections import LineCollection
+import imageio
+from matplotlib import cm
+import cv2
+
+
+color_map = cm.get_cmap("jet")
 
 
 # Generate random colormaps for visualizing different points.
@@ -757,12 +763,80 @@ def plot_tracks_tails(
     return np.stack(disp, axis=0)
 
 
-def vis_tracked_points(results_dir, data):
+def vis_tracked_points(results_dir, data, clip=True, pred_visibility=None, traj_len=10):
     """
     Takes points in normalized form
     """
-    traj_len = 10
+    points = data['points'] # N x T x 2
+    if points.sum   () == 0:
+        points = data['points_projected']
+    N, T, _ = points.shape
+    rgb = data['video'][:T] # T x 480 x 854 x 3
+    h, w, _ = rgb[0].shape
+    occluded = data['occluded'][:, :T]
+    occluded = 1 - occluded
 
+    scale_factor = np.array([w, h])
+    points = points * scale_factor
+    os.makedirs(results_dir, exist_ok=True)
+
+    disp = list()
+    # pad with zeros
+    for time, img in enumerate(rgb):
+        fig, ax = plt.subplots()
+        ax.imshow(img / 255.0)
+        from_time = max(0, time-traj_len)
+        for i in range(points.shape[0]):
+            if pred_visibility is not None and pred_visibility[i, time] == 0:
+                facecolors = 'none'
+            else:
+                facecolors = 'red'
+
+            if clip:
+                plt.scatter(np.clip(points[i, time, 0], a_min=0, a_max=w-1), np.clip(points[i, time, 1], a_min=0, a_max=h-1), edgecolors='red', s=6, facecolors=facecolors)
+                x = np.clip(points[i, from_time:time+1, 0], a_min=0, a_max=w-1)
+                y = np.clip(points[i, from_time:time+1, 1], a_min=0, a_max=h-1)
+            else:
+                plt.scatter(points[i, time, 0], points[i, time, 1], edgecolors='red', s=6, facecolors=facecolors)
+                x = points[i, from_time:time+1, 0]
+                y = points[i, from_time:time+1, 1]
+            
+            if traj_len > 0:
+                color_len = np.arange(traj_len-1)
+                pts = np.array([x, y]).T.reshape(-1, 1, 2)
+                segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+
+                # Create a continuous norm to map from data points to colors
+                norm = plt.Normalize(color_len.min(), color_len.max())
+                lc = LineCollection(segments, cmap='hsv', norm=norm)
+                # Set the values used for colormapping
+                lc.set_array(color_len)
+                lc.set_linewidth(1)
+                line = ax.add_collection(lc)
+
+        plt.axis('off')
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.margins(0, 0)
+        fig.canvas.draw()
+        width, height = fig.get_size_inches() * fig.get_dpi()
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8').reshape(
+            int(height), int(width), 3
+        )
+        disp.append(np.copy(img))
+
+        # plt.savefig(os.path.join(results_dir, "gs_{:04d}.png".format(time)), bbox_inches='tight', pad_inches = 0)
+        plt.close(fig)
+    
+    np.stack(disp, axis=0)
+    imageio.mimwrite(os.path.join(results_dir, 'vid.mp4'), disp, quality=8, fps=10)
+
+
+def vis_trail(results_dir, data, clip=True, pred_visibility=None):
+    """
+    This function calculates the median motion of the background, which is subsequently
+    subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
+    improves the interpretability of the foreground motion trails.
+    """
     points = data['points'] # N x T x 2
     if points.sum() == 0:
         points = data['points_projected']
@@ -774,38 +848,53 @@ def vis_tracked_points(results_dir, data):
 
     scale_factor = np.array([w, h])
     points = points * scale_factor
-    # painted_frames = plot_tracks_v2(
-    #         rgb,
-    #         points,
-    #         occluded,
-    #         point_size=2)
-    # print("point_size", 2)
     os.makedirs(results_dir, exist_ok=True)
+    
+    pred_visibility = pred_visibility.transpose(1, 0)
+    points = points.transpose(1, 0, 2)
+    num_imgs, num_pts = points.shape[:2] # T x N x 2
 
-    # pad with zeros
-    for time, img in enumerate(rgb):
-        fig, ax = plt.subplots()
-        ax.imshow(img / 255.0)
-        from_time = max(0, time-traj_len)
-        for i in range(points.shape[0]):
-            plt.scatter(points[i, time, 0], points[i, time, 1], c='red', s=2)
-            x = np.clip(points[i, from_time:time+1, 0], a_min=0, a_max=w-1)
-            y = np.clip(points[i, from_time:time+1, 1], a_min=0, a_max=h-1)
-            # if time > 2:
-            #     poly = np.polynomial.polynomial.Polynomial.fit(x, y, deg=min(time, 3))
-            #     y = poly(y)
-            color_len = np.arange(traj_len-1)
-            pts = np.array([x, y]).T.reshape(-1, 1, 2)
-            segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    frames = []
 
-            # Create a continuous norm to map from data points to colors
-            norm = plt.Normalize(color_len.min(), color_len.max())
-            lc = LineCollection(segments, cmap='hsv', norm=norm)
-            # Set the values used for colormapping
-            lc.set_array(color_len)
-            lc.set_linewidth(1)
-            line = ax.add_collection(lc)
+    for i in range(num_imgs):
 
-        plt.axis('off')
-        plt.savefig(os.path.join(results_dir, "gs_{:04d}.png".format(time)), bbox_inches='tight', pad_inches = 0)
-        plt.close(fig)
+        # kpts = kpts_foreground - np.median(kpts_background - kpts_background[i], axis=1, keepdims=True)
+
+        img_curr = rgb[i]
+
+        for t in range(i):
+
+            img1 = img_curr.copy()
+            # changing opacity
+            alpha = max(1 - 0.9 * ((i - t) / ((i + 1) * .99)), 0.1)
+
+            for j in range(num_pts):
+
+                color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
+
+                color_alpha = 1
+
+                hsv = colorsys.rgb_to_hsv(color[0], color[1], color[2])
+                color = colorsys.hsv_to_rgb(hsv[0], hsv[1]*color_alpha, hsv[2])
+
+                pt1 = points[t, j]
+                pt2 = points[t+1, j]
+                p1 = (int(round(pt1[0])), int(round(pt1[1])))
+                p2 = (int(round(pt2[0])), int(round(pt2[1])))
+                if p2[0] > 10000 or p2[1] > 10000:
+                    continue
+                cv2.line(img1, p1, p2, color, thickness=1, lineType=16)
+
+            img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
+
+        for j in range(num_pts):
+            color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
+            pt1 = points[i, j]
+            p1 = (int(round(pt1[0])), int(round(pt1[1])))
+            if p1[0] > 10000 or p1[1] > 10000:
+                    continue
+            cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
+
+        frames.append(img_curr)
+
+    imageio.mimwrite(os.path.join(results_dir, 'vid_trails.mp4'), frames, quality=8, fps=10)

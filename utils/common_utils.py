@@ -32,17 +32,20 @@ def params2cpu(params):
     return res
 
 
-def save_params(output_params, output_dir):
+def save_params(output_params, output_dir, time_idx=0, end_frame=0, keep_all=False):
     # Convert to CPU Numpy Arrays
     to_save = params2cpu(output_params)
     # Save the Parameters containing the Gaussian Trajectories
     os.makedirs(output_dir, exist_ok=True)
     print(f"Saving parameters to: {output_dir}")
-    save_path = os.path.join(output_dir, "params.npz")
+    if keep_all:
+        save_path = os.path.join(output_dir, "params_{:04d}_{:04d}.npz".format(time_idx, end_frame))
+    else:
+        save_path = os.path.join(output_dir, "params.npz")
     np.savez(save_path, **to_save)
 
 
-def save_params_ckpt(output_params, output_variables, output_dir, time_idx):
+def save_params_ckpt(output_params, output_variables, output_dir, time_idx, keep_all=False):
     output_variables['last_time_idx'] = torch.tensor(time_idx)
     for name, param in zip(["params", "variables"], [output_params, output_variables]):
         # Convert to CPU Numpy Arrays
@@ -50,7 +53,10 @@ def save_params_ckpt(output_params, output_variables, output_dir, time_idx):
         # Save the Parameters containing the Gaussian Trajectories
         os.makedirs(output_dir, exist_ok=True)
         print(f"Saving parameters to: {output_dir}")
-        save_path = os.path.join(output_dir, f"temp_{name}.npz")
+        if keep_all:
+            save_path = os.path.join(output_dir, f"temp_{name}_{time_idx}.npz")
+        else:
+            save_path = os.path.join(output_dir, f"temp_{name}.npz")
         np.savez(save_path, **to_save)
 
 

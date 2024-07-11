@@ -3,6 +3,8 @@ import faiss.contrib.torch_utils
 import torch
 import open3d as o3d
 import numpy as np
+import networkx as nx
+import matplotlib.pyplot as plt
 
 
 def o3d_knn(pts, num_knn):
@@ -64,7 +66,8 @@ def calculate_neighbors_seg_after_init(
         use_old_and_new=True,
         inflate=2,
         l2_thresh=0.5,
-        primary_device="cuda:0"):
+        primary_device="cuda:0",
+        exp_weight=2000):
     
     if time_idx != 0:
         new_params = dict()
@@ -95,7 +98,8 @@ def calculate_neighbors_seg_after_init(
             use_old_and_new=use_old_and_new,
             inflate=inflate,
             l2_thresh=l2_thresh,
-            primary_device=primary_device)
+            primary_device=primary_device,
+            exp_weight=exp_weight)
 
     if time_idx != 0:
         variables['self_indices'] = torch.cat((variables['self_indices'], new_variables['self_indices']), dim=0)
@@ -105,7 +109,7 @@ def calculate_neighbors_seg_after_init(
         variables['neighbor_dist'] = torch.cat((variables['neighbor_dist'], new_variables['neighbor_dist']), dim=0)
     else:
         variables.update(new_variables)
-
+    
     return variables, to_remove          
 
 
@@ -121,7 +125,8 @@ def calculate_neighbors_seg(
         use_old_and_new=True,
         inflate=2,
         l2_thresh=0.5,
-        primary_device="cuda:0"):
+        primary_device="cuda:0",
+        exp_weight=2000):
     
     embeddings_in_params = 'embeddings' in params.keys()
     device = params['means3D'].device
@@ -204,9 +209,10 @@ def calculate_neighbors_seg(
         if dist_to_use == 'l2':
             neighbor_dist = neighbor_dist[:, 1:num_knn+1]
             neighbor_indices = neighbor_indices[:, 1:num_knn+1]
+            neighbor_weight = torch.exp(-exp_weight * torch.square(neighbor_dist))
         elif dist_to_use == 'rgb' or dist_to_use == 'embeddings':
             # get rbg distance from nearest neighbors in l2
-            neighbor_indices = neighbor_indices[:, 1:]
+            neighbor_indices = neighbor_indices[:, :-1]
             q_idx = torch.tile(
                 torch.arange(neighbor_indices.shape[0]).unsqueeze(1),
                 (1, int(inflate*num_knn))).flatten()
@@ -216,11 +222,21 @@ def calculate_neighbors_seg(
                         k_colors.float()[neighbor_indices.flatten(), :].unsqueeze(1)
                     ).squeeze()
             else:
-                neighbor_dist = torch.cdist(
-                        q_embeddings.float()[q_idx, :].unsqueeze(1),
-                        k_embeddings.float()[neighbor_indices.flatten(), :].unsqueeze(1)
-                    ).squeeze()
-            neighbor_dist = neighbor_dist.reshape(neighbor_indices.shape[0], -1)
+                # cosine
+                neighbor_dist = torch.nn.functional.cosine_similarity(
+                    q_embeddings.float()[q_idx, :],
+                    k_embeddings.float()[neighbor_indices.flatten(), :],
+                    dim=1)
+                neighbor_dist = (neighbor_dist + 1)/2
+                neighbor_dist = 1 - neighbor_dist
+                # neighbor_dist = torch.cdist(
+                #         q_embeddings.float()[q_idx, :].unsqueeze(1),
+                #         k_embeddings.float()[neighbor_indices.flatten(), :].unsqueeze(1)
+                #     ).squeeze()
+                # use cosine distance (between 0 and 2)
+                # l2(x,y)**2 = 2-2cos(x,y)
+                # neighbor_dist = 1 - torch.pow(neighbor_dist, exponent=2)/2
+                neighbor_dist = neighbor_dist.reshape(neighbor_indices.shape[0], -1)
 
             # sort rgb neighbot distance and re-index to get closest points in 
             # wrt rgb within closest points in l2
@@ -230,7 +246,8 @@ def calculate_neighbors_seg(
             neighbor_indices = neighbor_indices[
                 q_idx, idx.flatten()].squeeze().reshape(q_colors.shape[0], num_knn)
             neighbor_dist = neighbor_dist.values[:, :num_knn]
-            # quit()
+            neighbor_weight = 1 - neighbor_dist
+            # neighbor_weight = torch.exp(-exp_weight * torch.square(neighbor_dist))
 
         if existing_params is not None:
             num_samps = neighbor_indices.shape[0]
@@ -259,7 +276,7 @@ def calculate_neighbors_seg(
     variables["neighbor_weight_sm"] = weight_sm.flatten().float().contiguous()[non_neighbor_mask]
     variables["neighbor_dist"] = dist.flatten().float().contiguous()[non_neighbor_mask]
     variables["self_indices"] = variables["self_indices"][non_neighbor_mask]
-    
+
     return variables, to_remove
 
 

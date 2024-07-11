@@ -57,17 +57,21 @@ if __name__ == "__main__":
     experiment = SourceFileLoader(os.path.basename(args.config), args.config).load_module()
     config = experiment.config
     work_path = config['workdir']
-    run_name = config['run_name']
+    run_name = "splatam_motocross-jump/splatam_motocross-jump_0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_0.1_True_False_False_True_True_2_1_5_1_aniso"
     params_path = os.path.join(work_path, run_name, "params.npz")
     os.makedirs(os.path.join(work_path, run_name, 'splats'), exist_ok=True)
 
-    for timestamp in range(config['data']['num_frames']):
-        params = dict(np.load(params_path, allow_pickle=True))
+    params = dict(np.load(params_path, allow_pickle=True))
+    for timestamp in range(params['means3D'].shape[2]):
+        if timestamp != 30:
+            continue
+        print(params['rgb_colors'].shape, params['log_scales'].shape)
         means = params['means3D'][:, :, timestamp]
-        scales = params['log_scales']
+        scales = params['log_scales'][:, timestamp, :]
         rotations = params['unnorm_rotations'][:, :, timestamp]
-        rgbs = params['rgb_colors']
+        rgbs = params['rgb_colors'][:, :, timestamp]
         opacities = params['logit_opacities']
 
         ply_path = os.path.join(work_path, run_name, 'splats', f"splat_{timestamp}.ply")
         save_ply(ply_path, means, scales, rotations, rgbs, opacities, timestamp=timestamp)
+        quit()

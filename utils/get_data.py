@@ -55,7 +55,8 @@ def get_data(config):
         load_embeddings=dataset_config["load_embeddings"],
         embedding_dim=dataset_config["embedding_dim"],
         get_pc_jono=dataset_config["get_pc_jono"],
-        jono_depth=dataset_config["jono_depth"],)
+        jono_depth=dataset_config["jono_depth"],
+        feats_224=dataset_config['feats_224'])
 
     return dataset
 
@@ -127,8 +128,11 @@ def get_gt_traj(config, in_torch=False):
         return  load_jono(config["data"]["sequence"], in_torch)
 
 
-def load_scene_data(config, results_dir, device="cuda:0"):
-    params = dict(np.load(f"{results_dir}/params.npz", allow_pickle=True))
+def load_scene_data(config, results_dir, device="cuda:0", file=None):
+    if file is None:
+        params = dict(np.load(f"{results_dir}/params.npz", allow_pickle=True))
+    else:
+        params = dict(np.load(file, allow_pickle=True))
     _params = dict()
     for k, v in params.items():
         if (v != np.array(None)).all():

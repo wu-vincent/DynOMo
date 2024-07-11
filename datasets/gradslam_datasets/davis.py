@@ -29,10 +29,12 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
         embedding_dir: Optional[str] = "embeddings",
         embedding_dim: Optional[int] = 512,
         load_support_trajs=False,
+        feats_224=False,
         **kwargs,
     ):  
         with open('/scratch/jseidens/data/tapvid_davis/tapvid_davis.pkl', 'rb') as f:
             data = pickle.load(f)
+            print(data.keys())
             dat = data[sequence]
 
         rgbs = dat['video'] # list of H,W,C uint8 images
@@ -43,7 +45,8 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
         del rgbs
         # trajs = dat['points'] # N,S,2 array
         # valids = 1-dat['occluded'] # N,S array
-                
+        
+        self.feats_224 = feats_224
         self.input_folder = os.path.join(basedir, sequence)
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
         self.load_instseg = True
@@ -113,11 +116,13 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
     
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[self.start_frame:self.max_len]
-        print(self.start, self.max_len)
         depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'DEPTH')}/depth*.npy"))[self.start_frame:self.max_len]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'FEATS')}/*dino_img_quat_4_1.npy"))[self.start_frame:self.max_len]
+            if not self.feats_224:
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'FEATS')}/*dino_img_quat_4_1.npy"))[self.start_frame:self.max_len]
+            else:
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'FEATS')}/*dino_img_quat_4_2_64_224.npy"))[self.start_frame:self.max_len]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
