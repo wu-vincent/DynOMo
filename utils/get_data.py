@@ -157,6 +157,9 @@ def load_scene_data(config, results_dir, device="cuda:0", file=None):
 
 def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, rounded=True):
     data = get_gt_traj(config, in_torch)
+    data['points'] = data['points'][~data['occluded'][:, 0]]
+    data['occluded'] = data['occluded'][~data['occluded'][:, 0]]
+    
     if data['points'].sum() == 0:
         start_pix = data['points_projected'][:, 0, :]
     else:

@@ -150,12 +150,18 @@ def remove_points(
         params,
         variables,
         optimizer=None,
-        support_trajs_trans=None):
+        support_trajs_trans=None,
+        time_idx=0,
+        means2d=None):
     to_keep = ~to_remove
     idxs_to_keep = torch.arange(params['means3D'].shape[0])[to_keep].to(
         variables['self_indices'].device)
     to_keep_idx_mask = torch.isin(variables['self_indices'], idxs_to_keep) 
     to_keep_idx_mask = to_keep_idx_mask & torch.isin(variables['neighbor_indices'], idxs_to_keep)
+    prev_time = variables['timestep'] < time_idx
+
+    num_gaussians = params['means3D'].shape[0]
+    num_gaussians_prev = params['means3D'][prev_time].shape[0]
 
     # mask parameters
     for k in [k for k in params.keys() if k not in ['cam_unnorm_rots', 'cam_trans']]:
@@ -173,42 +179,19 @@ def remove_points(
             group["params"][0] = torch.nn.Parameter(group["params"][0][to_keep].requires_grad_(True))
             params[k] = group["params"][0]
 
-    # mask variables
-    if 'offset_0' in variables.keys() and variables['offset_0'] is not None:
-        variables['offset_0'] = variables['offset_0'][to_keep_idx_mask[variables['timestep'][variables['self_indices']] < variables['timestep'].max()]]
-    
-    variables['means2D_gradient_accum'] = variables['means2D_gradient_accum'][to_keep]
-    variables['denom'] = variables['denom'][to_keep]
-    variables['max_2D_radius'] = variables['max_2D_radius'][to_keep]
-    variables['seen'] = variables['seen'][to_keep]
-    
-    if 'means2D_grad' in variables.keys():
-        variables['means2D_grad'] = variables['means2D_grad'][to_keep]
-    if 'means2D' in variables.keys():
-        variables['means2D'] = variables['means2D'][to_keep]
-    if 'instseg' in variables.keys():
-        variables['instseg'] = variables['instseg'][to_keep]
-    if 'timestep' in variables.keys():
-        variables['timestep'] = variables['timestep'][to_keep]
-    if 'bg' in variables.keys():
-        variables['bg'] = variables['bg'][to_keep]
-    if 'visibility' in variables.keys():
-        variables['visibility'] = variables['visibility'][to_keep]
-    if 'prev_bg' in variables.keys():
-        variables['prev_bg'] = variables['prev_bg'][to_keep]
-    if 'prev_embeddings' in variables.keys():
-        variables['prev_embeddings'] = variables['prev_embeddings'][to_keep]
-    if 'prev_scales' in variables.keys():
-        variables['prev_scales'] = variables['prev_scales'][to_keep]
-    if 'prev_rgb' in variables.keys():
-        variables['prev_rgb'] = variables['prev_rgb'][to_keep]
-    
-    # mask kNN and map indices to new indices
-    variables['neighbor_indices'] = variables['neighbor_indices'][to_keep_idx_mask]
-    variables['neighbor_weight'] = variables['neighbor_weight'][to_keep_idx_mask]
-    variables['neighbor_weight_sm'] = variables['neighbor_weight_sm'][to_keep_idx_mask]
-    variables['neighbor_dist'] = variables['neighbor_dist'][to_keep_idx_mask]
-    variables['self_indices'] = variables['self_indices'][to_keep_idx_mask]
+    for k, v in variables.items():
+        if k in ['scene_radius', 'last_time_idx'] or v is None:
+            continue
+        # mask variables
+        if k == 'offset_0' and variables['offset_0'] is not None:
+            variables['offset_0'] = variables['offset_0'][to_keep_idx_mask]
+            variables[k] = v[to_keep_idx_mask].contiguous()
+        elif v.shape[0] == num_gaussians:
+            variables[k] = v[to_keep].contiguous()
+        elif v.shape[0] == num_gaussians_prev:
+            variables[k] = v[to_keep[prev_time]].contiguous()
+        elif v.shape[0] == to_keep_idx_mask.shape[0]:
+            variables[k] = v[to_keep_idx_mask].contiguous()
 
     mapping_tensor = torch.zeros(idxs_to_keep.max().item() + 1).long().to(idxs_to_keep.device)
     mapping_tensor[idxs_to_keep] = torch.arange(idxs_to_keep.shape[0]).long().to(idxs_to_keep.device)
@@ -216,17 +199,16 @@ def remove_points(
     variables['neighbor_indices'] = mapping_tensor[variables['neighbor_indices']]
     variables['self_indices'] = mapping_tensor[variables['self_indices']]
 
-    # mask offset_0 and support trajs
-    if support_trajs_trans is not None:
-        if len(support_trajs_trans.shape) == 3:
-            time_window = support_trajs_trans.shape[0]
-            to_keep_flat = to_keep.unsqueeze(0).repeat((time_window, 1)).flatten(0, 1)
-            support_trajs_trans = support_trajs_trans.flatten(0, 1)[to_keep_flat]
-            support_trajs_trans = support_trajs_trans.reshape((time_window, -1, support_trajs_trans.shape[1]))
-        else:
-            support_trajs_trans = support_trajs_trans[to_keep]
+    means2d = maybe_remove(means2d, to_keep)
 
-    return params, variables, support_trajs_trans
+    return params, variables, support_trajs_trans, means2d
+
+
+def maybe_remove(tensor, to_keep_mask):
+    if tensor is not None:
+        return tensor[to_keep_mask]
+    else:
+        return tensor
 
 
 def inverse_sigmoid(x):
@@ -240,7 +222,8 @@ def prune_gaussians(
         iter,
         prune_dict,
         curr_time_idx,
-        support_trajs_trans):
+        support_trajs_trans,
+        means2d):
     variables['means2D_grad'] = variables['means2D'].grad
     if iter <= prune_dict['stop_after']:
         if (iter >= prune_dict['start_after']) and (iter % prune_dict['prune_every'] == 0):
@@ -250,6 +233,7 @@ def prune_gaussians(
                 remove_threshold = prune_dict['removal_opacity_threshold']
             # Remove Gaussians with low opacity
             to_remove = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
+            opa_remove_sum = to_remove.sum()
 
             # Remove Gaussians with large kNN dist
             # recompute kNN distance
@@ -265,29 +249,33 @@ def prune_gaussians(
 
                 rel_drift = torch.abs(offset_t_mag-offset_0_mag) / offset_0_mag
                 drift = rel_drift > prune_dict['kNN_rel_drift']
-                to_remove = torch.logical_or(to_remove, drift)
+                to_remove[variables['timestep']<curr_time_idx] = torch.logical_or(
+                    to_remove[variables['timestep']<curr_time_idx],
+                    drift)
 
             # Remove Gaussians that are too big
             if iter >= prune_dict['remove_big_after']:
                 big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
                 to_remove = torch.logical_or(to_remove, big_points_ws)
             if to_remove.sum():
-                params, variables, support_trajs_trans = remove_points(
+                params, variables, support_trajs_trans, means2d = remove_points(
                     to_remove,
                     params,
                     variables,
                     optimizer,
-                    support_trajs_trans)
+                    support_trajs_trans,
+                    time_idx=curr_time_idx,
+                    means2d=means2d
+                    )
             torch.cuda.empty_cache()
-        
-            print(f'Removed {to_remove.sum()} Gaussians during pruning at Iteration {iter}!')
+            print(f'Removed {to_remove.sum()} Gaussians during pruning at Iteration {iter} - {opa_remove_sum} by opacity, {drift.sum()} because of drift, {big_points_ws.sum()} because of scale!')
         
         # Reset Opacities for all Gaussians
         if iter > 0 and iter % prune_dict['reset_opacities_every'] == 0 and prune_dict['reset_opacities']:
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
     
-    return params, variables, support_trajs_trans
+    return params, variables, support_trajs_trans, means2d
 
 def clone_vars(params, variables, to_clone):
     device = variables['self_indices'].device
@@ -356,7 +344,7 @@ def split_vars(params, variables, to_split, n):
     return variables
 
 
-def densify(params, variables, optimizer, iter, densify_dict, time_idx):
+def densify(params, variables, optimizer, iter, densify_dict, time_idx, means2d):
     device = params['means3D'].device
     if iter <= densify_dict['stop_after']:
         variables = accumulate_mean2d_gradient(variables, time_idx)
@@ -448,7 +436,7 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
                 big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
                 to_remove = torch.logical_or(to_remove, big_points_ws)
             if to_remove.sum():
-                params, variables = remove_points(to_remove, params, variables, optimizer)
+                params, variables, means2d = remove_points(to_remove, params, variables, optimizer, time_idx=time_idx, means2d=means2d)
             torch.cuda.empty_cache()
 
             print(f'Added {to_clone.sum()} Gaussians by cloning and {to_split.sum()} Gaussians by splitting during densification at Iteration {iter}!')
@@ -459,7 +447,7 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
         
-    return params, variables
+    return params, variables, means2d
 
 
 def update_learning_rate(optimizer, means3D_scheduler, iteration):

@@ -274,23 +274,34 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_
     else:
         log_scales = params['log_scales'][:, time_idx]
 
-    rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, time_idx]
-
     if log_scales.shape[1] == 1:
         log_scales = torch.tile(log_scales, (1, 3))
     else:
         log_scales = log_scales
 
+    # print(torch.histogram(log_scales[first_occurance==0].cpu(), bins=100, range=(-7, 5)))
+
+    rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, time_idx]
+
+    bg = (params['bg'] > -10000).squeeze()
+    # bg = (params['bg'] > 0.5).squeeze()
+    # print('scales', log_scales[~bg].max(), log_scales[~bg].min())
+    # print(torch.exp(log_scales[~bg]).max(dim=1).values.max())
+    # print('scales', log_scales[bg].max(), log_scales[bg].min())
+    # print(torch.exp(log_scales[bg]).max(dim=1).values.max())
+
+    # moving_mask = (log_scales < 0).any(dim=1)[bg]
+
     # Initialize Render Variables
     rendervar = {
-        'means3D': transformed_gaussians['means3D'],
-        'colors_precomp': params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, time_idx],
-        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
+        'means3D': transformed_gaussians['means3D'][bg],
+        'colors_precomp': rgb[bg],
+        'rotations': F.normalize(transformed_gaussians['unnorm_rotations'][bg]),
+        'opacities': torch.sigmoid(params['logit_opacities'][bg]),
+        'scales': torch.exp(log_scales[bg]),
+        'means2D': torch.zeros_like(transformed_gaussians['means3D'][bg], requires_grad=True, device=params['means3D'].device) + 0
     }
-    rendervar, time_mask =  mask_timestamp(rendervar, time_idx+time_window-1, first_occurance, moving_mask=None, active_gaussians_mask=active_gaussians_mask)
+    rendervar, time_mask =  mask_timestamp(rendervar, time_idx+time_window-1, first_occurance[bg], moving_mask=None, active_gaussians_mask=active_gaussians_mask)
     return rendervar, time_mask
 
 

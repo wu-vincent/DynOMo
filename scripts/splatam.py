@@ -766,8 +766,11 @@ class RBDG_SLAMMER():
         if config['loss_weights']['l1_embeddings'] and iter_time_idx > 0 and self.dataset.load_embeddings:
             losses['l1_embeddings'] = l1_loss_v1(params['embeddings'][variables['timestep']<iter_time_idx], variables['prev_embeddings'])
 
-        if config['loss_weights']['l1_scale'] and iter_time_idx > 0:
+        if config['loss_weights']['l1_scale'] != 0 and iter_time_idx > 0:
             losses['l1_scale'] = l1_loss_v1(params['log_scales'][variables['timestep']<iter_time_idx], variables['prev_scales'])
+            # bg_mask = (params['bg']>0.5).squeeze()
+            # time_mask = variables['timestep']<iter_time_idx
+            # losses['l1_scale'] = 20 * l1_loss_v1(params['log_scales'][bg_mask][time_mask[bg_mask]], variables['prev_scales'][bg_mask[time_mask]]) + l1_loss_v1(params['log_scales'][~bg_mask][time_mask[~bg_mask]], variables['prev_scales'][~bg_mask[time_mask]])
 
         # ADD DYNO LOSSES LIKE RIGIDITY
         # DYNO LOSSES
@@ -811,6 +814,13 @@ class RBDG_SLAMMER():
             if iter_time_idx-1 == 0 and iter == 0:
                 variables['offset_0'] = offset_0
             losses.update(dyno_losses_curr)
+        
+        if config['loss_weights']['smoothness'] != 0 and iter_time_idx > 1:
+            delta_0 = params['means3D'][:, :, iter_time_idx-1]-params['means3D'][:, :, iter_time_idx-2]
+            delta_1 = params['means3D'][:, :, iter_time_idx]-params['means3D'][:, :, iter_time_idx-1]
+            smoothness = torch.abs(delta_0-delta_1)
+            smoothness = smoothness[variables['timestep']<=iter_time_idx-2]
+            losses['smoothness'] = smoothness.mean()
         
         weighted_losses = {k: v * config['loss_weights'][k] for k, v in losses.items()}
         loss = sum(weighted_losses.values())
@@ -1623,9 +1633,7 @@ class RBDG_SLAMMER():
                     keyframe_time_indices)
 
             if time_idx == 0:
-                self.variables["scale_0"] = self.params["log_scales"]
-                if "embeddings" in self.params.keys():
-                    self.variables["embeddings_0"] = self.params["embeddings"]
+                pass
                 # pcd = o3d.geometry.PointCloud()
                 # v3d = o3d.utility.Vector3dVector
                 # cpu_pts = self.params['means3D'][:, :, 0].detach().clone().cpu().numpy()
@@ -1669,6 +1677,7 @@ class RBDG_SLAMMER():
                     get_embeddings=self.config['data']['load_embeddings'],
                     vis_gt=self.config['viz']['vis_gt'],
                     save_depth=self.config['viz']['vis_all'],
+                    rendered_instseg=self.config['viz']['vis_all'],
                     save_rendered_embeddings=self.config['viz']['vis_all'],)
 
         # Save Parameters
@@ -1794,10 +1803,6 @@ class RBDG_SLAMMER():
             self.params['rgb_colors'] = self.variables['rgb_colors']
         if 'log_scales' in self.variables.keys():
             self.params['log_scales'] = self.variables['log_scales']
-
-        self.params['scale_0'] = self.variables["scale_0"]
-        if 'embeddings_0' in self.variables.keys():
-            self.params['embeddings_0'] = self.variables["embeddings_0"]
         
         self.params['self_indices'] = self.variables['self_indices']
         self.params['neighbor_indices'] = self.variables['neighbor_indices']
@@ -1842,9 +1847,8 @@ class RBDG_SLAMMER():
         if self.config['use_wandb']:
             self.wandb_time_step += 1
 
-        torch.cuda.empty_cache()
-        gc.collect()
- 
+        # torch.cuda.empty_cache()
+        # gc.collect()
         if (time_idx < self.num_frames-1) and \
                 (self.config['neighbors_init'] == 'post' or \
                     ('first_post' in self.config['neighbors_init'] and time_idx == 0)):
@@ -1977,6 +1981,9 @@ class RBDG_SLAMMER():
                 for h in self.hook_list:
                     h.remove()
                 self.hook_list = list()
+            if time_idx == 0:
+                print(f"Turning off {to_turn_off}.")
+                
             for k, p in self.params.items():
                 if 'cam' in k:
                     continue
@@ -1989,6 +1996,7 @@ class RBDG_SLAMMER():
 
         last_loss = 1000
         early_stop_count = 0
+        early_stop_eval = False
         while iter <= num_iters_tracking:
             if not ((self.config['neighbors_init'] == 'post' or self.config['neighbors_init'] == 'first_post') and time_idx == 0):
                 if config['rgb_attention_embeddings'] and self.config['data']['load_embeddings']:
@@ -2010,7 +2018,7 @@ class RBDG_SLAMMER():
 
             iter_start_time = time.time()
             # Loss for current frame
-            loss, losses, self.variables, im, next_im, depth, next_depth, means2d, visible, weight = self.get_loss_dyno(
+            loss, losses, self.variables, _, _, _, _, means2d, visible, weight = self.get_loss_dyno(
                 self.params,
                 self.variables,
                 curr_data,
@@ -2035,27 +2043,28 @@ class RBDG_SLAMMER():
             with torch.no_grad():
                 # Prune Gaussians
                 if self.config['prune_densify']['prune_gaussians'] and time_idx > 0:
-                    self.params, self.variables, self.offset_0, self.support_trajs_trans = prune_gaussians(
+                    self.params, self.variables, self.support_trajs_trans, means2d = prune_gaussians(
                         self.params,
                         self.variables,
                         optimizer, 
                         iter,
                         self.config['prune_densify']['pruning_dict'],
                         time_idx,
-                        self.offset_0,
-                        self.support_trajs_trans)
+                        self.support_trajs_trans,
+                        means2d)
                     if self.config['use_wandb']:
                         self.wandb_run.log({"Tracking Object/Number of Gaussians - Pruning": self.params['means3D'].shape[0],
                                         "Mapping/step": self.wandb_mapping_step})
                 # Gaussian-Splatting's Gradient-based Densification
                 if self.config['prune_densify']['use_gaussian_splatting_densification']:
-                    self.params, self.variables = densify(
+                    self.params, self.variables, means2d = densify(
                         self.params,
                         self.variables,
                         optimizer,
                         iter,
                         self.config['prune_densify']['densify_dict'],
-                        time_idx)
+                        time_idx,
+                        means2d)
                     if self.config['use_wandb']:
                         self.wandb_run.log({"Tracking Object/Number of Gaussians - Densification": self.params['means3D'].shape[0],
                                         "Tracking Object/step": self.wandb_mapping_step})
@@ -2089,22 +2098,25 @@ class RBDG_SLAMMER():
                 if abs(last_loss - loss.detach().clone().item()) < early_stop_thresh:
                     early_stop_count += 1
                     if early_stop_count == early_stop_time_thresh:
-                        self.get_loss_dyno(
-                                self.params,
-                                self.variables,
-                                curr_data,
-                                time_idx,
-                                num_iters=num_iters_tracking,
-                                iter=iter,
-                                config=config,
-                                next_params=next_params,
-                                next_variables=next_variables,
-                                early_stop_eval=True)
-                        optimizer.zero_grad(set_to_none=True)
+                        early_stop_eval = True
                         break
                 else:
                     early_stop_count = 0
                 last_loss = loss.detach().clone().item()
+        
+        # compute final
+        _, _, _, _, _, _, _, means2d, visible, weight = self.get_loss_dyno(
+            self.params,
+            self.variables,
+            curr_data,
+            time_idx,
+            num_iters=num_iters_tracking,
+            iter=iter,
+            config=config,
+            next_params=next_params,
+            next_variables=next_variables,
+            early_stop_eval=early_stop_eval)
+        optimizer.zero_grad(set_to_none=True)
 
         visibility = compute_visibility(visible, weight, num_gauss=self.params['means3D'].shape[0])
         if 'visibility' in self.variables.keys():
@@ -2114,7 +2126,6 @@ class RBDG_SLAMMER():
         if 'log_scales' in self.variables.keys():
             self.variables['log_scales'][:, time_idx] = self.params["log_scales"].detach().clone().squeeze()
         
-
         progress_bar.close()
         if config['take_best_candidate']:
             # Copy over the best candidate rotation & translation
@@ -2145,7 +2156,7 @@ class RBDG_SLAMMER():
                 self.params['unnorm_rotations'][:, :, time_idx] = unnorm_rotations.squeeze()
                 coefficients = torch.abs(coefficients)
                 max_val = coefficients.max(dim=1).values.squeeze()
-                
+              
         # Update the runtime numbers
         tracking_end_time = time.time()
         self.tracking_obj_frame_time_sum += tracking_end_time - tracking_start_time

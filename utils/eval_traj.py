@@ -80,6 +80,8 @@ def get_gs_traj_pts(
     params_gs_traj_3D['means3D'] = gs_traj_3D
     params_gs_traj_3D['unnorm_rotations'] = unnorm_rotations
     # get 2D trajectories
+    # delta_means3D = params_gs_traj_3D['means3D'][:, :, 1:] - params_gs_traj_3D['means3D'][:, :, :-1]
+    # delta_rots = params_gs_traj_3D['unnorm_rotations'][:, :, 1:] - params_gs_traj_3D['unnorm_rotations'][:, :, :-1]
     gs_traj_2D = list()
     for time in range(gs_traj_3D.shape[-1]):
         if gs_traj_3D[:, :, time].sum() == 0:
@@ -92,7 +94,6 @@ def get_gs_traj_pts(
                 delta=0)
         gs_traj_2D.append(
             three2two(proj_matrix, transformed_gs_traj_3D['means3D'], w, h, do_normalize=False))
-
     gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
     gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
 
@@ -240,7 +241,6 @@ def _eval_traj(
         best_x=1, # 5,
         traj_len=10
     ):
-
     if params['means3D'][:, :, -1].sum() == 0:
         params['means3D'] = params['means3D'][:, :, :-1]
         params['unnorm_rotations'] = params['unnorm_rotations'][:, :, :-1]
@@ -264,7 +264,6 @@ def _eval_traj(
     valids = 1-occluded.float()
     
     # params['visibility'] = (params['visibility'] > vis_thresh).float()
-
     # get trajectories of Gaussians
     gs_traj_2D, gs_traj_3D, gauss_ids, pred_visibility = get_gs_traj_pts(
         proj_matrix,

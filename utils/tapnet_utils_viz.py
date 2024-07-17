@@ -853,9 +853,8 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None):
     pred_visibility = pred_visibility.transpose(1, 0)
     points = points.transpose(1, 0, 2)
     num_imgs, num_pts = points.shape[:2] # T x N x 2
-
+    print(num_pts, num_imgs)
     frames = []
-
     for i in range(num_imgs):
 
         # kpts = kpts_foreground - np.median(kpts_background - kpts_background[i], axis=1, keepdims=True)
@@ -869,7 +868,8 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None):
             alpha = max(1 - 0.9 * ((i - t) / ((i + 1) * .99)), 0.1)
 
             for j in range(num_pts):
-
+                if not pred_visibility[i, j]:
+                    continue
                 color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
 
                 color_alpha = 1
@@ -881,18 +881,20 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None):
                 pt2 = points[t+1, j]
                 p1 = (int(round(pt1[0])), int(round(pt1[1])))
                 p2 = (int(round(pt2[0])), int(round(pt2[1])))
-                if p2[0] > 10000 or p2[1] > 10000:
-                    continue
+                # if p2[0] > 10000 or p2[1] > 10000:
+                #     continue
                 cv2.line(img1, p1, p2, color, thickness=1, lineType=16)
 
             img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
 
         for j in range(num_pts):
+            if not pred_visibility[i, j]:
+                continue
             color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
             pt1 = points[i, j]
             p1 = (int(round(pt1[0])), int(round(pt1[1])))
-            if p1[0] > 10000 or p1[1] > 10000:
-                    continue
+            # if p1[0] > 10000 or p1[1] > 10000:
+            #     continue
             cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
 
         frames.append(img_curr)

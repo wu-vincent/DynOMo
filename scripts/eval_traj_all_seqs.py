@@ -124,15 +124,16 @@ if __name__ == "__main__":
     # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_0.001_True_True_True_True_True_2000_16_0.1_True_False_False_True_True_2_1_10_1"]
     
     # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_0.001_True_True_True_True_True_2000_16_0.1_True_False_False_True_True_2_1_5_1"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_0.1_True_False_False_True_True_2_1_5_1_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_4_4_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_0_4_0.1_True_False_False_True_True_2_1_5_1_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_0_0_0.1_True_False_False_True_True_2_1_5_1_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_60_240_455_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_60_480_910_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_20_120_227_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_16_4_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_16_16_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_0.1_True_False_False_True_True_2_1_5_1_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_4_4_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_0_4_0.1_True_False_False_True_True_2_1_5_1_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_0_0_0_0.1_True_False_False_True_True_2_1_5_1_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_60_240_455_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_60_480_910_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_4_4_0.1_True_False_False_True_True_2_1_5_1_20_120_227_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_16_4_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_16_16_0.1_True_False_False_True_True_2_1_5_1_20_240_455_aniso"]
+    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_5_5_5_0.001_True_True_True_True_True_2000_16_16_16_4_0.1_True_False_False_True_True_2_1_5_1_20_240_455_0.0_0.0_0.0_aniso_round3"]
 
     # dataset = 'jono_baseline'
     # experiments = list()
@@ -141,7 +142,7 @@ if __name__ == "__main__":
     # experiments += ["output_orig"]
 
     load_gaussian_tracks = False
-    vis_trajs = True
+    vis_trajs = False
     clip = False
     use_gt_occ = False
     vis_thresh = 0.01
@@ -165,7 +166,6 @@ if __name__ == "__main__":
         print(f"\nEvaluating experiment {experiment}")
         paths = glob.glob(exp_dirs)
         for i, p in enumerate(paths):
-            print(p)
             val_dict = dict()
             if dataset == 'davis':
                 if not "SplaTAM" in experiment:
@@ -183,24 +183,31 @@ if __name__ == "__main__":
                 seq = p.split('/')[-1]
                 run_name = p.split('/')[-1]
 
-            print(f"SEQUENCE {seq}...")
-            print(run_name)
-            # run_name = p.split('/')[-1]
-
             if 'annotations' in seq:
                 continue
 
-            if 'dogs-jum' not in seq:
+            if 'motocr' not in seq and 'libby' not in seq:
                 continue
 
+            print(f"SEQUENCE {seq}...")
+            
             # copy config and get create runname
             seq_experiment = SourceFileLoader(
                 os.path.basename(args.experiment), args.experiment
+                # 'config.py', os.path.join(p, 'config.py')
                 ).load_module()
 
             seq_experiment.config['run_name'] = run_name
             seq_experiment.config['data']['sequence'] = seq
             seq_experiment.config['primary_device'] = primary_device
+
+            print(experiment)
+            if "120_227" in experiment:
+                seq_experiment.config['data']['desired_image_height'] = 120
+                seq_experiment.config['data']['desired_image_width'] = 227
+            elif "480_910" in experiment:
+                seq_experiment.config['data']['desired_image_height'] = 480
+                seq_experiment.config['data']['desired_image_width'] = 910
 
             if args.eval_traj:
                 if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
