@@ -31,17 +31,21 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         get_pc_jono=False,
         jono_depth=False,
         feats_224=False,
+        do_transform=False,
+        novel_view_mode=None,
         **kwargs,
-    ):
+    ): 
         start = start + 2
         self.get_pc_jono = get_pc_jono
         self.jono_depth = jono_depth
-        if self.get_pc_jono:
+        if self.get_pc_jono or do_transform:
             kwargs['relative_pose'] = False
         self.input_folder = os.path.join(basedir, sequence)
         self.sequence = sequence
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
         self.feats_224 = feats_224
+        self.do_transform = do_transform
+        self.novel_view_mode = novel_view_mode
         super().__init__(config_dict,
             stride=stride,
             start=start,
@@ -142,7 +146,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
             self.support_trajs = None
             
     def load_poses(self):
-        if False: # self.get_pc_jono:
+        if self.do_transform:
             basedir = os.path.dirname(os.path.dirname(self.input_folder))
             cam_id = int(os.path.basename(self.input_folder))
             with open(f'{basedir}/meta.json', 'r') as jf:

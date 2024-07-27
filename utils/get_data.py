@@ -56,7 +56,9 @@ def get_data(config):
         embedding_dim=dataset_config["embedding_dim"],
         get_pc_jono=dataset_config["get_pc_jono"],
         jono_depth=dataset_config["jono_depth"],
-        feats_224=dataset_config['feats_224'])
+        feats_224=dataset_config['feats_224'],
+        do_transform=dataset_config['do_transform'] if 'do_transform' in dataset_config.keys() else False,
+        novel_view_mode=dataset_config['novel_view_mode'])
 
     return dataset
 
@@ -157,6 +159,7 @@ def load_scene_data(config, results_dir, device="cuda:0", file=None):
 
 def just_get_start_pix(config, in_torch=True, normalized=False, h=None, w=None, rounded=True):
     data = get_gt_traj(config, in_torch)
+    data['occluded'] = data['occluded'].bool()
     data['points'] = data['points'][~data['occluded'][:, 0]]
     data['occluded'] = data['occluded'][~data['occluded'][:, 0]]
     

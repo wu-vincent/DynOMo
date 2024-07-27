@@ -24,7 +24,7 @@ import copy
 
 from utils.get_data import get_data, just_get_start_pix, load_scene_data
 from utils.common_utils import seed_everything, save_params_ckpt, save_params, load_params_ckpt
-from utils.eval_helpers import report_loss, report_progress, eval, eval_during
+from utils.eval_helpers import report_loss, eval, eval_during
 from utils.camera_helpers import setup_camera
 from utils.slam_helpers import (
     transformed_params2depthplussilhouette,
@@ -63,7 +63,6 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 
-from utils.render_trajectories import just_render
 from utils.eval_traj import eval_traj, vis_grid_trajs, eval_traj_window, vis_grid_trajs_window
 from datasets.gradslam_datasets import datautils
 

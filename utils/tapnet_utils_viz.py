@@ -831,16 +831,21 @@ def vis_tracked_points(results_dir, data, clip=True, pred_visibility=None, traj_
     imageio.mimwrite(os.path.join(results_dir, 'vid.mp4'), disp, quality=8, fps=10)
 
 
-def vis_trail(results_dir, data, clip=True, pred_visibility=None):
+def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True):
     """
     This function calculates the median motion of the background, which is subsequently
     subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
     improves the interpretability of the foreground motion trails.
     """
-    points = data['points'] # N x T x 2
+    points = data['points']
+    per_time = len(points.shape) == 4
+    if not per_time:
+        points = points.unsqueeze(0)
+
+    # points shape B, N x T x 2
     if points.sum() == 0:
         points = data['points_projected']
-    N, T, _ = points.shape
+    B, N, T, _ = points.shape
     rgb = data['video'][:T] # T x 480 x 854 x 3
     h, w, _ = rgb[0].shape
     occluded = data['occluded'][:, :T]
@@ -851,52 +856,53 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None):
     os.makedirs(results_dir, exist_ok=True)
     
     pred_visibility = pred_visibility.transpose(1, 0)
-    points = points.transpose(1, 0, 2)
-    num_imgs, num_pts = points.shape[:2] # T x N x 2
-    print(num_pts, num_imgs)
+    points = points.transpose(0, 2, 1, 3)
+    num_imgs, num_pts = points.shape[1:3] # T x N x 2
     frames = []
     for i in range(num_imgs):
-
         # kpts = kpts_foreground - np.median(kpts_background - kpts_background[i], axis=1, keepdims=True)
-
         img_curr = rgb[i]
+        if vis_traj:
+            for t in range(i):
+                img1 = img_curr.copy()
+                # changing opacity
+                alpha = max(1 - 0.9 * ((i - t) / ((i + 1) * .99)), 0.1)
 
-        for t in range(i):
+                for j in range(num_pts):
+                    if not pred_visibility[i, j]:
+                        continue
+                    color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
 
-            img1 = img_curr.copy()
-            # changing opacity
-            alpha = max(1 - 0.9 * ((i - t) / ((i + 1) * .99)), 0.1)
+                    color_alpha = 1
 
-            for j in range(num_pts):
-                if not pred_visibility[i, j]:
-                    continue
-                color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
+                    hsv = colorsys.rgb_to_hsv(color[0], color[1], color[2])
+                    color = colorsys.hsv_to_rgb(hsv[0], hsv[1]*color_alpha, hsv[2])
+                    if not per_time:
+                        pt1 = points[0, t, j]
+                        pt2 = points[0, t+1, j]
+                    else:
+                        pt1 = points[i, t, j]
+                        pt2 = points[i, t+1, j]
+                    p1 = (int(round(pt1[0])), int(round(pt1[1])))
+                    p2 = (int(round(pt2[0])), int(round(pt2[1])))
+                    # if p2[0] > 10000 or p2[1] > 10000:
+                    #     continue
+                    cv2.line(img1, p1, p2, color, thickness=1, lineType=16)
 
-                color_alpha = 1
-
-                hsv = colorsys.rgb_to_hsv(color[0], color[1], color[2])
-                color = colorsys.hsv_to_rgb(hsv[0], hsv[1]*color_alpha, hsv[2])
-
-                pt1 = points[t, j]
-                pt2 = points[t+1, j]
-                p1 = (int(round(pt1[0])), int(round(pt1[1])))
-                p2 = (int(round(pt2[0])), int(round(pt2[1])))
-                # if p2[0] > 10000 or p2[1] > 10000:
-                #     continue
-                cv2.line(img1, p1, p2, color, thickness=1, lineType=16)
-
-            img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
+                img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
 
         for j in range(num_pts):
             if not pred_visibility[i, j]:
                 continue
             color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
-            pt1 = points[i, j]
+            if not per_time:
+                pt1 = points[0, i, j]
+            else:
+                pt1 = points[i, i, j]
             p1 = (int(round(pt1[0])), int(round(pt1[1])))
             # if p1[0] > 10000 or p1[1] > 10000:
             #     continue
             cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
 
         frames.append(img_curr)
-
     imageio.mimwrite(os.path.join(results_dir, 'vid_trails.mp4'), frames, quality=8, fps=10)

@@ -38,6 +38,7 @@ early_stop = False
 last_x = 1
 densify_post = False
 use_sil_for_loss = True if densify_post else False
+remove_close = False
 
 remove_outliers_l2 = 1
 
@@ -93,6 +94,8 @@ config = dict(
     early_stop=early_stop,
     stride=1,
     kNN=20,
+    norm_embeddings=True,
+    remove_close=remove_close,
     wandb=dict(
         project="DynoSplaTAM",
         group=group_name,
@@ -114,11 +117,13 @@ config = dict(
         embedding_dim=feature_dim,
         get_pc_jono=False,
         jono_depth=False,
-        feats_224=False
+        feats_224=False,
+        novel_view_mode=None
     ),
     add_gaussians=dict(
+        only_bg=False,
         add_new_gaussians=True,
-        depth_error_factor=50,
+        depth_error_factor=5,
         use_depth_error_for_adding_gaussians=False,
         sil_thres_gaussians=sil_thres_gaussians, # For Addition of new Gaussians
     ),
@@ -144,7 +149,7 @@ config = dict(
             final_removal_opacity_threshold=0.005,
             reset_opacities=False,
             reset_opacities_every=500, # Doesn't consider iter 0
-            kNN_rel_drift=0.8 # * scene radius in code
+            kNN_rel_drift=1000000
         ),
         use_gaussian_splatting_densification=False, # Use Gaussian Splatting-based Densification during Mapping
         densify_dict=dict( # Needs to be updated based on the number of mapping iterations
@@ -219,7 +224,7 @@ config = dict(
             log_scales=0.001,
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
-            instseg=0.00016,
+            instseg=0.000,
             embeddings=embeddings_lr if not red_lr and not embeddings_lr == 0 else 0.01,
             bg=0.0001
         ),
@@ -279,7 +284,7 @@ config = dict(
             log_scales=0.001,
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
-            instseg=0.00016,
+            instseg=0.000,
             embeddings=embeddings_lr if not red_lr and not embeddings_lr == 0 else 0.01,
             bg=0.0001
         ),
@@ -296,7 +301,8 @@ config = dict(
             im=1.0,
             depth=0.05,
             embeddings=1.0,
-            instseg=0.0
+            instseg=0.0,
+            smoothness=0.0,
         ),
         lrs=dict(
             means3D=0.0000,
@@ -312,7 +318,7 @@ config = dict(
         ),
     ),
     viz=dict(
-        vis_grid=False,
+        vis_grid=True,
         vis_tracked=True,
         save_pc=False,
         save_videos=False,

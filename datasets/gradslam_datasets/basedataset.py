@@ -95,7 +95,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         load_embeddings: bool = False,
         embedding_dir: str = "feat_lseg_240_320",
         embedding_dim: int = 512,
-        relative_pose: bool = True,  # If True, the pose is relative to the first frame
+        relative_pose: bool = False,  # If True, the pose is relative to the first frame
         load_instseg: bool = False,
         precomp_intrinsics: bool = False,
         **kwargs,
@@ -185,12 +185,15 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         # self.transformed_poses = datautils.poses_to_transforms(self.poses)
         self.poses = torch.stack(self.poses)
-
+        print(self.poses[0])
+        print(self.poses[1])
         if self.relative_pose:
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
-        
+        print(self.transformed_poses[0])
+        print(self.transformed_poses[1])
+        print()
         self.precomp_intrinsics = precomp_intrinsics
 
     def __len__(self):

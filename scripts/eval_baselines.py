@@ -35,18 +35,20 @@ def get_cams(t, md, seq):
 
 if __name__ == "__main__":
     vis_trajs = False
-    clip = True
+    get_gauss_wise3D_track = True
+    use_round_pix = False
+    clip = False
     use_gt_occ = False
-    vis_thresh = 0.01
-    vis_thresh_start = 0.25
+    vis_thresh = 0.5
+    vis_thresh_start = 0.5
+    color_thresh = 1000
     best_x = 1
     traj_len = 0
 
     results_dirs = list()
-    # results_dirs += ["../Dynamic3DGaussians/output_orig/exp1"]
-    # results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono/exp1"]
-    # results_dirs += ["../Dynamic3DGaussians/output_one_cam_fewer_epochs/exp1"]
-    results_dirs += ["../Dynamic3DGaussians/output/exp1"]
+    results_dirs += ["../Dynamic3DGaussians/output_orig_jono/exp1"]
+    results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono/exp1"]
+    results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono_fewer_epochs/exp1"]
 
     for _results_dir in results_dirs:
         print(f"Evaluating experimetn {_results_dir}")
@@ -82,7 +84,11 @@ if __name__ == "__main__":
                 vis_thresh=vis_thresh,
                 vis_thresh_start=vis_thresh_start,
                 best_x=best_x,
-                traj_len=traj_len)
+                traj_len=traj_len,
+                color_thresh=color_thresh,
+                do_transform=False,
+                use_round_pix=use_round_pix,
+                get_gauss_wise3D_track=get_gauss_wise3D_track)
             print(metrics)
             os.makedirs(os.path.join(results_dir, 'eval'), exist_ok=True)
             with open(os.path.join(results_dir, 'eval', 'traj_metrics.txt'), 'w') as f:

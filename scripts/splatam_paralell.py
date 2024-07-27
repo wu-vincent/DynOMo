@@ -21,7 +21,7 @@ for p in sys.path:
 import argparse
 from importlib.machinery import SourceFileLoader
 from utils.common_utils import seed_everything
-import os
+import os 
 import shutil
 from scripts.splatam import RBDG_SLAMMER
 from scripts.splatam_batch import RBDG_SLAMMER_WINDOW
@@ -182,15 +182,17 @@ def run_splatam(args):
     if 'jono' in seq_experiment.config['data']['gradslam_data_cfg']:
         # seq = os.path.join(seq, 'ims/27')
         tracking_iters_cam = 0
-        run_name = f"splatam_{seq}_{experiment_args['seed']}_{experiment_args['mov_init_by']}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}_{experiment_args['num_frames']}_{experiment_args['feature_dim']}_{experiment_args['init_jono']}_{experiment_args['jono_depth']}_{experiment_args['remove_gaussians']}_{experiment_args['sil_thres_gaussians']}_{experiment_args['l1_losses_embedding']}_{experiment_args['l1_losses_color']}_{experiment_args['bg_reg']}_{experiment_args['embeddings_lr']}_{experiment_args['red_lr']}_{experiment_args['red_lr_cam']}_{experiment_args['embedding_weight']}_{experiment_args['use_seg_for_nn']}_{experiment_args['weight_iso']}_{experiment_args['exp_weight']}_{experiment_args['loss_weight_emb']}_{experiment_args['loss_weight_iso']}_{experiment_args['loss_weight_rigid']}_{experiment_args['loss_weight_rot']}_{experiment_args['loss_weight_depth_cam']}_{experiment_args['forward_propagate_camera']}_{experiment_args['trafo_mat']}_{experiment_args['feats_224']}_{experiment_args['restart_if_fail']}_{experiment_args['early_stop']}_{experiment_args['stride']}_{experiment_args['time_window']}_{experiment_args['l1_losses_scale']}_{experiment_args['last_x']}_{experiment_args['kNN']}_{experiment_args['desired_image_height']}_{experiment_args['desired_image_width']}_{experiment_args['instseg_obj']}_{experiment_args['instseg_cam']}"
+        run_name = f"splatam_{seq}_{experiment_args['seed']}_{experiment_args['mov_init_by']}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}_{experiment_args['num_frames']}_{experiment_args['feature_dim']}_{experiment_args['init_jono']}_{experiment_args['jono_depth']}_{experiment_args['remove_gaussians']}_{experiment_args['sil_thres_gaussians']}_{experiment_args['l1_losses_embedding']}_{experiment_args['l1_losses_color']}_{experiment_args['bg_reg']}_{experiment_args['embeddings_lr']}_{experiment_args['red_lr']}_{experiment_args['red_lr_cam']}_{experiment_args['embedding_weight']}_{experiment_args['use_seg_for_nn']}_{experiment_args['weight_iso']}_{experiment_args['exp_weight']}_{experiment_args['loss_weight_emb']}_{experiment_args['loss_weight_iso']}_{experiment_args['loss_weight_rigid']}_{experiment_args['loss_weight_rot']}_{experiment_args['loss_weight_depth_cam']}_{experiment_args['forward_propagate_camera']}_{experiment_args['trafo_mat']}_{experiment_args['feats_224']}_{experiment_args['restart_if_fail']}_{experiment_args['early_stop']}_{experiment_args['stride']}_{experiment_args['time_window']}_{experiment_args['l1_losses_scale']}_{experiment_args['last_x']}_{experiment_args['kNN']}_{experiment_args['desired_image_height']}_{experiment_args['desired_image_width']}_{experiment_args['instseg_obj']}_{experiment_args['instseg_cam']}_transformed"
     else:
-        run_name = f"splatam_{seq}/splatam_{seq}_{experiment_args['seed']}_{experiment_args['mov_init_by']}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}_{experiment_args['num_frames']}_{experiment_args['feature_dim']}_{experiment_args['remove_gaussians']}_{experiment_args['sil_thres_gaussians']}_{experiment_args['l1_losses_embedding']}_{experiment_args['l1_losses_color']}_{experiment_args['bg_reg']}_{experiment_args['embeddings_lr']}_{experiment_args['red_lr']}_{experiment_args['red_lr_cam']}_{experiment_args['embedding_weight']}_{experiment_args['use_seg_for_nn']}_{experiment_args['weight_iso']}_{experiment_args['exp_weight']}_{experiment_args['loss_weight_emb']}_{experiment_args['loss_weight_iso']}_{experiment_args['loss_weight_rigid']}_{experiment_args['loss_weight_rot']}_{experiment_args['loss_weight_depth_cam']}_{experiment_args['forward_propagate_camera']}_{experiment_args['trafo_mat']}_{experiment_args['feats_224']}_{experiment_args['restart_if_fail']}_{experiment_args['early_stop']}_{experiment_args['stride']}_{experiment_args['time_window']}_{experiment_args['l1_losses_scale']}_{experiment_args['last_x']}_{experiment_args['kNN']}_{experiment_args['desired_image_height']}_{experiment_args['desired_image_width']}_{experiment_args['instseg_obj']}_{experiment_args['instseg_cam']}_{experiment_args['smoothness']}_{experiment_args['prune_gaussians']}_aniso"
+        run_name = f"splatam_{seq}/splatam_{seq}_{experiment_args['seed']}_{experiment_args['mov_init_by']}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}_{experiment_args['num_frames']}_{experiment_args['feature_dim']}_{experiment_args['remove_gaussians']}_{experiment_args['sil_thres_gaussians']}_{experiment_args['l1_losses_embedding']}_{experiment_args['l1_losses_color']}_{experiment_args['bg_reg']}_{experiment_args['embeddings_lr']}_{experiment_args['red_lr']}_{experiment_args['red_lr_cam']}_{experiment_args['embedding_weight']}_{experiment_args['use_seg_for_nn']}_{experiment_args['weight_iso']}_{experiment_args['exp_weight']}_{experiment_args['loss_weight_emb']}_{experiment_args['loss_weight_iso']}_{experiment_args['loss_weight_rigid']}_{experiment_args['loss_weight_rot']}_{experiment_args['loss_weight_depth_cam']}_{experiment_args['forward_propagate_camera']}_{experiment_args['trafo_mat']}_{experiment_args['feats_224']}_{experiment_args['restart_if_fail']}_{experiment_args['early_stop']}_{experiment_args['stride']}_{experiment_args['time_window']}_{experiment_args['l1_losses_scale']}_{experiment_args['last_x']}_{experiment_args['kNN']}_{experiment_args['desired_image_height']}_{experiment_args['desired_image_width']}_{experiment_args['instseg_obj']}_{experiment_args['instseg_cam']}_{experiment_args['smoothness']}_{experiment_args['prune_gaussians']}_{experiment_args['use_depth_error_for_adding_gaussians']}_{experiment_args['norm_embeddings']}_{experiment_args['add_only_bg']}_{experiment_args['remove_close']}_{experiment_args['loss_weight_depth_obj']}_aniso" #norm_embeddings
 
     seq_experiment.config['run_name'] = run_name
     seq_experiment.config['data']['sequence'] = seq
+    seq_experiment.config['data']['do_transform'] = True
     seq_experiment.config['wandb']['name'] = run_name
 
     seq_experiment.config['early_stop'] = experiment_args['early_stop']
+    seq_experiment.config['norm_embeddings'] = experiment_args['norm_embeddings']
     seq_experiment.config['stride'] = experiment_args['stride']
     seq_experiment.config['time_window'] = experiment_args['time_window']
     seq_experiment.config['use_wandb'] = experiment_args['use_wandb']
@@ -233,6 +235,7 @@ def run_splatam(args):
         seq_experiment.config['tracking_obj']['loss_weights']['instseg'] = experiment_args['instseg_obj']
     if experiment_args['smoothness']:
         seq_experiment.config['tracking_obj']['loss_weights']['smoothness'] = experiment_args['smoothness']
+        seq_experiment.config['tracking_cam']['loss_weights']['smoothness'] = experiment_args['smoothness']
     if experiment_args['instseg_cam']:
         seq_experiment.config['tracking_obj']['loss_weights']['instseg'] = experiment_args['instseg_cam']
     
@@ -253,8 +256,10 @@ def run_splatam(args):
     seq_experiment.config['tracking_obj']['loss_weights']['embeddings'] = experiment_args['loss_weight_emb']
     seq_experiment.config['tracking_obj']['loss_weights']['rigid'] = experiment_args['loss_weight_rigid']
     seq_experiment.config['tracking_obj']['loss_weights']['rot'] = experiment_args['loss_weight_rot']
+    seq_experiment.config['tracking_obj']['loss_weights']['depth'] = experiment_args['loss_weight_depth_obj']
     seq_experiment.config['tracking_cam']['forward_prop'] = experiment_args['forward_propagate_camera']
     seq_experiment.config['tracking_cam']['loss_weights']['depth'] = experiment_args['loss_weight_depth_cam']
+    seq_experiment.config['tracking_cam']['loss_weights']['embeddings'] = experiment_args['loss_weight_emb']
     seq_experiment.config['tracking_cam']['restart_if_fail'] = experiment_args['restart_if_fail']
     seq_experiment.config['exp_weight'] = experiment_args['exp_weight']
 
@@ -268,7 +273,11 @@ def run_splatam(args):
     seq_experiment.config['data']['feats_224'] = experiment_args['feats_224']
     seq_experiment.config['prune_densify']['prune_gaussians'] = experiment_args['prune_gaussians']
     seq_experiment.config['prune_densify']['pruning_dict']['start_after'] = int(experiment_args['tracking_iters']/2)
-    seq_experiment.config['prune_densify']['pruning_dict']['prune_every'] = int(experiment_args['tracking_iters']/2)
+    seq_experiment.config['prune_densify']['pruning_dict']['prune_every'] = int(experiment_args['tracking_iters']/2) + 1
+
+    seq_experiment.config['add_gaussians']['use_depth_error_for_adding_gaussians'] = experiment_args['use_depth_error_for_adding_gaussians']
+    seq_experiment.config['add_gaussians']['only_bg'] = experiment_args['add_only_bg']
+    seq_experiment.config['remove_close'] = experiment_args['remove_close']
     
     seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
 
@@ -293,9 +302,9 @@ def run_splatam(args):
             return
         rgbd_slammer.eval()
     else:
-        if os.path.isfile(os.path.join(results_dir, 'eval', 'traj_metrics.txt')):
-            print(f"Experiment already done {run_name}\n\n")
-            return
+        # if os.path.isfile(os.path.join(results_dir, 'eval', 'traj_metrics.txt')):
+        #     print(f"Experiment already done {run_name}\n\n")
+        #     return
         
         os.makedirs(results_dir, exist_ok=True)
         shutil.copy(config_file, os.path.join(results_dir, "config.py"))
@@ -326,31 +335,31 @@ if __name__ == "__main__":
         just_eval = experiment.config['just_eval'],
         vis_all = True,
         vis_gt = False,
-        tracking_iters = 100,
-        tracking_iters_init = 100,
-        tracking_iters_cam = 100,
+        tracking_iters = 500,
+        tracking_iters_init = 1000,
+        tracking_iters_cam = 0,
         refine_iters = 0,
         mag_iso = True,
-        init_jono = False,
-        jono_depth = False,
-        l1_losses_embedding = 5,
-        l1_losses_color = 5, # 0.01,
+        init_jono = True,
+        jono_depth = True,
+        l1_losses_embedding = 20,
+        l1_losses_color = 20, # 0.01,
         bg_reg = 5,
         embeddings_lr = 0.001,
-        red_lr = True,
-        red_lr_cam = True,
+        red_lr = False,
+        red_lr_cam = False,
         remove_gaussians = False,
         sil_thres_gaussians = 0.5,
         make_grad_bg_smaller = 0,
         remove_outliers_l2 = 100,
-        embedding_weight = True,
+        embedding_weight = False,
         use_seg_for_nn = True,
         weight_iso = True,
         exp_weight = 2000,
         loss_weight_iso = 16,
         loss_weight_emb = 16,
-        loss_weight_rigid = 16,
-        loss_weight_rot = 4,
+        loss_weight_rigid = 128,
+        loss_weight_rot = 16,
         loss_weight_depth_cam=0.1,
         forward_propagate_camera=True,
         trafo_mat=False,
@@ -358,7 +367,7 @@ if __name__ == "__main__":
         restart_if_fail=True,
         early_stop=True,
         stride=2,
-        l1_losses_scale=5, #0.01,
+        l1_losses_scale=0, #0.01,
         time_window=1,
         last_x=1,
         use_wandb=False,
@@ -366,12 +375,17 @@ if __name__ == "__main__":
         base_transformations=False,
         base_transformations_mlp=False,
         kNN=20,
-        desired_image_height=240, # 120, #240, #480,
-        desired_image_width=455, # 227, # 455, #910,
+        desired_image_height=360, # 240, # 120, #240, #480, 180, 360
+        desired_image_width=640, # 455, # 227, # 455, #910, 320, 640
         instseg_obj=0.0,
         instseg_cam=0.0,
-        smoothness=0.0,
-        prune_gaussians=True
+        smoothness=0,
+        prune_gaussians=False,
+        use_depth_error_for_adding_gaussians=False,
+        norm_embeddings=True,
+        add_only_bg=False,
+        remove_close=False,
+        loss_weight_depth_obj=0.1
         )
     
     davis_seqs = [
@@ -406,20 +420,20 @@ if __name__ == "__main__":
         'loading',
         'horsejump-high']
     
-    davis_seqs = ["motocross-jump"]
+    # davis_seqs = ['india']
     
     jono_seqs = ["boxes/ims/27", "softball/ims/27", "basketball/ims/21", "football/ims/18", "juggle/ims/14", "tennis/ims/8"]
 
     configs_to_paralellize = list()
-    for seq in davis_seqs:
+    for seq in jono_seqs:
         # copy config and get create runname
         configs_to_paralellize.append([args.experiment, seq, experiment_args])
     
     # n_ranks = min(torch.cuda.device_count(), len(configs_to_paralellize))
     # gpus = ','.join([str(i) for i in range(n_ranks)])
     
-    n_ranks = 1
-    gpus = [3]
+    n_ranks = 2
+    gpus = [4,6]
 
     gpu_map(
         run_splatam,
