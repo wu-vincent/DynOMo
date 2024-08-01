@@ -19,11 +19,11 @@ for p in sys.path:
 def get_jono_base_exps():
     experiments = list()
     names = list()
-    experiments += ["output_orig_jono"]
+    experiments += ["experiments/output_orig_jono"]
     names.append("original_jono")
-    experiments += ["output_one_cam_jono"]
+    experiments += ["experiments/output_one_cam_jono"]
     names.append("jono_one_cam")
-    experiments += ["output_one_cam_jono_fewer_epochs"]
+    experiments += ["experiments/output_one_cam_jono_fewer_epochs"]
     names.append("jono_one_cam_fewer_epochs")
 
     return experiments, names
@@ -166,13 +166,86 @@ def get_davis_exps():
     # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_0_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0.0_False_False_True_False_False_0.1_8.0_aniso_repeat"]
     # names.append("8_0_16_128_16_20_20_5")
     
-    # 16_128_16_20_20_5 full res
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_480_910_0.0_0.0_0_False_False_True_False_False_0.1_aniso"]
-    names.append('16_128_16_20_20_5_full_res')
+    #### transformed Gaussians in dyno losses bug removal #####
+    # less ep 16_128_16_20_20_5 full res l1
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_480_910_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb"]
+    names.append('less_16_128_16_20_20_5_full_res_l1')
 
-    # 16_128_16_20_20_5 high depth
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_1.0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_False_1.0_aniso"]
-    names.append('16_128_16_20_20_5_high_depth')
+    # less ep 16_128_16_20_20_5 l1
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb"]
+    names.append('less_16_128_16_20_20_5_bug_rem_l1')
+
+    #less ep 16_128_16_20_20_5 l2
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb_l2_emb"]
+    names.append('less_16_128_16_20_20_5_bug_rem')
+
+    # no seg for nn less ep 16_128_16_20_20_5 l2
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb_l2_emb"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_seg')
+
+    # no seg no bg loss less ep 16_128_16_20_20_5 l2
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_rem_no_bbg')
+
+    # no seg no depth loss 
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0_3_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_no_depth')
+
+    # no seg no depth loss after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0_3_aniso_deb_l2_emb_forward_after_opt"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_no_depth_after_opt')
+
+    # no seg loss after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_forward_after_opt"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_after_opt')
+
+    #less ep 16_128_16_20_20_5 l2 repeat
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_repeat')
+
+    # after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_forward_after_opt_r2"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_after_opt')
+
+    # no seg no bg loss less ep 16_128_16_20_20_5 l2 repeat
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb_r2"]
+    # names.append('less_16_128_16_20_20_5_bug_no_seg_rem_no_bbg_repeat')
+
+    # no bg loss less ep 16_128_16_20_20_5 l2 
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_bbg')
+
+    # no bg reg less ep 16_128_16_20_20_5 l2 
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_0_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_reg')
+
+    # no img less ep 16_128_16_20_20_5 l2 
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_0_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_img_0')
+
+    # no emb less ep 16_128_16_20_20_5 l2 
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_0_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_emb_0')
+
+    # stride 1 less ep 16_128_16_20_20_5 l2 
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_1_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_stride 1')
+
+    # experiments l1 losses
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_0_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_rot')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_0_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_rigid')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_0_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_no_iso')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_l2_weight_dyno')
+
+    # regs and aniso
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_iso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_iso')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_20_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_sclae_20')
 
     return experiments, names
 
@@ -222,6 +295,8 @@ def get_jono_exps():
     # jono pc
     experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_180_320_0.0_0.0_transformed"]
     names.append('not_higher_lr_normal_size_jono_pc')
+    experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_transformed"]
+    names.append('not_higher_lr_normal_size_jono_pc_orig_size')
 
     return experiments, names
 
@@ -238,6 +313,7 @@ if __name__ == "__main__":
 
     get_gauss_wise3D_track = True
     use_round_pix = False
+    get_from3D = False
     best_x = 1
 
     dataset = 'davis'
@@ -354,13 +430,15 @@ if __name__ == "__main__":
             for file_name in files_to_load:
 
                 # different choices of Gaussians for evaluation of trajectoy
-                if not get_gauss_wise3D_track and file_name == "traj_metrics.txt":
+                if not get_gauss_wise3D_track and (not get_from3D or 'jono' not in dataset):
                     add_on = '_alpha'
-                elif use_round_pix and file_name == "traj_metrics.txt":
+                elif get_from3D:
+                    add_on = '_from_3D'
+                elif use_round_pix:
                     add_on = '_round'
                 else:
                     add_on = ''
-
+                
                 if best_x != 1:
                     add_on = add_on + f'_{best_x}'
 
@@ -396,9 +474,9 @@ if __name__ == "__main__":
         print(df_display)
         print(df_display.shape)
 
-        if 'SplaTAM' not in experiment:        
+        if 'SplaTAM' not in experiment:
             os.makedirs(f'experiments_eval/{dataset}', exist_ok=True)
-            df.to_csv(f'experiments_eval/{dataset}/{experiment}.csv')
+            df.to_csv(f'experiments_eval/{dataset}/{os.path.basename(experiment)}.csv')
         else:
             df.to_csv(f'{experiment}.csv')
         

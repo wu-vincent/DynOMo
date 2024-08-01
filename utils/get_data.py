@@ -2,6 +2,8 @@ from datasets.gradslam_datasets import (
     load_dataset_config,
     DavisDynoSplatamDataset,
     JonoDynoSplatamDataset,
+    RGBDynoSplatamDataset,
+    IphoneDynoSplatamDataset,
     datautils
 )
 import pickle
@@ -10,6 +12,8 @@ import os
 import torch
 from utils.camera_helpers import as_intrinsics_matrix
 import numpy as np
+import imageio
+
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -17,8 +21,13 @@ def get_dataset(config_dict, basedir, sequence, **kwargs):
         return DavisDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
         return JonoDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["rgb_stacking"]:
+        return RGBDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["iphone"]:
+        return IphoneDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
+
 
 def get_gradslam_data_cfg(dataset_config):
     if "gradslam_data_cfg" not in dataset_config:
@@ -122,12 +131,38 @@ def load_jono(sequence, in_torch=False):
     return data
 
 
+def load_rgb_all(in_torch=False):
+    with open('/data3/jseidens/tapvid_rgb_stacking/tapvid_rgb_stacking.pkl', 'rb') as jf:
+        gt = pickle.load(jf)
+    if in_torch:
+        gt = [{k: torch.from_numpy(v) for k, v in data.items()} for data in gt]
+    return gt
+
+def load_rgb(sequence, in_torch=False):
+    data = load_rgb_all(in_torch)[int(sequence)] # N x T x 2
+    return data
+
+
+def load_iphone(config, in_torch=True):
+    dataset = get_data(config=config)
+    color_paths = dataset.color_paths
+    rgbs = list()
+    for path in color_paths:
+        rgbs.append(np.asarray(imageio.imread(path), dtype=float))
+    data = dict()
+    data['video'] = torch.stack([torch.from_numpy(r) for r in rgbs])
+    return data
+
 def get_gt_traj(config, in_torch=False):
     config_dict = get_gradslam_data_cfg(config["data"])
     if config_dict["dataset_name"].lower() in ["davis"]:
         return load_davis(config["data"]["sequence"], in_torch)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
         return  load_jono(config["data"]["sequence"], in_torch)
+    elif config_dict["dataset_name"].lower() in ["rgb_stacking"]:
+        return  load_rgb(config["data"]["sequence"], in_torch)
+    elif config_dict["dataset_name"].lower() in ["iphone"]:
+        return  load_iphone(config, in_torch)
 
 
 def load_scene_data(config, results_dir, device="cuda:0", file=None):

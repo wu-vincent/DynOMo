@@ -1,10 +1,11 @@
 import torch
 import torch.nn.functional as F
-from utils.slam_external import build_rotation, normalize_quat
+from utils.slam_external import build_rotation, normalize_quat, matrix_to_quaternion
 from utils.two2threeD_helpers import three2two
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from diff_gaussian_rasterization_embeddings import GaussianRasterizerEmb as EmbeddingRenderer
 from torch_scatter import scatter_mean, scatter_add
+
 
 
 def l1_loss_v1(x, y, mask=None, reduction='mean', weight=None):
@@ -234,19 +235,6 @@ def get_instsegbg(tensor_shape, instseg, bg):
     return depth_silhouette
 
 
-def get_2D_motion(tensor_shape, gauss_flow):
-    """
-    Function to compute depth and silhouette for each gaussian.
-    These are evaluated at gaussian center.
-    """
-    # Depth and Silhouette
-    motion2d = torch.zeros((tensor_shape, 3), device=gauss_flow.device).float()
-    motion2d[:, 0] = gauss_flow[:, 0]
-    motion2d[:, 1] = gauss_flow[:, 1]
-    motion2d[:, 2] = 1.0
-    return motion2d
-
-
 def params2depthplussilhouette(params, w2c):
     # Check if Gaussians are Isotropic
     if params['log_scales'].shape[1] == 1:
@@ -274,7 +262,7 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_
     elif len(params['log_scales'].squeeze().shape) == 2:
         log_scales = params['log_scales'][:, time_idx].unsqueeze(1)
     else:
-        log_scales = params['log_scales'][:, time_idx]
+        log_scales = params['log_scales'][:, :, time_idx]
 
     if log_scales.shape[1] == 1:
         log_scales = torch.tile(log_scales, (1, 3))
@@ -292,7 +280,7 @@ def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_
         'scales': torch.exp(log_scales),
         'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
     }
-    rendervar, time_mask =  mask_timestamp(rendervar, time_idx+time_window-1, first_occurance, moving_mask=None, active_gaussians_mask=active_gaussians_mask, depth=depth)
+    rendervar, time_mask =  mask_timestamp(rendervar, time_idx+time_window-1, first_occurance, active_gaussians_mask=active_gaussians_mask, depth=depth)
     return rendervar, time_mask
 
 
@@ -301,40 +289,21 @@ def mask_timestamp(rendervar, timestamp, first_occurance, moving_mask=None, stri
         time_mask = first_occurance < timestamp
     else:
         time_mask = first_occurance <= timestamp
+
     if moving_mask is not None:
         time_mask = time_mask & moving_mask
+
     if active_gaussians_mask is not None:
         time_mask = time_mask & active_gaussians_mask
+
     if depth is not None:
         # print('num_mask gauss', time_mask.sum() - (time_mask & (rendervar['means3D'][:, 2] > 0.9 * depth.min())).sum())
-        if timestamp == 0:
-            print(depth.min())
-        time_mask = time_mask & (rendervar['means3D'][:, 2] > 0.2) # depth.min())
+        time_mask = time_mask & (rendervar['means3D'][:, 2] > min(0.2, 0.2 * depth.min().item()))
 
     masked_rendervar = dict()
     for k, v in rendervar.items():
         masked_rendervar[k] = v[time_mask]
     return masked_rendervar, time_mask
-
-
-def transformed_params2silhouette(params, transformed_gaussians):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-    # Initialize Render Variables
-    sil_color = torch.zeros_like(params['rgb_colors'])
-    sil_color[:, 0] = 1.0
-    rendervar = {
-        'means3D': transformed_gaussians['means3D'],
-        'colors_precomp': sil_color,
-        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-    }
-    return rendervar
 
 
 def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians, time_idx, first_occurance, time_window=1, active_gaussians_mask=None, depth=None):
@@ -346,7 +315,7 @@ def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians, t
     elif len(params['log_scales'].squeeze().shape) == 2 : 
         log_scales = params['log_scales'][:, time_idx].unsqueeze(1)
     else:   
-        log_scales = params['log_scales'][:, time_idx]
+        log_scales = params['log_scales'][:, :, time_idx]
 
     if log_scales.shape[1] == 1:
         log_scales = torch.tile(log_scales, (1, 3))
@@ -382,7 +351,7 @@ def transformed_params2instsegbg(
     elif len(params['log_scales'].squeeze().shape) == 2 : 
         log_scales = params['log_scales'][:, time_idx].unsqueeze(1)
     else:
-        log_scales = params['log_scales'][:, time_idx]
+        log_scales = params['log_scales'][:, :, time_idx]
 
     if log_scales.shape[1] == 1:
         log_scales = torch.tile(log_scales, (1, 3))
@@ -401,45 +370,6 @@ def transformed_params2instsegbg(
     rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], active_gaussians_mask=active_gaussians_mask, depth=depth)
     return rendervar, time_mask
 
-def transformed_params2dmotion(
-        params,
-        transformed_gaussians,
-        time_idx,
-        variables,
-        means2d,
-        prev_means2d,
-        time_window=1,
-        active_gaussians_mask=None,
-        depth=None):
-    # Check if Gaussians are Isotropic
-    if len(params['log_scales'].squeeze().shape) == 1:
-        log_scales = params['log_scales'] 
-    elif len(params['log_scales'].squeeze().shape) == 2 and params['log_scales'].squeeze().shape[1] == 3:
-        log_scales = params['log_scales']
-    elif len(params['log_scales'].squeeze().shape) == 2 : 
-        log_scales = params['log_scales'][:, time_idx].unsqueeze(1)
-    else:
-        log_scales = params['log_scales'][:, time_idx]
-
-    if log_scales.shape[1] == 1:
-        log_scales = torch.tile(log_scales, (1, 3))
-    else:
-        log_scales = log_scales
-
-    gauss_flow = means2d - prev_means2d
-
-    # Initialize Render Variables
-    rendervar = {
-        'means3D': transformed_gaussians['means3D'],
-        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
-        'colors_precomp': get_2D_motion(gauss_flow.shape[0], gauss_flow)
-    }
-    rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], strictly_less=True, active_gaussians_mask=active_gaussians_mask, depth=depth)
-
-    return rendervar, time_mask
 
 def transformed_params2emb(
         params,
@@ -459,7 +389,7 @@ def transformed_params2emb(
     elif len(params['log_scales'].squeeze().shape) == 2 : 
         log_scales = params['log_scales'][:, time_idx].unsqueeze(1)
     else:
-        log_scales = params['log_scales'][:, time_idx]
+        log_scales = params['log_scales'][:, :, time_idx]
 
     if log_scales.shape[1] == 1:
         log_scales = torch.tile(log_scales, (1, 3))
@@ -481,61 +411,8 @@ def transformed_params2emb(
         'colors_precomp': embs
     }
 
-    rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], strictly_less=False, active_gaussians_mask=active_gaussians_mask, depth=depth)
+    rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], active_gaussians_mask=active_gaussians_mask, depth=depth)
 
-    return rendervar, time_mask
-
-
-def transformed_params2emb_all(
-        params,
-        transformed_gaussians,
-        time_idx,
-        variables,
-        time_window=1,
-        depth=None):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-
-    # Initialize Render Variables
-    rendervar = {
-        'means3D': transformed_gaussians['means3D'],
-        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
-        'colors_precomp': params['embeddings']
-    }
-
-    rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, variables['timestep'], strictly_less=False, depth=depth)
-
-    return rendervar, time_mask
-
-def transformed_params2depthsilinstseg(
-        params,
-        w2c,
-        transformed_gaussians,
-        time_idx,
-        first_occurance,
-        time_window=1,
-        depth=None):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-    # Initialize Render Variables
-    rendervar = {
-        'means3D': transformed_gaussians['means3D'],
-        'colors_precomp': get_depth_and_silhouette_and_instseg(transformed_gaussians['means3D'], w2c, params['instseg']),
-        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
-    }
-    rendervar, time_mask = mask_timestamp(rendervar, time_idx+time_window-1, first_occurance, depth=depth)
     return rendervar, time_mask
 
 
@@ -547,7 +424,9 @@ def transform_to_frame(
         gauss_time_idx=None,
         delta=0,
         motion_mlp=None,
-        base_transformations=None):
+        base_transformations=None,
+        variables=None,
+        gt_w2c=None):
     """
     Function to transform Isotropic or Anisotropic Gaussians from world frame to camera frame.
     
@@ -560,20 +439,33 @@ def transform_to_frame(
     Returns:
         transformed_gaussians: Transformed Gaussians (dict containing means3D & unnorm_rotations)
     """
+    all_times = len(params['means3D'].shape) == 3
+
     coefficients = None
     if gauss_time_idx is None:
         gauss_time_idx = time_idx
 
     # Get Frame Camera Pose
-    if camera_grad:
-        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx])
-        cam_tran = params['cam_trans'][..., time_idx]
+    if gt_w2c is None:
+        if camera_grad:
+            cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx])
+            cam_tran = params['cam_trans'][..., time_idx]
+        else:
+            cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
+            cam_tran = params['cam_trans'][..., time_idx].detach()
+        rel_w2c = torch.eye(4, device=params['means3D'].device).float()
+        rel_w2c[:3, :3] = build_rotation(cam_rot)
+        rel_w2c[:3, 3] = cam_tran
     else:
-        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
-        cam_tran = params['cam_trans'][..., time_idx].detach()
-    rel_w2c = torch.eye(4, device=params['means3D'].device).float()
-    rel_w2c[:3, :3] = build_rotation(cam_rot)
-    rel_w2c[:3, 3] = cam_tran
+        with torch.no_grad():
+            # Get the ground truth pose relative to frame 0
+            rel_w2c = gt_w2c
+            rel_w2c_rot = rel_w2c[:3, :3].unsqueeze(0).detach()
+            rel_w2c_rot_quat = matrix_to_quaternion(rel_w2c_rot)
+            rel_w2c_tran = rel_w2c[:3, 3].detach()
+            # Update the camera parameters
+            params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
+            params['cam_trans'][..., time_idx] = rel_w2c_tran
 
     # Check if Gaussians need to be rotated (Isotropic or Anisotropic)
     if params['log_scales'].shape[1] == 1:
@@ -582,31 +474,23 @@ def transform_to_frame(
         transform_rots = True # Anisotropic Gaussians
     
     # Get Centers and Unnorm Rots of Gaussians in World Frame
-    if gaussians_grad:
-        pts = params['means3D'][:, :, gauss_time_idx]
-        unnorm_rots = params['unnorm_rotations'][:, :, gauss_time_idx]
-    else:
-        if motion_mlp is not None or base_transformations is not None:
-            pts = params['means3D'][:, :, gauss_time_idx-1].detach()
-            unnorm_rots = params['unnorm_rotations'][:, :, gauss_time_idx-1].detach()
-            if motion_mlp is not None:
-                pts = pts + motion_mlp(pts, gauss_time_idx-1).squeeze()
-            if base_transformations is not None:
-                pts, unnorm_rots, coefficients  = base_transformations(pts, unnorm_rots, time_idx=time_idx)
+    if motion_mlp is None and base_transformations is None:
+        if all_times:
+            pts = params['means3D'][:, :, gauss_time_idx]
+            unnorm_rots = params['unnorm_rotations'][:, :, gauss_time_idx]
         else:
-            pts = params['means3D'][:, :, gauss_time_idx].detach()
-            unnorm_rots = params['unnorm_rotations'][:, :, gauss_time_idx].detach()
-    
-    if delta:
-        for i in range(delta):
-            unnorm_rots = normalize_quat(unnorm_rots)
-            delta_rot = params['delta_unnorm_rotations'][:, :, i]
-            delta_pts = params['delta_means3D'][:, :, i]
-            if i != delta-1:
-                delta_rot = delta_rot.detach()
-                delta_pts = delta_pts.detach()
-            unnorm_rots = quat_mult(normalize_quat(delta_rot), unnorm_rots)
-            pts = pts + delta_pts
+            pts = params['means3D']
+            unnorm_rots = params['unnorm_rotations']
+        if not gaussians_grad:
+            pts = pts.detach()
+            unnorm_rots = unnorm_rots.detach()
+    else:
+        pts = variables['means3D'][:, :, gauss_time_idx-1].detach()
+        unnorm_rots = variables['unnorm_rotations'][:, :, gauss_time_idx-1].detach()
+        if motion_mlp is not None:
+            pts = pts + motion_mlp(pts, gauss_time_idx-1).squeeze()
+        if base_transformations is not None:
+            pts, unnorm_rots, coefficients  = base_transformations(pts, unnorm_rots, time_idx=time_idx)
 
     transformed_gaussians = {}
     # Transform Centers of Gaussians to Camera Frame
@@ -674,7 +558,7 @@ def dyno_losses(
         update_iso=False,
         time_window=1,
         weight='bg',
-        post_init=False,
+        post_init=True,
         mag_iso=False,
         weight_rot=True,
         weight_rigid=True,
@@ -687,20 +571,28 @@ def dyno_losses(
         bg_weight = params['bg'][variables["self_indices"]].detach().clone()*0+1
     else:
         bg_weight = variables["neighbor_weight"].unsqueeze(1)
+    
+    all_times = len(params["unnorm_rotations"].shape) == 3
+    if all_times:
+        prev_params = params
+        curr_params = params[:, :, iter_time_idx]
+    else:
+        prev_params = variables
+        curr_params = params
 
     # compute loss for last x timesteps
     loss_rigid = 0
     for i in range(1, min(iter_time_idx, last_x)+1):
         # get relative rotation
-        other_rot = params["unnorm_rotations"][:, :, iter_time_idx - i].detach().clone()
+        other_rot = prev_params["unnorm_rotations"][:, :, iter_time_idx - i].detach().clone()
         other_rot[:, 1:] = -1 * other_rot[:, 1:]
-        other_means = params["means3D"][:, :, iter_time_idx - i].detach().clone()
-        curr_rot = transformed_gaussians["unnorm_rotations"]
+        other_means = prev_params["means3D"][:, :, iter_time_idx - i].detach().clone()
+        curr_rot = curr_params["unnorm_rotations"]
         rel_rot = quat_mult(curr_rot, other_rot)
         rel_rot_mat = build_rotation(rel_rot)
 
         # rigid body
-        curr_means = transformed_gaussians["means3D"] # params["means3D"][:, :, iter_time_idx]
+        curr_means = curr_params["means3D"]
         offset = curr_means[variables["self_indices"]] - curr_means[variables["neighbor_indices"]]
         offset_other_coord = (rel_rot_mat[variables["self_indices"]].transpose(2, 1) @ offset.unsqueeze(-1)).squeeze(-1)
         other_offset = other_means[variables["self_indices"]] - other_means[variables["neighbor_indices"]]
@@ -846,7 +738,8 @@ def get_renderings(
                                         camera_grad=track_cam,
                                         delta=delta,
                                         motion_mlp=motion_mlp,
-                                        base_transformations=base_transformations)
+                                        base_transformations=base_transformations,
+                                        gt_w2c=variables['gt_w2c_all_frames'][iter_time_idx] if config['gt_w2c'] else None)
 
     if "to_deactivate" in variables.keys():
         active_gaussians_mask = variables["to_deactivate"] == 100000

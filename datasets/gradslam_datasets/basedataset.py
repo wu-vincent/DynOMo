@@ -113,8 +113,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.cx = config_dict["camera_params"]["cx"]
             self.cy = config_dict["camera_params"]["cy"]
         else:
-            self.orig_height = self.intrinsics[0, 2] * 2
-            self.orig_width = self.intrinsics[1, 2] * 2
+            self.orig_height = config_dict["camera_params"]["image_height"]
+            self.orig_width = config_dict["camera_params"]["image_width"]
 
         self.dtype = dtype
 
@@ -152,14 +152,16 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
         self.color_paths, self.depth_paths, self.embedding_paths = self.get_filepaths()
+
         if len(self.color_paths) != len(self.depth_paths):
             raise ValueError("Number of color and depth images must be the same.")
+        
         if self.load_embeddings:
             if len(self.color_paths) != len(self.embedding_paths):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
+
         self.num_imgs = len(self.color_paths)
         self.poses = self.load_poses()
-        self.load_support_trajs()
         self.instseg_paths = self.get_instsegpaths()
         self.bg_paths = self.get_bg_paths()
 
@@ -168,32 +170,30 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         self.color_paths = self.color_paths[self.start : self.end : stride]
         self.depth_paths = self.depth_paths[self.start : self.end : stride]
+
         if self.load_embeddings:
             self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
         if self.load_instseg:
             self.instseg_paths = self.instseg_paths[self.start : self.end : stride]
         if self.bg_paths is not None:
             self.bg_paths = self.bg_paths[self.start : self.end : stride]
-        if self.support_trajs is not None:
-            self.support_trajs = self.support_trajs[self.start : self.end : stride]
+
         self.poses = self.poses[self.start : self.end : stride]
         
         # Tensor of retained indices (indices of frames and poses that were retained)
         self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
+
         # Update self.num_images after subsampling the dataset
         self.num_imgs = len(self.color_paths)
 
         # self.transformed_poses = datautils.poses_to_transforms(self.poses)
         self.poses = torch.stack(self.poses)
-        print(self.poses[0])
-        print(self.poses[1])
+        
         if self.relative_pose:
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
-        print(self.transformed_poses[0])
-        print(self.transformed_poses[1])
-        print()
+
         self.precomp_intrinsics = precomp_intrinsics
 
     def __len__(self):
@@ -296,7 +296,11 @@ class GradSLAMDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         color_path = self.color_paths[index]
         depth_path = self.depth_paths[index]
-        color = np.asarray(imageio.imread(color_path), dtype=float)
+
+        if isinstance(color_path, np.ndarray):
+            color = color_path
+        else:
+            color = np.asarray(imageio.imread(color_path), dtype=float)
         if color.shape[2] > 3:
             color = color[:, :, :3]
         color = self._preprocess_color(color)
@@ -314,14 +318,15 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if not self.precomp_intrinsics:
             K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
         else:
-            K = self.intrinsics
+            K = self.intrinsics[index]
 
         if self.distortion is not None:
             # undistortion is only applied on color image, not depth!
             color = cv2.undistort(color, K, self.distortion)
 
         color = torch.from_numpy(color)
-        K = torch.from_numpy(K)
+        if isinstance(K, np.ndarray):
+            K = torch.from_numpy(K)
         depth = self._preprocess_depth(depth)
         depth = torch.from_numpy(depth)
 
@@ -330,7 +335,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         intrinsics[:3, :3] = K
 
         pose = self.transformed_poses[index]
-
         return_vals = [
                 color.to(self.device).type(self.dtype).permute(2, 0, 1) / 255,
                 depth.to(self.device).type(self.dtype).permute(2, 0, 1),
@@ -341,6 +345,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
         trans_bilinear = torchvision.transforms.Resize(
                 (color.shape[0], color.shape[1]), InterpolationMode.BILINEAR)
+        
         if self.load_instseg:
             # load and downsample to rgb size
             instseg = self._load_instseg(self.instseg_paths[index])            
@@ -356,13 +361,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         else:
             return_vals = return_vals + [None]
         
-        if self.support_trajs is not None:
-            try:
-                return_vals = return_vals + [torch.from_numpy(self.support_trajs[index]).to(self.device).long()]
-            except:
-                return_vals = return_vals + [torch.atleast_3d(torch.from_numpy(self.support_trajs[-1, index-len(self.support_trajs):])).to(self.device).long()]
-        else:
-            return_vals = return_vals + [None]
+        # rest of support trajs
+        return_vals = return_vals + [None]
         
         if self.bg_paths is not None:
             bg = self._load_bg(self.bg_paths[index])

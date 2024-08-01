@@ -27,6 +27,8 @@ def params2cpu(params):
     for k, v in params.items():
         if isinstance(v, torch.Tensor):
             res[k] = v.detach().cpu().contiguous().numpy()
+        elif isinstance(v, list):
+            res[k] = torch.stack(v).detach().cpu().contiguous().numpy()
         else:
             res[k] = v
     return res
@@ -73,6 +75,8 @@ def load_params_ckpt(output_dir, device):
             for k, v in params.items():
                 if (v != np.array(None)).all():
                     _params[k] = torch.from_numpy(v).to(device)
+                    if k == 'gt_w2c_all_frames':
+                        _params[k] = [w2c_time for w2c_time in v]
                 else:
                     _params[k] = v
             params = _params

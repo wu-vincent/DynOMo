@@ -13,6 +13,15 @@ import json
 from sklearn.decomposition import PCA
 
 
+jono_seqs_stereo = \
+    {"boxes/ims/27": "boxes/ims/23",
+     "softball/ims/27": "softball/ims/8",
+     "basketball/ims/21": "basketball/ims/24",
+     "football/ims/18": "football/ims/3", 
+     "juggle/ims/14": "juggle/ims/23",
+     "tennis/ims/8": "tennis/ims/27"}
+
+
 class JonoDynoSplatamDataset(GradSLAMDataset):
     def __init__(
         self,
@@ -33,6 +42,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         feats_224=False,
         do_transform=False,
         novel_view_mode=None,
+        stereo=False,
         **kwargs,
     ): 
         start = start + 2
@@ -46,6 +56,11 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         self.feats_224 = feats_224
         self.do_transform = do_transform
         self.novel_view_mode = novel_view_mode
+        self.stereo = stereo
+        if self.stereo:
+            self.input_folder_stereo = os.path.join(basedir, jono_seqs_stereo[sequence])
+            self.poses_stereo = self.load_poses(stereo=True)
+
         super().__init__(config_dict,
             stride=stride,
             start=start,
@@ -63,14 +78,19 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
     def get_bg_paths(self):
         if os.path.isdir(f"{self.input_folder.replace('ims', 'seg')}"):
             bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
+            if self.stereo:
+                self.bg_paths_stereo = natsorted(glob.glob(f"{self.input_folder_stereo.replace('ims', 'seg')}/*.png"))
         else:
             bg_paths = None
+            if self.stereo:
+                self.bg_paths_stereo = None
         return bg_paths
     
     def get_instsegpaths(self):
         # instseg_paths = natsorted(glob.glob(f"{self.input_folder}/*sam_big_area.npy"))
-        print(f"{self.input_folder.replace('ims', 'seg')}/*.png")
         instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
+        if self.stereo:
+            self.bg_paths_stereo = natsorted(glob.glob(f"{self.input_folder_stereo.replace('ims', 'seg')}/*.png"))
 
         return instseg_paths
     
@@ -94,25 +114,33 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         return bg
     
     def get_filepaths(self):
+        # get color paths
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))
+        if self.stereo:
+            self.stereo_color_paths =  natsorted(glob.glob(f"{self.input_folder_stereo}/*.jpg"))
+
+        # get depth paths
         if not self.jono_depth:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))
+            if self.stereo:
+                self.stereo_depth_paths =  natsorted(glob.glob(f"{self.input_folder_stereo}/depth*.jpg"))
         else:
             input_folder = self.input_folder.replace("/scratch/jseidens/data/data", "../Dynamic3DGaussians/rendered")
             depth_paths = natsorted(glob.glob(f"{input_folder}/depth*.npy"))
+            if self.stereo:
+                input_folder_stereo = self.input_folder.replace("/scratch/jseidens/data/data", "../Dynamic3DGaussians/rendered")
+                self.stereo_depth_paths = natsorted(glob.glob(f"{input_folder_stereo}/depth*.npy"))
         
+        # get embedding paths
         embedding_paths = None
         if self.load_embeddings:
-            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*gs_*.npy"))
-            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img.npy"))
-            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*sam_img_quat.npy"))
-            # embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat.npy"))
-            
             print("Using DINO 4/1 features")
             if os.path.isfile(f"{self.input_folder.replace('ims', 'feats')}/000000dino_img_quat_4_1_64.npy"):
                 embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1_64.npy"))
             else:
-                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))
+                embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))   
+            if self.stereo:
+                self.stereo_embedding_paths = natsorted(glob.glob(f"{self.input_folder_stereo.replace('ims', 'feats')}/*dino_img_quat_4_1_64.npy"))
 
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
@@ -125,30 +153,16 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         return color_paths, depth_paths, embedding_paths
     
     def load_support_trajs(self):
-        try:
-            # load
-            self.support_trajs = np.load(
-                f"{self.input_folder.replace('ims', 'support_trajs')}/48_trajs.npy").squeeze()
-            # sclae 
-            support_traj_shape = (352,640)
-            scale_factors = (
-                self.desired_width/support_traj_shape[1], self.desired_height/support_traj_shape[0])
-            self.support_trajs[:, :, :, 0] = self.support_trajs[:, :, :, 0] * scale_factors[0]
-            self.support_trajs[:, :, :, 1] = self.support_trajs[:, :, :, 1] * scale_factors[1]
-            self.support_trajs = np.round(self.support_trajs)
-
-            # clip to image boundaries
-            self.support_trajs[:, :, :, 0] = np.clip(
-                self.support_trajs[:, :, :, 0], a_min=0, a_max=self.desired_width-1)
-            self.support_trajs[:, :, :, 1] = np.clip(
-                self.support_trajs[:, :, :, 1], a_min=0, a_max=self.desired_height-1)
-        except:
-            self.support_trajs = None
+        self.support_trajs = None
             
-    def load_poses(self):
+    def load_poses(self, stereo=False):
         if self.do_transform:
             basedir = os.path.dirname(os.path.dirname(self.input_folder))
-            cam_id = int(os.path.basename(self.input_folder))
+            if not stereo:
+                cam_id = int(os.path.basename(self.input_folder))
+            else:
+                cam_id = int(os.path.basename(self.input_folder_stereo))
+
             with open(f'{basedir}/meta.json', 'r') as jf:
                 data = json.load(jf)
             idx = data['cam_id'][0].index(cam_id)
@@ -156,7 +170,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
             c2w = torch.linalg.inv(w2c)
         else:
             c2w = torch.eye(4).float()
-
+    
         poses = []
         for i in range(self.num_imgs):
             poses.append(c2w)

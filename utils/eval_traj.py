@@ -72,7 +72,7 @@ def gauss_wise3D_track(search_fg_only, params, use_norm_pix, use_round_pix, proj
     return gs_traj_3D, logit_opacities, rgb_colors, unnorm_rotations, visibility
 
 
-def get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h):
+def get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h, gt_w2c=False):
     params_gs_traj_3D = copy.deepcopy(params)
     params_gs_traj_3D['means3D'] = gs_traj_3D
 
@@ -86,7 +86,8 @@ def get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h
                 time,
                 gaussians_grad=False,
                 camera_grad=False,
-                delta=0)
+                delta=0,
+                gt_w2c=params['gt_w2c_all_frames'][time] if gt_w2c else None)
         gs_traj_2D.append(
             three2two(proj_matrix, transformed_gs_traj_3D['means3D'], w, h, do_normalize=False))
     gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
@@ -95,13 +96,15 @@ def get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h
     return gs_traj_2D
 
 
-def get_2D_track_from_3D_for_vis(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h):
+def get_2D_track_from_3D_for_vis(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h, gt_w2c):
     params_gs_traj_3D = copy.deepcopy(params)
     params_gs_traj_3D['means3D'] = gs_traj_3D
 
     params_gs_traj_3D['unnorm_rotations'] = unnorm_rotations
     gs_traj_2D_per_time = list()
     for cam_time in range(gs_traj_3D.shape[-1]):
+        if cam_time % 10 == 0:
+            print(cam_time)
         gs_traj_2D = list()
         for gauss_time in range(gs_traj_3D.shape[-1]):
             if gs_traj_3D[:, :, gauss_time].sum() == 0:
@@ -112,7 +115,8 @@ def get_2D_track_from_3D_for_vis(params, gs_traj_3D, unnorm_rotations, proj_matr
                     gaussians_grad=False,
                     camera_grad=False,
                     gauss_time_idx=gauss_time,
-                    delta=0)
+                    delta=0,
+                    gt_w2c=params['gt_w2c_all_frames'][cam_time] if gt_w2c else None)
             gs_traj_2D.append(
                 three2two(proj_matrix, transformed_gs_traj_3D['means3D'], w, h, do_normalize=False))
         gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
@@ -121,7 +125,7 @@ def get_2D_track_from_3D_for_vis(params, gs_traj_3D, unnorm_rotations, proj_matr
     return gs_traj_2D_per_time
 
 
-def get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h):
+def get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h, visuals, gt_w2c=False):
     with torch.no_grad():
         _, im, _, _, _, _, _, visible, weight, time_mask, _, _, _, _, _, _ = get_renderings(
             params,
@@ -138,39 +142,60 @@ def get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h):
     all_trajs_3D = list()
     all_trajs_2D = list()
     all_visibilities = list()
+    gs_traj_2D_per_time = list()
     for i in range(start_pixels.shape[0]):
         visible_means = visible_means_start_pix[:, i][torch.nonzero(visible_means_start_pix[:, i])].squeeze().long()
         weight_means = weight_means_start_pix[:, i][torch.nonzero(visible_means_start_pix[:, i])].squeeze()
         traj_3D = list()
         traj_2D = list()
         visibility = list()
+        gs_traj_2D_per_time_per_start_pix = list()
         start_pix_params = copy.deepcopy(params)
-        for t in range(params['means3D'].shape[2]):
-            loc_3D = ((weight_means/weight_means.sum()).unsqueeze(1) * params['means3D'][visible_means, :, t]).sum(dim=0).unsqueeze(0).unsqueeze(-1)
-            visibility.append(((weight_means/weight_means.sum()) * params['visibility'][visible_means, t].squeeze()).sum())
-            start_pix_params['means3D'] = loc_3D
-            start_pix_params['unnorm_rotations'] = torch.zeros(1, 4, 1).to(params['means3D'].device)
-            transformed_loc_3D, _ = transform_to_frame(
-                    start_pix_params,
-                    t,
-                    gaussians_grad=False,
-                    camera_grad=False,
-                    gauss_time_idx=0,
-                    delta=0)
-            loc_2D = three2two(proj_matrix, transformed_loc_3D['means3D'], w, h, do_normalize=False, do_scale=False).float()
-            traj_3D.append(loc_3D)
-            traj_2D.append(loc_2D)
+        for cam_time in range(params['means3D'].shape[2]):
+            gs_traj_2D_per_time_per_start_pix_per_cam_time = list()
+            for gauss_time in range(params['means3D'].shape[2]):
+                if not visuals and cam_time != gauss_time:
+                    continue
+                loc_3D = ((weight_means/weight_means.sum()).unsqueeze(1) * params['means3D'][visible_means, :, gauss_time]).sum(dim=0).unsqueeze(0).unsqueeze(-1)
+                start_pix_params['means3D'] = loc_3D
+                start_pix_params['unnorm_rotations'] = torch.zeros(1, 4, 1).to(params['means3D'].device)
+                transformed_loc_3D, _ = transform_to_frame(
+                        start_pix_params,
+                        cam_time,
+                        gaussians_grad=False,
+                        camera_grad=False,
+                        gauss_time_idx=0,
+                        delta=0,
+                        gt_w2c=params['gt_w2c_all_frames'][cam_time] if gt_w2c else None)
+                loc_2D = three2two(proj_matrix, transformed_loc_3D['means3D'], w, h, do_normalize=False, do_scale=False).float()
+                if cam_time == gauss_time:
+                    visibility.append(((weight_means/weight_means.sum()) * params['visibility'][visible_means, gauss_time].squeeze()).sum())
+                    traj_3D.append(loc_3D)
+                    traj_2D.append(loc_2D)
+                gs_traj_2D_per_time_per_start_pix_per_cam_time.append(loc_2D)
+
+            gs_traj_2D_per_time_per_start_pix_per_cam_time = torch.stack(gs_traj_2D_per_time_per_start_pix_per_cam_time)
+            gs_traj_2D_per_time_per_start_pix.append(gs_traj_2D_per_time_per_start_pix_per_cam_time)
+
         traj_2D = torch.stack(traj_2D).squeeze()
         traj_3D = torch.stack(traj_3D).squeeze()
         visibility = torch.stack(visibility)
+        gs_traj_2D_per_time_per_start_pix = torch.stack(gs_traj_2D_per_time_per_start_pix)
+
         all_trajs_2D.append(traj_2D)
         all_trajs_3D.append(traj_3D)
         all_visibilities.append(visibility)
+        gs_traj_2D_per_time.append(gs_traj_2D_per_time_per_start_pix)
+
     all_trajs_2D = torch.stack(all_trajs_2D).squeeze()
     all_trajs_3D = torch.stack(all_trajs_3D).squeeze()
     all_visibilities = torch.stack(all_visibilities).squeeze()
-
-    return all_trajs_2D, all_trajs_3D, all_visibilities
+    gs_traj_2D_per_time = torch.stack(gs_traj_2D_per_time)
+    if visuals:
+        gs_traj_2D_per_time = gs_traj_2D_per_time.squeeze().permute(1, 0, 2, 3)
+    else:
+        gs_traj_2D_per_time = None
+    return all_trajs_2D, all_trajs_3D, all_visibilities, gs_traj_2D_per_time
         
 
 def gauss_wise3D_track_from_3D(search_fg_only, params, thresh, best_x, gt_colors, color_thresh, no_bg, gauss_ids, first_occurance, start_3D, start_pixels):
@@ -232,7 +257,9 @@ def get_gs_traj_pts(
         cam=None,
         get_gauss_wise3D_track=True,
         get_from3D=False,
-        start_3D=None):
+        start_3D=None,
+        visuals=False,
+        gt_w2c=False):
 
     # get start pixels in right format
     start_pixels = format_start_pix(
@@ -244,23 +271,67 @@ def get_gs_traj_pts(
         w=w,
         do_scale=do_scale,
         params=params)
-
+    gs_traj_2D_for_vis = None
     if get_gauss_wise3D_track and get_from3D and start_3D is not None:
         gs_traj_3D, logit_opacities, rgb_colors, unnorm_rotations, visibility = \
-            gauss_wise3D_track_from_3D(search_fg_only, params, thresh, best_x, gt_colors, color_thresh, no_bg, gauss_ids, first_occurance, start_3D, start_pixels)
-        gs_traj_2D_for_vis = get_2D_track_from_3D_for_vis(copy.deepcopy(params), copy.deepcopy(gs_traj_3D), copy.deepcopy(unnorm_rotations), proj_matrix, w, h)
-        gs_traj_2D = get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h)
+            gauss_wise3D_track_from_3D(
+                search_fg_only,
+                params,
+                thresh,
+                best_x,
+                gt_colors,
+                color_thresh,
+                no_bg,
+                gauss_ids,
+                first_occurance,
+                start_3D,
+                start_pixels)
+        if visuals:
+            gs_traj_2D_for_vis = get_2D_track_from_3D_for_vis(
+                copy.deepcopy(params),
+                copy.deepcopy(gs_traj_3D),
+                copy.deepcopy(unnorm_rotations),
+                proj_matrix,
+                w,
+                h,
+                gt_w2c=gt_w2c)
+        gs_traj_2D = get_2D_track_from_3D(
+            params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h, gt_w2c=gt_w2c)
         gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
     elif get_gauss_wise3D_track:
         gs_traj_3D, logit_opacities, rgb_colors, unnorm_rotations, visibility = \
-            gauss_wise3D_track(search_fg_only, params, use_norm_pix, use_round_pix, proj_matrix, w, h, do_scale, start_pixels_normalized, thresh, best_x, gt_colors, color_thresh, no_bg, gauss_ids, first_occurance, start_pixels)
-        gs_traj_2D_for_vis = get_2D_track_from_3D_for_vis(copy.deepcopy(params), copy.deepcopy(gs_traj_3D), copy.deepcopy(unnorm_rotations), proj_matrix, w, h)
-        gs_traj_2D = get_2D_track_from_3D(params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h)
+            gauss_wise3D_track(
+                search_fg_only,
+                copy.deepcopy(params),
+                use_norm_pix,
+                use_round_pix,
+                proj_matrix,
+                w,
+                h,
+                do_scale,
+                start_pixels_normalized,
+                thresh,
+                best_x,
+                gt_colors,
+                color_thresh,
+                no_bg, gauss_ids,
+                first_occurance,
+                start_pixels)
+        if visuals:
+            gs_traj_2D_for_vis = get_2D_track_from_3D_for_vis(
+                copy.deepcopy(params),
+                copy.deepcopy(gs_traj_3D),
+                copy.deepcopy(unnorm_rotations),
+                proj_matrix,
+                w,
+                h,
+                gt_w2c=gt_w2c)
+        gs_traj_2D = get_2D_track_from_3D(
+            params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h, gt_w2c=gt_w2c)
         gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
     else:
-        gs_traj_2D, gs_traj_3D, visibility = get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h)
-        gs_traj_2D_for_vis = gs_traj_2D
-
+        gs_traj_2D, gs_traj_3D, visibility, gs_traj_2D_for_vis = get_2D_and_3D_from_sum(
+            params, cam, start_pixels, proj_matrix, w, h, visuals, gt_w2c=gt_w2c)
     return gs_traj_2D, gs_traj_3D, visibility, gs_traj_2D_for_vis
 
 
@@ -372,7 +443,7 @@ def get_3D_trajs_for_track(gauss_ids, params, return_all=False, no_bg=False):
                 (torch.ones_like(params['unnorm_rotations'][0]).squeeze()*-1).to(params['means3D'].device))
             visibility.append(
                     (torch.zeros(params['means3D'].shape[2])).to(params['means3D'].device))
-
+    # print(gs_traj_3D, logit_opacities, rgb_colors, unnorm_rotations, visibility)
     if return_all:
         return torch.stack(gs_traj_3D), torch.stack(logit_opacities), torch.stack(rgb_colors), torch.stack(unnorm_rotations), torch.stack(visibility)
     else:
@@ -453,7 +524,9 @@ def _eval_traj(
         do_transform=False,
         get_gauss_wise3D_track=True,
         get_best_jaccard=True,
-        get_from3D=False
+        get_from3D=False,
+        vis_trajs_best_x=False,
+        gt_w2c=False
     ):
     if params['means3D'][:, :, -1].sum() == 0:
         params['means3D'] = params['means3D'][:, :, :-1]
@@ -503,13 +576,29 @@ def _eval_traj(
         cam=cam,
         get_gauss_wise3D_track=get_gauss_wise3D_track,
         start_3D=gt_traj_3D[:, 0].clone().cuda() if gt_traj_3D is not None else gt_traj_3D,
-        get_from3D=get_from3D)
+        get_from3D=get_from3D,
+        visuals=vis_trajs_best_x or vis_trajs,
+        gt_w2c=gt_w2c)
+
+    pred_visibility = (pred_visibility > vis_thresh).float()
+
+    if best_x > 1 and vis_trajs_best_x:
+        print('Visualizeing tracked points')
+        data['points'] = normalize_points(gs_traj_2D_for_vis, h, w).squeeze()
+        data['occluded'] = occluded.squeeze()
+        data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
+        vis_trail(
+            results_dir,
+            data,
+            pred_visibility=pred_visibility.squeeze(),
+            vis_traj=True if traj_len > 0 else False)
 
     # N*best_x, T, D 
     gs_traj_2D = gs_traj_2D.reshape(-1, best_x, gs_traj_2D.shape[1], gs_traj_2D.shape[2]).permute(1, 0, 2, 3)
     gs_traj_3D = gs_traj_3D.reshape(-1, best_x, gs_traj_3D.shape[1], gs_traj_3D.shape[2]).permute(1, 0, 2, 3)
     pred_visibility = pred_visibility.reshape(-1, best_x, pred_visibility.shape[1]).permute(1, 0, 2)
-    gs_traj_2D_for_vis = gs_traj_2D_for_vis.reshape(gs_traj_2D_for_vis.shape[2], -1, best_x, gs_traj_2D_for_vis.shape[2], gs_traj_2D_for_vis.shape[3]).permute(0, 2, 1, 3, 4)
+    if vis_trajs_best_x or vis_trajs:
+        gs_traj_2D_for_vis = gs_traj_2D_for_vis.reshape(gs_traj_2D_for_vis.shape[2], -1, best_x, gs_traj_2D_for_vis.shape[2], gs_traj_2D_for_vis.shape[3]).permute(0, 2, 1, 3, 4)
 
     # if point cloud defined in camera = world space
     if gt_traj_3D is not None and do_transform:
@@ -545,7 +634,8 @@ def _eval_traj(
 
     gs_traj_2D = gs_traj_2D[min_idx, torch.arange(gs_traj_2D.shape[1]), :, :]
     gs_traj_3D = gs_traj_3D[min_idx, torch.arange(gs_traj_3D.shape[1]), :, :]
-    gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, min_idx, torch.arange(gs_traj_2D_for_vis.shape[2]), :, :]
+    if vis_trajs_best_x or vis_trajs:
+        gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, min_idx, torch.arange(gs_traj_2D_for_vis.shape[2]), :, :]
 
     # make predicted visinbility bool
     pred_visibility = (pred_visibility > vis_thresh).float()
@@ -574,7 +664,7 @@ def _eval_traj(
             pred_visibility,
             gt_traj_3D,
             gs_traj_3D,
-            gs_traj_2D_for_vis)
+            gs_traj_2D_for_vis=gs_traj_2D_for_vis if vis_trajs_best_x or vis_trajs else None)
 
     # compute metrics from pips
     pips_metrics = compute_metrics(
@@ -619,12 +709,6 @@ def _eval_traj(
         data['points'] = normalize_points(gs_traj_2D_for_vis, h, w).squeeze()
         data['occluded'] = occluded.squeeze()
         data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
-        # vis_tracked_points(
-        #     results_dir,
-        #     data,
-        #     clip=clip,
-        #     pred_visibility=pred_visibility.squeeze(),
-         #    traj_len=traj_len)
         vis_trail(
             results_dir,
             data,
@@ -658,7 +742,7 @@ def get_smallest_l2(gs_traj_2D, pred_visibility, gt_traj_2D, valids, W, H, norm_
     return min_idx
 
 
-def mask_valid_ids(valids, gs_traj_2D, gt_traj_2D, occluded, pred_visibility, gt_traj_3D, gs_traj_3D, gs_traj_2D_for_vis):
+def mask_valid_ids(valids, gs_traj_2D, gt_traj_2D, occluded, pred_visibility, gt_traj_3D, gs_traj_3D, gs_traj_2D_for_vis=None):
     # only keep points that are visible at time 0
     vis_ok = valids[:, :, 0] > 0
 
@@ -688,7 +772,8 @@ def mask_valid_ids(valids, gs_traj_2D, gt_traj_2D, occluded, pred_visibility, gt
         gs_traj_3D = gs_traj_3D.reshape(
         shape[0]*shape[1], shape[2], shape[3])[vis_ok].reshape(
             shape[0], -1, shape[2], shape[3])
-    gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, vis_ok, :, :]
+    if gs_traj_2D_for_vis is not None:
+        gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, vis_ok, :, :]
 
     return gs_traj_2D, gt_traj_2D, valids, occluded, pred_visibility, gt_traj_3D, gs_traj_3D, gs_traj_2D_for_vis
 
@@ -1124,20 +1209,21 @@ def eval_traj(
         gauss_ids_to_track=None,
         input_k=None,
         input_w2c=None, 
-        load_gaussian_tracks=True,
+        load_gaussian_tracks=False,
         use_norm_pix=False,
         use_round_pix=False,
         do_scale=False,
         clip=True,
-        use_gt_occ=True,
+        use_gt_occ=False,
         vis_thresh=0.5,
-        vis_thresh_start=100000,
+        vis_thresh_start=0.5,
         best_x=1,
         traj_len=10,
         color_thresh=1000,
         do_transform=False,
         get_gauss_wise3D_track=True,
-        get_from3D=False):
+        get_from3D=False,
+        vis_trajs_best_x=False):
     
     # get projectoin matrix
     if cam is None:
@@ -1206,7 +1292,9 @@ def eval_traj(
         config=config,
         do_transform=do_transform,
         get_gauss_wise3D_track=get_gauss_wise3D_track,
-        get_from3D=get_from3D)
+        get_from3D=get_from3D,
+        vis_trajs_best_x=vis_trajs_best_x,
+        gt_w2c=config['gt_w2c'])
 
     return metrics
 
@@ -1477,7 +1565,8 @@ def vis_grid_trajs(
         start_pixels_normalized=False,
         no_bg=no_bg,
         do_scale=False,
-        get_gauss_wise3D_track=True)
+        get_gauss_wise3D_track=True,
+        visuals=True)
 
     pred_visibility = (pred_visibility > vis_thresh).float()
 

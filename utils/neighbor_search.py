@@ -154,8 +154,8 @@ def calculate_neighbors_seg(
                     params['means3D'][:, :, time_idx].detach()])
             else:
                 existing_means = torch.cat(
-                    [existing_params['means3D'][:, :].detach().contiguous(),
-                    params['means3D'][:, :].detach()])
+                    [existing_params['means3D'].detach().contiguous(),
+                    params['means3D'].detach()])
             aranged_idx = torch.arange(existing_means.shape[0]).to(device)
             existing_instseg_mask = torch.cat([existing_instseg_mask, instseg_mask])
         else:
@@ -165,7 +165,7 @@ def calculate_neighbors_seg(
             if len(existing_params['means3D'].shape) == 3:
                 existing_means = existing_params['means3D'][:, :, time_idx].detach().contiguous()
             else:
-                existing_means = existing_params['means3D'][:, :].detach().contiguous()
+                existing_means = existing_params['means3D'].detach().contiguous()
             aranged_idx = torch.arange(existing_means.shape[0]).to(device)
             existing_instseg_mask = existing_instseg_mask
     else:

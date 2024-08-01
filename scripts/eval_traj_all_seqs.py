@@ -156,12 +156,12 @@ def get_davis_exps():
     names.append("less_16_128_16_20_20_20_5_repeat")
 
     # long training 16_128_16_20_20_5
-    experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_False_0.1_aniso"]
-    names.append("16_128_16_20_20_5")
+    # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_False_0.1_aniso"]
+    # names.append("16_128_16_20_20_5")
 
     # stride 1 again
-    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_1_1_0_1_20_240_455_0.0_0.0_0.0_False_False_True_False_False_0.1_aniso_repeat"]
-    names.append("less_16_128_16_20_20_5_1")
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_1_1_0_1_20_240_455_0.0_0.0_0.0_False_False_True_False_False_0.1_aniso_repeat"]
+    # names.append("less_16_128_16_20_20_5_1")
 
     # no embeddings 0_16_128_16_20_20_5
     # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_0_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0.0_False_False_True_False_False_0.1_aniso_repeat"]
@@ -178,6 +178,51 @@ def get_davis_exps():
     # 16_128_16_20_20_5 high depth
     # experiments += ["0_kNN_500_1000_500_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_1.0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_False_1.0_aniso"]
     # names.append('16_128_16_20_20_5_high_depth')
+
+    #### transformed Gaussians in dyno losses bug removal #####
+    # less ep 16_128_16_20_20_5 full res l1
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_480_910_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb"]
+    # names.append('less_16_128_16_20_20_5_full_res_l1')
+
+    # less ep 16_128_16_20_20_5 l1
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_l1')
+
+    #less ep 16_128_16_20_20_5 full res l2
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem')
+
+    # no seg for nn less ep 16_128_16_20_20_5 l2
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg')
+
+    # no seg no bg loss less ep 16_128_16_20_20_5 l2
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_rem_no_bbg')
+
+    # no seg no depth loss 
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0_3_aniso_deb_l2_emb"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_no_depth')
+
+    # no seg no depth loss after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0_3_aniso_deb_l2_emb_forward_after_opt"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_no_depth_after_opt')
+
+    # no seg loss after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_forward_after_opt"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_no_seg_after_opt')
+
+    #less ep 16_128_16_20_20_5 l2 repeat
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_repeat')
+
+    # after opt forwatd
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_forward_after_opt_r2"]
+    # names.append('less_16_128_16_20_20_5_bug_rem_after_opt')
+
+    # no seg no bg loss less ep 16_128_16_20_20_5 l2 repeat
+    # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb_r2"]
+    # names.append('less_16_128_16_20_20_5_bug_no_seg_rem_no_bbg_repeat')
 
     return experiments, names
 
@@ -224,12 +269,11 @@ def get_jono_exps():
     experiments += ["0_kNN_500_1000_0_-1_32_False_False_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_180_320_0.0_0.0_transformed"]
     names.append('not_higher_lr_normal_size_transformed')
 
-    experiments = list()
-    names = list()
     # jono pc
     experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_180_320_0.0_0.0_transformed"]
     names.append('not_higher_lr_normal_size_jono_pc')
-
+    experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_transformed"]
+    names.append('not_higher_lr_orig_size_jono_pc_remove_close')
 
     return experiments, names
 
@@ -241,6 +285,14 @@ def get_splatam_exps():
     experiments += ["../SplaTAM/experiments/dynosplatam_davis_longer"]
     names += ["longer_splatam"]
 
+    return experiments, names
+
+def get_rgb_exps():
+    experiments = list()
+    names = list()
+    ### BEST SO FAR
+    experiments += ["0_kNN_200_200_0_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_128_128_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb_r2"]
+    names.append('frist_trial')
     return experiments, names
 
 
@@ -257,8 +309,9 @@ if __name__ == "__main__":
     
     dataset = 'davis'
     # dataset = 'davis_splatam'
-    dataset = 'jono'
+    # dataset = 'jono'
     # dataset = 'jono_baseline'
+    dataset = 'rgb_stacking'
 
     if dataset == 'jono_baseline':
         experiments, names = get_jono_base_exps()
@@ -268,31 +321,36 @@ if __name__ == "__main__":
         experiments, names = get_davis_exps()
     elif dataset == 'davis_splatam':
         experiments, names = get_splatam_exps()
+    elif dataset == 'rgb_stacking':
+        experiments, names = get_rgb_exps()
 
     load_gaussian_tracks = False
     vis_trajs = True
-    vis_gird = True
+    vis_gird = False
 
     get_gauss_wise3D_track = True
     use_round_pix = False
-    get_from3D = True
+    get_from3D = False
+    vis_trajs_best_x = False
     
     clip = False
-    use_gt_occ = True
-    vis_thresh = -0.01
+    use_gt_occ = False
+    vis_thresh = 0.5
     vis_thresh_start = 0.5
     color_thresh = 1000
     best_x = 1
     traj_len = 10
     vis_all = True
-    primary_device = "cuda:4"
+    primary_device = "cuda:1"
     novel_view_mode = 'circle' # 'circle', 'test_cam'
 
-    print(f"Evaluating gauss-wise-track {get_gauss_wise3D_track} and round pixel {use_round_pix}.")
+    print(f"Evaluating gauss-wise-track {get_gauss_wise3D_track} and round pixel {use_round_pix} and get from 3D {get_from3D}.")
 
     for name, experiment in zip(names, experiments):
         if dataset == 'davis':
             exp_dirs = f"experiments/dynosplatam_davis/*/*_{experiment}"
+        elif dataset == 'rgb_stacking':
+            exp_dirs = f"experiments/dynosplatam_rgb/*/*_{experiment}"
         elif dataset == 'davis_splatam':
             exp_dirs = f"{experiment}/*"
         elif dataset == "jono":
@@ -304,7 +362,10 @@ if __name__ == "__main__":
         paths = glob.glob(exp_dirs)
         for i, p in enumerate(paths):
             val_dict = dict()
-            if dataset == 'davis':
+            seq = p.split('/')[-2][8:]
+            run_name = '/'.join(p.split('/')[-2:])
+
+            if dataset == 'davis' or dataset == 'rgb_stacking':
                 seq = p.split('/')[-2][8:]
                 run_name = '/'.join(p.split('/')[-2:])
             elif dataset == 'davis_splatam':
@@ -321,7 +382,7 @@ if __name__ == "__main__":
             if 'annotations' in seq:
                 continue
 
-            # if 'horse' not in seq:
+            # if 'soapbox' not in seq:
             #     continue
 
             print(f"\mSEQUENCE {seq}...")
@@ -348,6 +409,9 @@ if __name__ == "__main__":
             elif "360_640" in experiment:
                 seq_experiment.config['data']['desired_image_height'] = 360
                 seq_experiment.config['data']['desired_image_width'] = 640
+            elif "128_128" in experiment:
+                seq_experiment.config['data']['desired_image_height'] = 128
+                seq_experiment.config['data']['desired_image_width'] = 128
 
             if 'transformed' not in experiment:
                 do_transform = True
@@ -355,21 +419,23 @@ if __name__ == "__main__":
                 do_transform = False
 
             if args.eval_traj:
-                if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
-                    print(f"Experiment not done {run_name} yet.")
-                    continue
-                elif not os.path.isfile(f"{experiment}/{run_name}/params.npz") and "SplaTAM" in experiment:
-                    print(f"Experiment not done {run_name} yet.")
-                    continue
+                # if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
+                #     print(f"Experiment not done {run_name} yet.")
+                #     continue
+                # elif not os.path.isfile(f"{experiment}/{run_name}/params.npz") and "SplaTAM" in experiment:
+                #     print(f"Experiment not done {run_name} yet.")
+                #     continue
                 
                 if seq_experiment.config['time_window'] == 1:
-                    if not get_gauss_wise3D_track:
+                    if not get_gauss_wise3D_track and (not get_from3D or 'jono' not in dataset):
                         add_on = '_alpha'
+                    elif get_from3D:
+                        add_on = '_from_3D'
                     elif use_round_pix:
                         add_on = '_round'
                     else:
                         add_on = ''
-                    
+
                     if best_x != 1:
                         add_on = add_on + f'_{best_x}'
 
@@ -388,10 +454,11 @@ if __name__ == "__main__":
                         do_transform=do_transform,
                         use_round_pix=use_round_pix,
                         get_gauss_wise3D_track=get_gauss_wise3D_track,
-                        get_from3D=get_from3D
+                        get_from3D=get_from3D,
+                        vis_trajs_best_x=vis_trajs_best_x
                         )
                     print(metrics)
-                    quit()
+
                     with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.txt'), 'w') as f:
                         f.write(f"Trajectory metrics: {metrics}")
 
@@ -461,3 +528,4 @@ if __name__ == "__main__":
  
                 rgbd_slammer = RBDG_SLAMMER(seq_experiment.config)
                 rgbd_slammer.render_novel_view(novel_view_mode=novel_view_mode)
+                quit()
