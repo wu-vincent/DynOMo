@@ -425,8 +425,7 @@ def transform_to_frame(
         delta=0,
         motion_mlp=None,
         base_transformations=None,
-        variables=None,
-        gt_w2c=None):
+        variables=None):
     """
     Function to transform Isotropic or Anisotropic Gaussians from world frame to camera frame.
     
@@ -446,26 +445,15 @@ def transform_to_frame(
         gauss_time_idx = time_idx
 
     # Get Frame Camera Pose
-    if gt_w2c is None:
-        if camera_grad:
-            cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx])
-            cam_tran = params['cam_trans'][..., time_idx]
-        else:
-            cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
-            cam_tran = params['cam_trans'][..., time_idx].detach()
-        rel_w2c = torch.eye(4, device=params['means3D'].device).float()
-        rel_w2c[:3, :3] = build_rotation(cam_rot)
-        rel_w2c[:3, 3] = cam_tran
+    if camera_grad:
+        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx])
+        cam_tran = params['cam_trans'][..., time_idx]
     else:
-        with torch.no_grad():
-            # Get the ground truth pose relative to frame 0
-            rel_w2c = gt_w2c
-            rel_w2c_rot = rel_w2c[:3, :3].unsqueeze(0).detach()
-            rel_w2c_rot_quat = matrix_to_quaternion(rel_w2c_rot)
-            rel_w2c_tran = rel_w2c[:3, 3].detach()
-            # Update the camera parameters
-            params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
-            params['cam_trans'][..., time_idx] = rel_w2c_tran
+        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
+        cam_tran = params['cam_trans'][..., time_idx].detach()
+    rel_w2c = torch.eye(4, device=params['means3D'].device).float()
+    rel_w2c[:3, :3] = build_rotation(cam_rot)
+    rel_w2c[:3, 3] = cam_tran
 
     # Check if Gaussians need to be rotated (Isotropic or Anisotropic)
     if params['log_scales'].shape[1] == 1:
@@ -738,8 +726,7 @@ def get_renderings(
                                         camera_grad=track_cam,
                                         delta=delta,
                                         motion_mlp=motion_mlp,
-                                        base_transformations=base_transformations,
-                                        gt_w2c=variables['gt_w2c_all_frames'][iter_time_idx] if config['gt_w2c'] else None)
+                                        base_transformations=base_transformations)
 
     if "to_deactivate" in variables.keys():
         active_gaussians_mask = variables["to_deactivate"] == 100000

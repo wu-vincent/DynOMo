@@ -828,8 +828,8 @@ class RBDG_SLAMMER():
                 time_idx,
                 gaussians_grad=False,
                 camera_grad=False,
-                delta=0,
-                gt_w2c=self.variables['gt_w2c_all_frames'][time_idx] if self.config['gt_w2c'] else None)
+                delta=0)
+        
         # project existing params to instseg
         points_xy = cam.projmatrix.squeeze().T.matmul(torch.cat(
             [transformed_gs_traj_3D['means3D'][:, :], torch.ones(self.params['means3D'].shape[0], 1).to(self.device)], dim=1).T)
@@ -931,8 +931,8 @@ class RBDG_SLAMMER():
             time_idx,
             gaussians_grad=False,
             camera_grad=False,
-            gauss_time_idx=gauss_time_idx,
-            gt_w2c=self.variables['gt_w2c_all_frames'][time_idx] if self.config['gt_w2c'] else None)
+            gauss_time_idx=gauss_time_idx)
+        
         print(transformed_gaussians['means3D'])
 
         if rgb:
@@ -1030,20 +1030,16 @@ class RBDG_SLAMMER():
         # Get the new frame Gaussians based on the Silhouette
         if torch.sum(non_presence_mask) > 0:
             # TODO FOR CODE CLEAN UP
-            if not self.config['gt_w2c']:
-                # Get the new pointcloud in the world frame
-                curr_cam_rot = torch.nn.functional.normalize(
-                    self.params['cam_unnorm_rots'][..., time_idx].detach())
-                curr_cam_tran = self.params['cam_trans'][..., time_idx].detach()
-                curr_c2c0 = torch.eye(4).to(self.device).float()
-                curr_c2c0[:3, :3] = build_rotation(curr_cam_rot)
-                curr_c2c0[:3, 3] = curr_cam_tran
-                # TODO CODE CLEAN UP --> check this!! 
-                # curr_w2c = curr_data['w2c'] @ curr_c2c0
-                curr_w2c = self.variables['gt_w2c_all_frames'][0] @ curr_c2c0
-            else:
-                curr_c2c0 = self.variables['gt_w2c_all_frames'][time_idx]
-                curr_w2c = self.variables['gt_w2c_all_frames'][0] @ curr_c2c0
+            # Get the new pointcloud in the world frame
+            curr_cam_rot = torch.nn.functional.normalize(
+                self.params['cam_unnorm_rots'][..., time_idx].detach())
+            curr_cam_tran = self.params['cam_trans'][..., time_idx].detach()
+            curr_c2c0 = torch.eye(4).to(self.device).float()
+            curr_c2c0[:3, :3] = build_rotation(curr_cam_rot)
+            curr_c2c0[:3, 3] = curr_cam_tran
+            # TODO CODE CLEAN UP --> check this!! 
+            # curr_w2c = curr_data['w2c'] @ curr_c2c0
+            curr_w2c = self.variables['gt_w2c_all_frames'][0] @ curr_c2c0
 
             new_pt_cld, mean3_sq_dist, bg = self.get_pointcloud(
                 curr_data['im'],
