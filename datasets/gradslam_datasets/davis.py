@@ -140,4 +140,5 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
             # c2w[:3, 2] *= -1
             c2w = torch.eye(4).float()
             poses.append(c2w)
+        self.first_time_w2c = torch.linalg.inv(poses[0])
         return poses

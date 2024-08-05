@@ -10,6 +10,9 @@ from utils.slam_helpers import transform_to_frame, get_renderings
 import copy
 import glob
 import json 
+import imageio
+import cv2
+import pdb
 
 
 def format_start_pix(start_pixels, use_norm_pix, start_pixels_normalized, use_round_pix, h, w, do_scale, params):
@@ -102,8 +105,6 @@ def get_2D_track_from_3D_for_vis(params, gs_traj_3D, unnorm_rotations, proj_matr
     params_gs_traj_3D['unnorm_rotations'] = unnorm_rotations
     gs_traj_2D_per_time = list()
     for cam_time in range(gs_traj_3D.shape[-1]):
-        if cam_time % 10 == 0:
-            print(cam_time)
         gs_traj_2D = list()
         for gauss_time in range(gs_traj_3D.shape[-1]):
             if gs_traj_3D[:, :, gauss_time].sum() == 0:
@@ -195,7 +196,18 @@ def get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h, visuals
     return all_trajs_2D, all_trajs_3D, all_visibilities, gs_traj_2D_per_time
         
 
-def gauss_wise3D_track_from_3D(search_fg_only, params, thresh, best_x, gt_colors, color_thresh, no_bg, gauss_ids, first_occurance, start_3D, start_pixels):
+def gauss_wise3D_track_from_3D(
+        search_fg_only,
+        params, 
+        thresh,
+        best_x,
+        gt_colors,
+        color_thresh,
+        no_bg,
+        gauss_ids,
+        first_occurance,
+        start_3D,
+        start_pixels):
     if gauss_ids is None or gauss_ids == np.array(None):
         if search_fg_only:
             fg_mask = (params['bg'] < 0.5).squeeze()
@@ -312,6 +324,7 @@ def get_gs_traj_pts(
                 no_bg, gauss_ids,
                 first_occurance,
                 start_pixels)
+        
         if visuals:
             gs_traj_2D_for_vis = get_2D_track_from_3D_for_vis(
                 copy.deepcopy(params),
@@ -320,6 +333,7 @@ def get_gs_traj_pts(
                 proj_matrix,
                 w,
                 h)
+
         gs_traj_2D = get_2D_track_from_3D(
             params, gs_traj_3D, unnorm_rotations, proj_matrix, w, h)
         gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
@@ -593,9 +607,9 @@ def _eval_traj(
         gs_traj_2D_for_vis = gs_traj_2D_for_vis.reshape(gs_traj_2D_for_vis.shape[2], -1, best_x, gs_traj_2D_for_vis.shape[2], gs_traj_2D_for_vis.shape[3]).permute(0, 2, 1, 3, 4)
 
     # if point cloud defined in camera = world space
-    if gt_traj_3D is not None and do_transform:
-        print("TRANSFORMNING!!!")
-        gs_traj_3D = transform_to_world(config, gs_traj_3D)
+    # if gt_traj_3D is not None and do_transform:
+    #     print("TRANSFORMNING!!!")
+    #     gs_traj_3D = transform_to_world(config, gs_traj_3D)
 
     if get_best_jaccard:
         samples = sample_queries_first(
@@ -1237,7 +1251,7 @@ def eval_traj(
         h = cam.image_height
         w = cam.image_width
         w2c = None
-    
+
     visible = params['visibility'][:, 0] > vis_thresh
     for k, v in params.items():
         try:
@@ -1252,9 +1266,11 @@ def eval_traj(
 
     # get gt data
     data = get_gt_traj(config, in_torch=True)
-    if not 'jono' in config['data']["gradslam_data_cfg"]:
+    if 'davis' in config['data']["gradslam_data_cfg"].lower():
         dataset = 'davis'
-    else:
+    elif 'iphone' in config['data']["gradslam_data_cfg"].lower():
+        dataset = 'iphone'
+    elif 'jono' in config['data']["gradslam_data_cfg"].lower():
         dataset = 'jono'
 
     # get metrics
@@ -1499,15 +1515,36 @@ def meshgrid2d(B, Y, X, stack=False, norm=False, device='cuda:0', on_chans=False
         return grid_y, grid_x
 
 
-def get_xy_grid(H, W, N=2048, B=1, device='cuda:0'):
+def get_xy_grid(H, W, N=2048, B=1, device='cuda:0', from_mask=True):
     # pick N points to track; we'll use a uniform grid
     N_ = np.sqrt(N).round().astype(np.int32)
     grid_y, grid_x = meshgrid2d(B, N_, N_, stack=False, norm=False, device=device)
     grid_y = 8 + grid_y.reshape(B, -1)/float(N_-1) * (H-16)
     grid_x = 8 + grid_x.reshape(B, -1)/float(N_-1) * (W-16)
     xy0 = torch.stack([grid_x, grid_y], dim=-1) # B, N_*N_, 2
-
+    if from_mask:
+        xy0 = from_fg_mask(device, H, W, xy0=xy0.long())
     return xy0
+
+def from_fg_mask(device, H, W, xy0=None, mask_path='mask2.jpg'):
+    mask = imageio.imread(mask_path)
+    mask = cv2.resize(
+            mask.astype(float),
+            (W, H),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    mask = torch.from_numpy(mask).to(device)
+    mask[mask <=125] = 0
+    mask[mask>125] = 1
+    mask = mask.bool()
+    candidates = torch.zeros_like(mask, dtype=bool, device=device)
+    candidates[xy0[0, :, 1], xy0[0, :, 0]] = True
+    candidates = mask & candidates
+    candidates = torch.nonzero(candidates)
+    candidates = torch.stack([candidates[:, 1], candidates[:, 0]], dim=1)
+    return candidates.unsqueeze(0)
+
+
 
 def vis_grid_trajs(
         config,
@@ -1519,9 +1556,10 @@ def vis_grid_trajs(
         clip=True,
         traj_len=10,
         vis_thresh=0.5):
+
     # get projectoin matrix
     if cam is None:
-        params, _, k, w2c = load_scene_data(config, results_dir)
+        params, _, k, w2c = load_scene_data(config, os.path.dirname(results_dir))
         if orig_image_size:
             k, pose, h, w = get_cam_data(config, orig_image_size)
             # w2c = torch.linalg.inv(pose)
@@ -1535,6 +1573,7 @@ def vis_grid_trajs(
         proj_matrix = cam.projmatrix.squeeze()
         h = cam.image_height
         w = cam.image_width
+    # pdb.set_trace()
 
     visible = params['visibility'][:, 0] > vis_thresh
     for k, v in params.items():
@@ -1558,12 +1597,12 @@ def vis_grid_trajs(
         do_scale=False,
         get_gauss_wise3D_track=True,
         visuals=True)
-
+    
     pred_visibility = (pred_visibility > vis_thresh).float()
 
     # get gt data for visualization (actually only need rgb here)
     data = get_gt_traj(config, in_torch=True)
-    data['points'] = normalize_points(gs_traj_2D_for_vis, h, w).squeeze()
+    data['points'] = normalize_points(gs_traj_2D_for_vis, h, w).squeeze()    
     data['occluded'] = torch.zeros(data['points'].shape[:-1]).to(data['points'].device)
     data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
     pred_visibility = (pred_visibility > vis_thresh).float()

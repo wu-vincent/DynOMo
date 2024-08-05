@@ -130,24 +130,6 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     ].reshape(batch_dim + (4,))
 
 
-def params2rendervar(params):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-    # Initialize Render Variables
-    rendervar = {
-        'means3D': params['means3D'],
-        'colors_precomp': params['rgb_colors'],
-        'rotations': F.normalize(params['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-    }
-    return rendervar
-
-
 def project_points(points_3d, intrinsics):
     """
     Function to project 3D points to image plane.
@@ -161,26 +143,6 @@ def project_points(points_3d, intrinsics):
     points_2d = points_2d / points_2d[:, 2:]
     points_2d = points_2d[:, :2]
     return points_2d
-
-
-def params2silhouette(params):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-    # Initialize Render Variables
-    sil_color = torch.zeros_like(params['rgb_colors'])
-    sil_color[:, 0] = 1.0
-    rendervar = {
-        'means3D': params['means3D'],
-        'colors_precomp': sil_color,
-        'rotations': F.normalize(params['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-    }
-    return rendervar
 
 
 def get_depth_and_silhouette(pts_3D, w2c):
@@ -203,25 +165,6 @@ def get_depth_and_silhouette(pts_3D, w2c):
     return depth_silhouette
 
 
-def get_depth_and_silhouette_and_instseg(pts_3D, w2c, instseg):
-    """
-    Function to compute depth and silhouette for each gaussian.
-    These are evaluated at gaussian center.
-    """
-    # Depth of each gaussian center in camera frame
-    pts4 = torch.cat((pts_3D, torch.ones_like(pts_3D[:, :1])), dim=-1)
-    pts_in_cam = (w2c @ pts4.transpose(0, 1)).transpose(0, 1)
-    depth_z = pts_in_cam[:, 2].unsqueeze(-1) # [num_gaussians, 1]
-
-    # Depth and Silhouette
-    depth_silhouette = torch.zeros((pts_3D.shape[0], 3), device=pts_3D.device).float()
-    depth_silhouette[:, 0] = depth_z.squeeze(-1)
-    depth_silhouette[:, 1] = 1.0
-    depth_silhouette[:, 2] = instseg.squeeze()
-    
-    return depth_silhouette
-
-
 def get_instsegbg(tensor_shape, instseg, bg):
     """
     Function to compute depth and silhouette for each gaussian.
@@ -233,24 +176,6 @@ def get_instsegbg(tensor_shape, instseg, bg):
     depth_silhouette[:, 1] = 1
     depth_silhouette[:, 2] = instseg.squeeze()
     return depth_silhouette
-
-
-def params2depthplussilhouette(params, w2c):
-    # Check if Gaussians are Isotropic
-    if params['log_scales'].shape[1] == 1:
-        log_scales = torch.tile(params['log_scales'], (1, 3))
-    else:
-        log_scales = params['log_scales']
-    # Initialize Render Variables
-    rendervar = {
-        'means3D': params['means3D'],
-        'colors_precomp': get_depth_and_silhouette(params['means3D'], w2c),
-        'rotations': F.normalize(params['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-    }
-    return rendervar
 
 
 def transformed_params2rendervar(params, transformed_gaussians, time_idx, first_occurance, time_window=1, active_gaussians_mask=None, depth=None):
@@ -743,7 +668,6 @@ def get_renderings(
             time_window=time_window,
             active_gaussians_mask=active_gaussians_mask,
             depth=data['depth'] if remove_close else None)
-
         if not disable_grads:
             rendervar['means2D'].retain_grad()
         im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 
@@ -767,7 +691,7 @@ def get_renderings(
             active_gaussians_mask=active_gaussians_mask,
             depth=data['depth'] if remove_close else None)
         depth_sil, _, _, _, _  = Renderer(raster_settings=data['cam'])(**depth_sil_rendervar)
-        
+
         # silouette
         silhouette = depth_sil[1, :, :]
         presence_sil_mask = (silhouette > config['sil_thres'])

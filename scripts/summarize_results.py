@@ -239,13 +239,29 @@ def get_davis_exps():
     experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_0_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
     names.append('less_16_128_16_20_20_5_bug_rem_no_iso')
     experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_bg_weight_dyno')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb"]
     names.append('less_16_128_16_20_20_5_bug_rem_l2_weight_dyno')
 
     # regs and aniso
     experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_iso_deb_l2_emb_r2"]
     names.append('less_16_128_16_20_20_5_bug_rem_iso')
     experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_20_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
-    names.append('less_16_128_16_20_20_5_bug_rem_sclae_20')
+    names.append('less_16_128_16_20_20_5_bug_rem_sclae_emb_color_20')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_0.01_0.01_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0.01_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_sclae_emb_color_0.01')
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_0_0_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"]
+    names.append('less_16_128_16_20_20_5_bug_rem_sclae_emb_color_0')
+
+    # fix cam
+    experiments += ["0_kNN_200_200_0_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb"]
+    names.append('less_16_128_16_20_20_5_bug_rem_fix_cam')
+    # per point 
+    experiments += ["0_per_point_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb"]
+    names.append('less_16_128_16_20_20_5_bug_rem_per_point')
+
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
+    names.append('r3')
 
     return experiments, names
 

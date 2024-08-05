@@ -292,6 +292,16 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         Read embedding from file and process it. To be implemented in subclass for each dataset separately.
         """
         raise NotImplementedError
+    
+    def load_depth(self, depth_path, index):
+        if ".png" in depth_path:
+            # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            depth = np.asarray(imageio.imread(depth_path)).squeeze() #, dtype=np.int64)
+        elif 'npy' in depth_path:
+            depth = np.load(depth_path, mmap_mode="r").squeeze()  # .astype(dtype=np.int64)
+        elif ".exr" in depth_path:
+            depth = readEXR_onlydepth(depth_path)
+        return depth
 
     def __getitem__(self, index):
         color_path = self.color_paths[index]
@@ -304,14 +314,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if color.shape[2] > 3:
             color = color[:, :, :3]
         color = self._preprocess_color(color)
-        if ".png" in depth_path:
-            # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-            depth = np.asarray(imageio.imread(depth_path)).squeeze() #, dtype=np.int64)
-        elif 'npy' in depth_path:
-            depth = np.load(depth_path, mmap_mode="r").squeeze()  # .astype(dtype=np.int64)
-        elif ".exr" in depth_path:
-            depth = readEXR_onlydepth(depth_path)
-
+        depth = self.load_depth(depth_path, index)
+        
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
 

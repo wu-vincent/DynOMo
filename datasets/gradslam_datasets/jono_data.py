@@ -154,8 +154,8 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
     
     def load_support_trajs(self):
         self.support_trajs = None
-            
-    def load_poses(self, stereo=False):
+
+    def load_poses_cam(self, stereo=False):
         if self.do_transform:
             basedir = os.path.dirname(os.path.dirname(self.input_folder))
             if not stereo:
@@ -174,4 +174,12 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
         poses = []
         for i in range(self.num_imgs):
             poses.append(c2w)
+        return poses
+            
+    def load_poses(self):
+        poses = self.load_poses_cam()
+        self.first_time_w2c = torch.linalg.inv(poses[0])
+        if self.stereo:
+            self.poses_stereo = self.load_poses_cam(stereo=True)
+            self.first_time_w2c_stereo = torch.linalg.inv(self.poses_stereo[0])
         return poses

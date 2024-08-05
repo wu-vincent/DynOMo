@@ -177,7 +177,10 @@ def get_circle(num_frames, device, avg_w2c, rots=1, rads=0.5, zrate=0):
 
 def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
     # w2c = torch.linalg.inv(pose)
-    train_c2ws = dataset.transformed_poses.to(device)
+    # train_c2ws = dataset.transformed_poses.to(device)
+    train_c2ws = torch.tile(
+        dataset.transformed_poses[0].unsqueeze(0),
+        (dataset.transformed_poses.shape[0], 1, 1)).to(device)
     if novel_view_mode == 'circle':
         # params['means3D'] = (N, T, 3)
         avg_w2c = torch.linalg.inv(train_c2ws[0])
@@ -192,7 +195,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
                 lookat = torch.tensor([0, 0, -2]).to(device)
 
         avg_w2c[:3, -1] -= 1 * lookat
-        w2cs = get_circle(num_frames, device, avg_w2c, rads=0.0, rots=3)
+        w2cs = get_circle(num_frames, device, avg_w2c, rads=0.1, rots=3)
         poses = torch.linalg.inv(w2cs)
         name = 'circle'
         
@@ -212,21 +215,21 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
 
         # if point cloud was not transformed to world but is in train cam
         # if this is the case, train cam is actually world
-        if not config['data']['do_transform']:
-            print('Transforming!')
-            meta_path = os.path.join(
-                config['data']['basedir'],
-                os.path.dirname(os.path.dirname(config['data']['sequence'])),
-                'train_meta.json')
-            with open(meta_path, 'r') as jf:
-                data = json.load(jf)
-            cam_id = int(os.path.basename(config['data']['sequence']))
-            idx = data['cam_id'][0].index(cam_id)
-            w2c = torch.tensor(data['w2c'][0][idx]).float()
-            c2w = torch.linalg.inv(w2c)
+        # if not config['data']['do_transform']:
+        #     print('Transforming!')
+        #     meta_path = os.path.join(
+        #         config['data']['basedir'],
+        #         os.path.dirname(os.path.dirname(config['data']['sequence'])),
+        #         'train_meta.json')
+        #     with open(meta_path, 'r') as jf:
+        #         data = json.load(jf)
+        #     cam_id = int(os.path.basename(config['data']['sequence']))
+        #     idx = data['cam_id'][0].index(cam_id)
+        #     w2c = torch.tensor(data['w2c'][0][idx]).float()
+        #     c2w = torch.linalg.inv(w2c)
 
-            # right multiply
-            test_cam_w2c = test_cam_w2c @ c2w
+        #     # right multiply
+        #     test_cam_w2c = test_cam_w2c @ c2w
 
         test_cam_c2w = torch.linalg.inv(test_cam_w2c)
         poses = [test_cam_c2w.to(device)] * num_frames
@@ -278,12 +281,16 @@ def eval(
         data = dataset[time_idx]
         color, depth, intrinsics, pose, instseg, embeddings, support_trajs, bg = data
 
-        if novel_view_mode is not None:
-            pose = poses[time_idx]
-
         # Process Camera Parameters
         intrinsics = intrinsics[:3, :3]
-        w2c = torch.linalg.inv(pose)
+        if novel_view_mode is not None:
+            pose = poses[time_idx]
+            w2c = torch.linalg.inv(pose)
+        else:
+            w2c = final_params_time['w2c']
+        
+        if not isinstance(w2c, torch.Tensor):
+            w2c = torch.from_numpy(w2c).to(final_params['means3D'].device)
 
         # Setup Camera
         cam = setup_camera(
@@ -312,7 +319,7 @@ def eval(
             variables,
             time_idx,
             curr_data,
-            {'sil_thres': sil_thres, 'use_sil_for_loss': False, 'use_flow': 'rendered', 'depth_cam': 'cam', 'embedding_cam': 'cam', 'gt_w2c': config['gt_w2c']},
+            {'sil_thres': sil_thres, 'use_sil_for_loss': False, 'use_flow': 'rendered', 'depth_cam': 'cam', 'embedding_cam': 'cam'},
             disable_grads=True,
             track_cam=False,
             get_seg=True,
@@ -359,8 +366,8 @@ def eval(
 
             if viz_config['vis_all']:
                 # depth
-                vmin = 0 if 'jono' in eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                vmax = 6 if 'jono' in eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                vmin = 0 if 'jono' in eval_dir or 'iphone' in eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
+                vmax = 6 if 'jono' in eval_dir or 'iphone' in eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
                 save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, vmin, vmax, num_frames)
 
             # bg
@@ -384,8 +391,8 @@ def eval(
                 # Save GT RGB and Depth
                 save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames)
                 # depth
-                vmin = 0 if 'jono' in eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                vmax = 6 if 'jono' in eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                vmin = 0 if 'jono' in eval_dir or 'iphone' in eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
+                vmax = 6 if 'jono' in eval_dir or 'iphone' in eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
                 save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, vmin, vmax, num_frames)
                 # instseg
                 save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
