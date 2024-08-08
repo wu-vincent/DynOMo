@@ -255,13 +255,19 @@ def get_davis_exps():
 
     # fix cam
     experiments += ["0_kNN_200_200_0_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb"]
-    names.append('less_16_128_16_20_20_5_bug_rem_fix_cam')
+    names.append('less_16_128_16_20_20_5_bug_rem_fix_cam_no_dyno_weight')
     # per point 
     experiments += ["0_per_point_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb"]
-    names.append('less_16_128_16_20_20_5_bug_rem_per_point')
+    names.append('less_16_128_16_20_20_5_bug_rem_per_point_no_dyno_weight')
 
-    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
     names.append('r3')
+    # fix cam
+    experiments += ["0_kNN_200_200_0_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
+    names.append('less_16_128_16_20_20_5_bug_rem_fix_cam')
+    # per point 
+    experiments += ["0_per_point_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
+    names.append('less_16_128_16_20_20_5_bug_rem_per_point')
 
     return experiments, names
 
@@ -285,8 +291,6 @@ def get_jono_exps():
     # davis size cam
     experiments += ["0_kNN_500_1000_500_-1_32_False_False_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0"]
     names.append('not_higher_lr_plus_cam')
-    experiments += ["0_kNN_200_200_200_-1_32_False_False_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0"]
-    names.append('higher_lr_plus_cam_plus_short')
     
     # jono depth
     experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_180_320_0.0_0.0"]
@@ -314,6 +318,18 @@ def get_jono_exps():
     experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_transformed"]
     names.append('not_higher_lr_normal_size_jono_pc_orig_size')
 
+    # transfor check
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_False_transformed_check"]
+    names.append('CHECK_not_higher_lr_normal_size_jono_depth')
+    experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_False_transformed_check"]
+    names.append('CHECK_not_higher_lr_normal_size_jono_pc')
+
+    # stereo
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_True_transformed_check_add_by_densification"]
+    names.append('STEREO_not_higher_lr_normal_size_jono_depth')
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_True_transformed_check_add_whole_pc"]
+    names.append('STEREO_WHOLE_PC_not_higher_lr_normal_size_jono_depth')
+
     return experiments, names
 
 def get_splatam_exps():
@@ -321,7 +337,9 @@ def get_splatam_exps():
     names = list()
     experiments += ["../SplaTAM/experiments/dynosplatam_davis_init_params"]
     names += ["initial_splatam"]
-    return names, experiments
+    experiments += ["../SplaTAM/experiments/dynosplatam_davis_longer"]
+    names += ["initial_splatam_longer"]
+    return experiments, names
 
 
 if __name__ == "__main__":
@@ -333,8 +351,8 @@ if __name__ == "__main__":
     best_x = 1
 
     dataset = 'davis'
-    # dataset = 'davis_splatam'
-    # dataset = 'jono'
+    dataset = 'davis_splatam'
+    dataset = 'jono'
     # dataset = 'jono_baseline'
 
     if dataset == 'jono_baseline':
@@ -400,8 +418,8 @@ if __name__ == "__main__":
     for name, experiment in zip(names, experiments):
         if dataset == 'davis' and not 'SplaTAM' in experiment:
             exp_dirs = f"experiments/dynosplatam_davis/*/*_{experiment}/eval"
-        elif dataset == 'davis':
-            exp_dirs = f"../SplaTAM/experiments/dynosplatam_davis/*/eval"
+        elif dataset == 'davis_splatam':
+            exp_dirs = f"{experiment}/*/eval"
         elif dataset == "jono":
             exp_dirs = f"experiments/dynosplatam_jono/*/ims/*_{experiment}/eval"
         else:
@@ -414,13 +432,13 @@ if __name__ == "__main__":
         else:
             df_display = pd.DataFrame(columns=['duration', 'median_l2', 'survival', 'd_avg', 'median_l2_3D', 'survival_3D', 'd_avg_3D', 'occlusion_accuracy', 'pts_within_1', 'jaccard_1', 'pts_within_2', 'jaccard_2', 'pts_within_4', 'jaccard_4', 'pts_within_8', 'jaccard_8', 'pts_within_16', 'jaccard_16', 'average_jaccard', 'average_pts_within_thresh', 'psnr', 'ssim', 'lpips'])
             df = pd.DataFrame(columns=['duration', 'median_l2', 'survival', 'd_avg', 'median_l2_3D', 'survival_3D', 'd_avg_3D', 'occlusion_accuracy', 'pts_within_1', 'jaccard_1', 'pts_within_2', 'jaccard_2', 'pts_within_4', 'jaccard_4', 'pts_within_8', 'jaccard_8', 'pts_within_16', 'jaccard_16', 'average_jaccard', 'average_pts_within_thresh', 'psnr', 'ssim', 'lpips'], index=davis_seqs_1).fillna(0).astype('float64')
-        
+
         paths = glob.glob(exp_dirs)
         for i, p in enumerate(paths):
             val_dict = dict()
             if dataset == 'davis' and not 'SplaTAM' in experiment:
                 seq = p.split('/')[-3]
-            elif dataset == 'davis':
+            elif dataset == 'davis_splatam':
                 seq = p.split('/')[-2][:-2]
             elif dataset == "jono":
                 seq = p.split('/')[-4]

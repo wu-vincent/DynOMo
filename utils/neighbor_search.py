@@ -256,6 +256,7 @@ def calculate_neighbors_seg(
         else:
             neighbor_indices = aranged_idx[bin_mask][neighbor_indices]
         
+        # neighbor_weight_sm = torch.nn.functional.softmax(-l2_neighbor_dists, dim=1)
         neighbor_weight_sm = torch.nn.functional.softmax(-neighbor_dist, dim=1)
         neighbor_weight = torch.exp(-2000 * torch.square(neighbor_dist))
         indices[bin_mask] = neighbor_indices

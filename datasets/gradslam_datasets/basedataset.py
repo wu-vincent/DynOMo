@@ -162,8 +162,13 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         self.num_imgs = len(self.color_paths)
         self.poses = self.load_poses()
+        if len(self.color_paths) != len(self.poses):
+            raise ValueError(f"Number of color images and poses must be the same, but got {len(self.color_paths)} and {len(self.poses)}.")
+        
         self.instseg_paths = self.get_instsegpaths()
         self.bg_paths = self.get_bg_paths()
+        if len(self.color_paths) != len(self.instseg_paths):
+            raise ValueError("Number of color images and segmentation masks must be the same.")
 
         if self.end == -1:
             self.end = self.num_imgs

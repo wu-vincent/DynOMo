@@ -905,5 +905,5 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True)
             cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
 
         frames.append(img_curr)
-    imageio.mimwrite(os.path.join(results_dir, 'vid_trails.mp4'), frames, quality=8, fps=10)
+    imageio.mimwrite(os.path.join(results_dir, 'vid_trails.mp4'), frames.astype(np.uint8), quality=8, fps=10)
     print('stored vis', os.path.join(results_dir, 'vid_trails.mp4'))

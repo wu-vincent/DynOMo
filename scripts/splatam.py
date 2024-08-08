@@ -130,6 +130,7 @@ class RBDG_SLAMMER():
         self.ssim_list = list()
         self.lpips_list = list()
         self.eval_pca = None
+        self.do_stereo = 'stereo' in self.config.keys() and self.config['stereo']
     
     def get_trans(self, scale, h, w):
         h, w = int(h*scale), int(w*scale)
@@ -280,7 +281,7 @@ class RBDG_SLAMMER():
             embeddings = torch.permute(embeddings, (1, 2, 0))
             embeddings = embeddings[::self.config['stride'], ::self.config['stride']].reshape(-1, channels) # (C, H, W) -> (H, W, C) -> (H * W, C)
             point_cld = torch.cat((point_cld, embeddings), -1)
-                
+
         if self.config['remove_outliers_l2'] < 10:
             one_pix_diff = (
                 torch.sqrt(torch.pow(self.config['remove_outliers_l2']/intrinsics[0][0], 2)) * depth_z + 
@@ -311,7 +312,7 @@ class RBDG_SLAMMER():
             mean3_sq_dist = mean3_sq_dist[mask]
             if bg is not None:
                 bg = bg[mask]
-        
+
         if self.config['just_fg']:
             point_cld = point_cld[~bg.squeeze()]
             mean3_sq_dist = mean3_sq_dist[~bg.squeeze()]
@@ -449,12 +450,13 @@ class RBDG_SLAMMER():
         
         all_log_scales = torch.zeros(params['means3D'].shape[0], self.num_frames).to(self.device).float()
 
+        num_cams = 2 if self.do_stereo else 1
         variables = {
             'max_2D_radius': torch.zeros(means3D.shape[0]).to(self.device).float(),
             'means2D_gradient_accum': torch.zeros(means3D.shape[0], dtype=torch.float32).to(self.device),
             'denom': torch.zeros(params['means3D'].shape[0]).to(self.device).float(),
             'timestep': torch.zeros(params['means3D'].shape[0]).to(self.device).float(),
-            'visibility': torch.zeros(params['means3D'].shape[0], self.num_frames).to(self.device).float(),
+            'visibility': torch.zeros(params['means3D'].shape[0], num_cams, self.num_frames).to(self.device).float(),
             'rgb_colors': torch.zeros(params['means3D'].shape[0], 3, self.num_frames).to(self.device).float(),
             'log_scales': all_log_scales if gaussian_distribution == "isotropic" else torch.tile(all_log_scales[..., None], (1, 1, 3)).permute(0, 2, 1),
             "to_deactivate": torch.ones(params['means3D'].shape[0]).to(self.device).float() * 100000,
@@ -847,9 +849,7 @@ class RBDG_SLAMMER():
 
     def deactivate_gaussians_drift(
         self,
-        curr_data,
-        time_idx,
-        optimizer):
+        time_idx):
 
         neighbor_dist = torch.cdist(
                 self.params['means3D'][:, :, time_idx].detach().clone()[self.variables['self_indices'], :].unsqueeze(1),
@@ -880,44 +880,45 @@ class RBDG_SLAMMER():
             time_idx, 
             optimizer):
         
-        # print(torch.histogram(self.params['logit_opacities'].detach().clone().cpu(), bins=100))
-        # project current means to 2D
-        with torch.no_grad():
-            points_xy = self.proj_means_to_2D(curr_data['cam'], time_idx, curr_data['depth'].shape)
-        
-        # compare projected depth to parameter depth
-        existing_params_proj_depth = torch.ones_like(self.params['means3D'][:, 2, time_idx])
-        existing_params_proj_depth = curr_data['depth'][:, points_xy[:, 1], points_xy[:, 0]]
-        existing_params_depth = self.params['means3D'][:, 2, time_idx]
-        depth_error = torch.abs(existing_params_depth - existing_params_proj_depth)
+        for data_idx in range(len(curr_data)):
+            # print(torch.histogram(self.params['logit_opacities'].detach().clone().cpu(), bins=100))
+            # project current means to 2D
+            with torch.no_grad():
+                points_xy = self.proj_means_to_2D(curr_data[data_idx]['cam'], time_idx, curr_data[data_idx]['depth'].shape)
+            
+            # compare projected depth to parameter depth
+            existing_params_proj_depth = torch.ones_like(self.params['means3D'][:, 2, time_idx])
+            existing_params_proj_depth = curr_data[data_idx]['depth'][:, points_xy[:, 1], points_xy[:, 0]]
+            existing_params_depth = self.params['means3D'][:, 2, time_idx]
+            depth_error = torch.abs(existing_params_depth - existing_params_proj_depth)
 
-        # if depth error is large, remove gaussian
-        factor = self.config['remove_gaussians']['remove_factor']
-        to_remove_depth = (existing_params_depth < existing_params_proj_depth) * (depth_error > factor*depth_error.median())
+            # if depth error is large, remove gaussian
+            factor = self.config['remove_gaussians']['remove_factor']
+            to_remove_depth = (existing_params_depth < existing_params_proj_depth) * (depth_error > factor*depth_error.median())
 
-        # remove gaussians with low opacity
-        to_remove_opa = torch.sigmoid(self.params['logit_opacities']) < self.config['remove_gaussians']['rem_opa_thresh']
-        to_remove = to_remove_depth.squeeze() & to_remove_opa.squeeze()
+            # remove gaussians with low opacity
+            to_remove_opa = torch.sigmoid(self.params['logit_opacities']) < self.config['remove_gaussians']['rem_opa_thresh']
+            to_remove = to_remove_depth.squeeze() & to_remove_opa.squeeze()
 
-        # remove gaussians with large_scale
-        to_remove_scale = torch.sigmoid(self.params['log_scales']) > self.config['remove_gaussians']['rem_scale_thresh']
-        # print(torch.histogram(torch.sigmoid(self.params['log_scales']).detach().clone().cpu(), bins=100))
-        to_remove = to_remove.squeeze() & to_remove_scale.squeeze()
+            # remove gaussians with large_scale
+            to_remove_scale = torch.sigmoid(self.params['log_scales']) > self.config['remove_gaussians']['rem_scale_thresh']
+            # print(torch.histogram(torch.sigmoid(self.params['log_scales']).detach().clone().cpu(), bins=100))
+            to_remove = to_remove.squeeze() & to_remove_scale.squeeze()
 
-        if to_remove.sum():
-            self.params, self.variables, self.support_trajs_trans = remove_points(
-                to_remove.squeeze(),
-                self.params,
-                self.variables,
-                optimizer=optimizer,
-                support_trajs_trans=self.support_trajs_trans)
+            if to_remove.sum():
+                self.params, self.variables, self.support_trajs_trans = remove_points(
+                    to_remove.squeeze(),
+                    self.params,
+                    self.variables,
+                    optimizer=optimizer,
+                    support_trajs_trans=self.support_trajs_trans)
 
-        if self.config['use_wandb']:
-            self.wandb_run.log({
-                "Removed/Number of Gaussians with Depth": to_remove_depth.sum(),
-                "Removed/Number of Gaussians with Opacity": to_remove_opa.sum(),
-                "Removed/Number of Gaussians with Scale": to_remove_scale.sum(),
-                "Removed/step": self.wandb_time_step})
+            if self.config['use_wandb']:
+                self.wandb_run.log({
+                    "Removed/Number of Gaussians with Depth": to_remove_depth.sum(),
+                    "Removed/Number of Gaussians with Opacity": to_remove_opa.sum(),
+                    "Removed/Number of Gaussians with Scale": to_remove_scale.sum(),
+                    "Removed/step": self.wandb_time_step})
         
     def get_depth_for_new_gauss(
             self,
@@ -1039,12 +1040,12 @@ class RBDG_SLAMMER():
             curr_c02c[:3, 3] = curr_cam_tran
             # TODO CODE CLEAN UP --> check this!! 
             # curr_w2c = curr_data['w2c'] @ curr_c2c0
-            curr_w2c = self.first_frame_w2c @ curr_c02c
+            curr_w2c = curr_data['w2c'] @ curr_c02c
 
             new_pt_cld, mean3_sq_dist, bg = self.get_pointcloud(
                 curr_data['im'],
                 curr_data['depth'],
-                self.intrinsics, 
+                curr_data['intrinsics'], 
                 curr_w2c,
                 mask=non_presence_mask.unsqueeze(0),
                 mean_sq_dist_method=mean_sq_dist_method,
@@ -1073,7 +1074,8 @@ class RBDG_SLAMMER():
             self.init_reset('denom', 0, (num_gaussians))
             self.init_reset('means2D_gradient_accum', 0, (num_gaussians))
 
-            self.init_new_var('visibility', 0, (num_new_gauss, self.num_frames))
+            num_cams = 2 if self.do_stereo else 1
+            self.init_new_var('visibility', 0, (num_new_gauss, num_cams, self.num_frames))
             self.init_new_var('rgb_colors', 0, (num_new_gauss, 3, self.num_frames))
             self.init_new_var('to_deactivate', 100000, (num_new_gauss))
             self.init_new_var('timestep', time_idx, (num_new_gauss))
@@ -1249,6 +1251,16 @@ class RBDG_SLAMMER():
                 self.intrinsics.cpu().numpy(),
                 w2c.detach().cpu().numpy(),
                 device=self.device)
+            if self.do_stereo:
+                data_stereo = self.dataset_stereo[0]
+                color_stereo, _, self.intrinsics_stereo, pose_stereo, _, _, _, _ = data_stereo
+                self.first_frame_w2c_stereo = self.dataset_stereo.first_time_w2c.to(self.device)
+                self.cam_stereo = setup_camera(
+                    color_stereo.shape[2],
+                    color_stereo.shape[1],
+                    self.intrinsics_stereo.cpu().numpy(),
+                    self.first_frame_w2c_stereo.detach().cpu().numpy(),
+                    device=self.device)
 
         if self.config['checkpoint'] and timestep == 0:
             return
@@ -1280,13 +1292,53 @@ class RBDG_SLAMMER():
         # Initialize an estimate of scene radius for Gaussian-Splatting Densification
         variables['scene_radius'] = torch.max(depth)/scene_radius_depth_ratio
 
+        if timestep == 0 and self.do_stereo and self.config['stereo_mode'] == 'add_whole_pc':
+            params, variables = self.add_stereo_pc(mean_sq_dist_method, gaussian_distribution, params, variables)
+
         return w2c, params, variables
+
+    def add_stereo_pc(self, mean_sq_dist_method, gaussian_distribution, params, variables):
+        color, depth, self.intrinsics, pose, instseg, embeddings, _, bg = self.dataset_stereo[0]
+        init_pt_cld_stereo, mean3_sq_dist_stereo, bg_stereo = self.get_pointcloud(
+            color,
+            depth,
+            self.intrinsics_stereo,
+            self.first_frame_w2c_stereo,
+            mean_sq_dist_method=mean_sq_dist_method,
+            instseg=instseg,
+            embeddings=embeddings,
+            bg=bg)
+
+        # Initialize Parameters
+        params_stereo, variables_stereo = self.initialize_params(
+            init_pt_cld_stereo,
+            self.num_frames,
+            mean3_sq_dist_stereo,
+            gaussian_distribution,
+            bg_stereo)
+        
+        for k in variables_stereo.keys():
+            if k == 'scene_radius':
+                continue
+            variables[k] = torch.cat((variables[k], variables_stereo[k]), dim=0).contiguous()
+        
+        # cat new and old params
+        for k, v in params_stereo.items():
+            if 'cam' in k:
+                continue
+            params[k] = torch.nn.Parameter(torch.cat((params[k], v), dim=0).requires_grad_(True))
+        
+        return params, variables
+        
+            
 
     def get_data(self):
         # Load Dataset
         print("Loading Dataset ...")
         # Poses are relative to the first frame
-        self.dataset = get_data(self.config)
+        self.dataset = get_data(self.config, stereo=False)
+        if self.do_stereo:
+            self.dataset_stereo = get_data(self.config, stereo=True)
 
         # self.dataset = DataLoader(get_data(self.config), batch_size=1, shuffle=False)
         self.num_frames = self.config["data"]["num_frames"]
@@ -1327,100 +1379,113 @@ class RBDG_SLAMMER():
             self.variables['first_frame_w2c'] = first_frame_w2c
             self.variables['offset_0'] = None
             time_idx = 0
+            if self.do_stereo:
+                self.variables['first_frame_w2c_stereo'] = self.first_frame_w2c_stereo
 
         return first_frame_w2c, time_idx
     
-    def make_data_dict(self, time_idx):
+    def make_data_dict(self, time_idx, stereo=False):
         embeddings, support_trajs = None, None
-        data =  self.dataset[time_idx]
+        if not stereo:
+            data =  self.dataset[time_idx]
+        else:
+            data =  self.dataset_stereo[time_idx]
+
         color, depth, self.intrinsics, gt_pose, instseg, embeddings, support_trajs, bg = data
         
         # Process poses
-        self.variables['gt_w2c_all_frames'].append(torch.linalg.inv(gt_pose))
+        if stereo:
+            self.variables['gt_w2c_all_frames_stereo'].append(torch.linalg.inv(gt_pose))
+        else:
+            self.variables['gt_w2c_all_frames'].append(torch.linalg.inv(gt_pose))
 
         curr_data = {
             'im': color,
             'depth': depth,
             'id': time_idx,
-            'iter_gt_w2c_list': self.variables['gt_w2c_all_frames'],
+            'iter_gt_w2c_list': self.variables['gt_w2c_all_frames'] if not stereo else self.variables['gt_w2c_all_frames_stereo'],
             'instseg': instseg,
             'embeddings': embeddings,
-            'cam': self.cam,
-            'intrinsics': self.intrinsics,
-            'w2c': self.first_frame_w2c,
+            'cam': self.cam if not stereo else self.cam_stereo,
+            'intrinsics': self.intrinsics if not stereo else self.intrinsics_stereo,
+            'w2c': self.first_frame_w2c if not stereo else self.first_frame_w2c_stereo,
             'support_trajs': support_trajs,
             'bg': bg}
         
         return curr_data
-
-    def render_novel_view(self, novel_view_mode='circle'):
+        
+    def eval(self, novel_view_mode=None):
         self.first_frame_w2c, start_time_idx = self.get_data()
         if not 'transformed' in self.eval_dir:
             self.config['data']['do_transform'] = False
         else:
             self.config['data']['do_transform'] = True
-
-        # Evaluate Final Parameters
-        with torch.no_grad():
-            eval(
-                self.dataset,
-                self.params,
-                self.num_frames,
-                self.eval_dir,
-                sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
-                wandb_run=self.wandb_run if self.config['use_wandb'] else None,
-                variables=self.params,
-                viz_config=self.config['viz'],
-                get_embeddings=self.config['data']['load_embeddings'],
-                remove_close=True,
-                novel_view_mode=novel_view_mode,
-                config=self.config)
+        
+        self._eval(novel_view_mode)
     
-    def eval(self):
-        self.first_frame_w2c, start_time_idx = self.get_data()
-        if not 'transformed' in self.eval_dir:
-            self.config['data']['do_transform'] = False
-        else:
-            self.config['data']['do_transform'] = True
+    def _eval(self, novel_view_mode=None, eval_renderings=True):
+        # for stereo eval
+        stereo_adds = [''] if not self.do_stereo else ['', '_stereo']
+        stereo_evals = [False] if not self.do_stereo else [False, True]
+        stereo_cams = [self.cam] if not self.do_stereo else [self.cam, self.cam_stereo]
+        stereo_datasets = [self.dataset] if not self.do_stereo else [self.dataset, self.dataset_stereo]
 
-        # Evaluate Final Parameters
-        '''with torch.no_grad():
-            eval(
-                self.dataset,
-                self.params,
-                self.num_frames,
-                self.eval_dir,
-                sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
-                wandb_run=self.wandb_run if self.config['use_wandb'] else None,
-                variables=self.params,
-                viz_config=self.config['viz'],
-                get_embeddings=self.config['data']['load_embeddings'],
-                remove_close=self.config['remove_close'],
-                config=self.config)'''
+        # metrics empty dict
+        metrics = dict()
+        # iterate over cameras
+        for i in range(len(stereo_cams)):
+            _params = copy.deepcopy(self.params)
+            if len(_params['visibility'].shape) == 3:
+                _params['visibility'] = _params['visibility'][:, i]
+            '''if eval_renderings:
+                # Evaluate Final Parameters
+                with torch.no_grad():
+                    eval(
+                        stereo_datasets[i],
+                        _params,
+                        self.num_frames,
+                        self.eval_dir + stereo_adds[i],
+                        sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
+                        wandb_run=self.wandb_run if self.config['use_wandb'] else None,
+                        variables=_params,
+                        viz_config=self.config['viz'],
+                        get_embeddings=self.config['data']['load_embeddings'],
+                        remove_close=self.config['remove_close'],
+                        config=self.config, 
+                        novel_view_mode=novel_view_mode,
+                        stereo_add=stereo_adds[i])'''
 
-        if 'iphone' not in self.config['data']['basedir']:
-            # eval traj
-            with torch.no_grad():
-                metrics = eval_traj(
+            if novel_view_mode:
+                break
+            print(self.intrinsics)
+            print(self.first_frame_w2c)
+            if i == 0:
+                # eval traj
+                with torch.no_grad():
+                    metrics = eval_traj(
+                        self.config,
+                        _params,
+                        cam=stereo_cams[i],
+                        results_dir=self.eval_dir+stereo_adds[i], 
+                        do_transform=False if 'transformed' in self.eval_dir else True,
+                        stereo=stereo_evals[i],
+                        vis_trajs=0)
+                    
+                    with open(os.path.join(self.eval_dir + stereo_adds[i], 'traj_metrics.txt'), 'w') as f:
+                        f.write(f"Trajectory metrics: {metrics}")
+                print("Trajectory metrics: ",  metrics)
+
+            if self.config['viz']['vis_grid']:
+                vis_grid_trajs(
                     self.config,
-                    self.params,
-                    cam=self.cam,
-                    results_dir=self.eval_dir, 
-                    do_transform=False if 'transformed' in self.eval_dir else True)
-
-            with open(os.path.join(self.eval_dir, 'traj_metrics.txt'), 'w') as f:
-                f.write(f"Trajectory metrics: {metrics}")
-            print("Trajectory metrics: ",  metrics)
-
-        if self.config['viz']['vis_grid']:
-            vis_grid_trajs(
-                self.config,
-                self.params, 
-                self.cam,
-                results_dir=self.eval_dir,
-                orig_image_size=True,
-                traj_len=10,
-                no_bg=True if 'iphone' not in self.config['data']['basedir'] and 'rgb' not in self.config['data']['basedir'] else False)
+                    _params, 
+                    stereo_cams[i],
+                    results_dir=self.eval_dir+stereo_adds[i],
+                    orig_image_size=True,
+                    stereo=stereo_evals[i],
+                    no_bg=True)
+                
+        return metrics
 
     def rgbd_slam(self):        
         self.first_frame_w2c, start_time_idx = self.get_data()
@@ -1439,6 +1504,8 @@ class RBDG_SLAMMER():
         
         # Init Variables to keep track of ground truth poses and runtimes
         self.variables['gt_w2c_all_frames'] = []
+        if self.do_stereo:
+            self.variables['gt_w2c_all_frames_stereo'] = []
         self.tracking_obj_iter_time_sum = 0
         self.tracking_obj_iter_time_count = 0
         self.tracking_obj_frame_time_sum = 0
@@ -1452,11 +1519,18 @@ class RBDG_SLAMMER():
         if start_time_idx != 0:
             time_idx = start_time_idx
         print(f"Starting from time index {start_time_idx}...")
+
         sec_per_frame = list()
         # Iterate over Scan
         for time_idx in tqdm(range(start_time_idx, self.num_frames)):
             start = time.time()
-            curr_data = self.make_data_dict(time_idx)
+            curr_data = [self.make_data_dict(time_idx)]
+            if self.do_stereo:
+                curr_data.append(self.make_data_dict(time_idx, stereo=True))
+                # add Gaussians for stereo at time step 0
+                if time_idx == 0 and self.config['stereo_mode'] != 'add_by_densification':
+                    self.densify(time_idx, [curr_data[1]])
+                
             keyframe_list, keyframe_time_indices = \
                 self.optimize_time(
                     time_idx,
@@ -1484,55 +1558,19 @@ class RBDG_SLAMMER():
 
         # Add Camera Parameters to Save them
         self.update_params_for_saving(keyframe_time_indices, duration, sec_per_frame)
-
-        if self.config['eval_during']:
-            self.log_eval_during()
-        else:
-            # Evaluate Final Parameters
-            with torch.no_grad():
-                eval(
-                    self.dataset,
-                    self.params,
-                    self.num_frames,
-                    self.eval_dir,
-                    sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
-                    wandb_run=self.wandb_run if self.config['use_wandb'] else None,
-                    variables=self.variables,
-                    viz_config=self.config['viz'],
-                    get_embeddings=self.config['data']['load_embeddings'],
-                    remove_close=self.config['remove_close'],
-                    config=self.config)
-
         # Save Parameters
         save_params(self.params, self.output_dir)
 
-        if 'iphone' not in self.config['data']['basedir']:
-            # eval traj
-            with torch.no_grad():
-                metrics = eval_traj(
-                    self.config,
-                    self.params,
-                    cam=self.cam,
-                    results_dir=self.eval_dir, 
-                    vis_trajs=self.config['viz']['vis_tracked'],
-                    do_transform=False if 'transformed' in self.eval_dir else True)
-                with open(os.path.join(self.eval_dir, 'traj_metrics.txt'), 'w') as f:
-                    f.write(f"Trajectory metrics: {metrics}")
-            print("Trajectory metrics: ",  metrics)
+        if self.config['eval_during']:
+            self.log_eval_during()
+
+        # eval renderings, traj and grid vis
+        metrics = self._eval(eval_renderings=not self.config['eval_during'])
 
         # Close WandB Run
         if self.config['use_wandb']:
             self.wandb_run.log(metrics)
             wandb.finish()
-                
-        if self.config['viz']['vis_grid']:
-            vis_grid_trajs(
-                self.config,
-                self.params, 
-                self.cam,
-                results_dir=self.eval_dir,
-                orig_image_size=True,
-                no_bg=True if 'iphone' not in self.config['data']['basedir'] and 'rgb' not in self.config['data']['basedir'] else False)
         
         if self.config['save_checkpoints']:
             ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
@@ -1601,6 +1639,10 @@ class RBDG_SLAMMER():
         self.params['org_height'] = self.config["data"]["desired_image_height"]
         self.params['gt_w2c_all_frames'] = torch.stack(self.variables['gt_w2c_all_frames']).detach().cpu().numpy()
         self.params['keyframe_time_indices'] = np.array(keyframe_time_indices)
+        if self.do_stereo:
+            self.params['w2c_stereo'] = self.first_frame_w2c_stereo.detach().cpu().numpy()
+            self.params['gt_w2c_all_frames_stereo'] = torch.stack(self.variables['gt_w2c_all_frames_stereo']).detach().cpu().numpy()
+
 
         if 'gauss_ids_to_track' in self.variables.keys():
             if self.variables['gauss_ids_to_track'] == np.array(None):
@@ -1642,7 +1684,7 @@ class RBDG_SLAMMER():
         else:
             with torch.no_grad():
                 # Get the ground truth pose relative to frame 0
-                rel_w2c = curr_data['iter_gt_w2c_list'][-1]
+                rel_w2c = curr_data[0]['iter_gt_w2c_list'][-1]
                 rel_w2c_rot = rel_w2c[:3, :3].unsqueeze(0).detach().clone()
                 rel_w2c_rot_quat = matrix_to_quaternion(rel_w2c_rot)
                 rel_w2c_tran = rel_w2c[:3, 3].detach().clone()
@@ -1700,7 +1742,7 @@ class RBDG_SLAMMER():
                     exp_weight=self.config['exp_weight'])
 
         if self.config['deactivate_gaussians']['drift']:
-            self.deactivate_gaussians_drift(curr_data, time_idx, optimizer)
+            self.deactivate_gaussians_drift(time_idx)
 
         if (time_idx < self.num_frames-1):
             # Initialize Gaussian poses for the next frame in params
@@ -1786,10 +1828,11 @@ class RBDG_SLAMMER():
         early_stop_count = 0
         early_stop_eval = False
         while iter <= num_iters_tracking:
+            data_idx = random.choice(list(range(len(curr_data))))
             iter_start_time = time.time()
             # Loss for current frame
             loss, losses, visible, weight = self.get_loss_dyno(
-                curr_data,
+                curr_data[data_idx],
                 time_idx,
                 num_iters=num_iters_tracking,
                 iter=iter,
@@ -1870,19 +1913,20 @@ class RBDG_SLAMMER():
                 self.params['means3D']= candidate_dyno_trans
         
         # visibility
-        _, _, visible, weight = self.get_loss_dyno(
-            curr_data,
-            time_idx,
-            num_iters=num_iters_tracking,
-            iter=iter,
-            config=config,
-            early_stop_eval=early_stop_eval,
-            last=True)
-        
-        optimizer.zero_grad(set_to_none=True)
-        self.variables['visibility'][:, time_idx] = \
-            compute_visibility(visible, weight, num_gauss=self.params['means3D'].shape[0])
-        
+        for data_idx in range(len(curr_data)):
+            _, _, visible, weight = self.get_loss_dyno(
+                curr_data[data_idx],
+                time_idx,
+                num_iters=num_iters_tracking,
+                iter=iter,
+                config=config,
+                early_stop_eval=early_stop_eval,
+                last=True)
+            
+            optimizer.zero_grad(set_to_none=True)
+            self.variables['visibility'][:, data_idx, time_idx] = \
+                compute_visibility(visible, weight, num_gauss=self.params['means3D'].shape[0])
+            
         # update params
         for k in ['rgb_colors', 'log_scales', 'means3D', 'unnorm_rotations']:
             self.update_params(k, time_idx)
@@ -1992,6 +2036,8 @@ class RBDG_SLAMMER():
             time_idx,
             curr_data):
 
+        assert len(curr_data) == 1, "Cam tracking currently not implemented for stereo..."
+
         # get instance segementation mask for Gaussians
         tracking_start_time = time.time()
 
@@ -2022,7 +2068,7 @@ class RBDG_SLAMMER():
             loss, losses, self.variables = self.get_loss_cam(
                 self.params,
                 self.variables,
-                curr_data,
+                curr_data[0],
                 time_idx,
                 config=self.config['tracking_cam'])
 
@@ -2094,21 +2140,22 @@ class RBDG_SLAMMER():
 
     def densify(self, time_idx, curr_data):
         if self.config['add_gaussians']['add_new_gaussians']:
+            for i in  range(len(curr_data)):
             # Add new Gaussians to the scene based on the Silhouette
-            pre_num_pts = self.params['means3D'].shape[0]
-            self.add_new_gaussians(curr_data, 
-                                    self.config['add_gaussians']['sil_thres_gaussians'],
-                                    self.config['add_gaussians']['depth_error_factor'],
-                                    time_idx,
-                                    self.config['mean_sq_dist_method'],
-                                    self.config['gaussian_distribution'],
-                                    self.params, 
-                                    self.variables)
+                pre_num_pts = self.params['means3D'].shape[0]
+                self.add_new_gaussians(curr_data[i], 
+                                        self.config['add_gaussians']['sil_thres_gaussians'],
+                                        self.config['add_gaussians']['depth_error_factor'],
+                                        time_idx,
+                                        self.config['mean_sq_dist_method'],
+                                        self.config['gaussian_distribution'],
+                                        self.params, 
+                                        self.variables)
 
-            post_num_pts = self.params['means3D'].shape[0]
-            if self.config['use_wandb']:
-                self.wandb_run.log({"Adding/Number of Gaussians": post_num_pts-pre_num_pts,
-                                "Adding/step": self.wandb_time_step})
+                post_num_pts = self.params['means3D'].shape[0]
+                if self.config['use_wandb']:
+                    self.wandb_run.log({"Adding/Number of Gaussians": post_num_pts-pre_num_pts,
+                                    "Adding/step": self.wandb_time_step})
 
 
 if __name__ == "__main__":

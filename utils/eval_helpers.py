@@ -181,7 +181,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
     train_c2ws = torch.tile(
         dataset.transformed_poses[0].unsqueeze(0),
         (dataset.transformed_poses.shape[0], 1, 1)).to(device)
-    if novel_view_mode == 'circle':
+    if novel_view_mode == 'circle' or novel_view_mode == 'zoom_out':
         # params['means3D'] = (N, T, 3)
         avg_w2c = torch.linalg.inv(train_c2ws[0])
 
@@ -195,9 +195,10 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
                 lookat = torch.tensor([0, 0, -2]).to(device)
 
         avg_w2c[:3, -1] -= 1 * lookat
-        w2cs = get_circle(num_frames, device, avg_w2c, rads=0.1, rots=3)
+        rads = 0 if novel_view_mode == 'zoom_out' else 0.1
+        w2cs = get_circle(num_frames, device, avg_w2c, rads=rads, rots=3)
         poses = torch.linalg.inv(w2cs)
-        name = 'circle'
+        name = novel_view_mode
         
     elif novel_view_mode == 'test_cam':
         meta_path = os.path.join(
@@ -252,9 +253,9 @@ def eval(
         time_window=1,
         remove_close=False,
         novel_view_mode=None,
-        config=None):
+        config=None,
+        stereo_add=''):
     
-    print(final_params.keys())
     if final_params['log_scales'].shape[1] == num_frames and len(final_params['log_scales'].shape) == 3:
         final_params['log_scales'] = final_params['log_scales'].permute(0, 2, 1)
     
@@ -263,6 +264,8 @@ def eval(
 
     if novel_view_mode is not None:
         poses, name = get_cam_poses(novel_view_mode, dataset, config, num_frames, final_params['means3D'].device, final_params)
+        torch.save(poses.cpu(), os.path.join(eval_dir, f'poses_{name}.pth'))
+        print('Store to', os.path.join(eval_dir, f'poses_{name}.pth'))
         print(f"Evaluating novel view in mode {novel_view_mode}!!")
     else:
         name = ''
@@ -287,7 +290,7 @@ def eval(
             pose = poses[time_idx]
             w2c = torch.linalg.inv(pose)
         else:
-            w2c = final_params_time['w2c']
+            w2c = final_params_time['w2c'+stereo_add]
         
         if not isinstance(w2c, torch.Tensor):
             w2c = torch.from_numpy(w2c).to(final_params['means3D'].device)
@@ -312,7 +315,7 @@ def eval(
             'embeddings': embeddings,
             'support_trajs': support_trajs,
             'bg': bg,
-            'iter_gt_w2c_list': variables['gt_w2c_all_frames']}
+            'iter_gt_w2c_list': variables['gt_w2c_all_frames'+stereo_add]}
         
         variables, im, _, rastered_depth, rastered_inst, _, _, _, _, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg, visibility, _ = get_renderings(
             final_params_time,
@@ -410,7 +413,7 @@ def eval(
         ssim_list = numpy_and_save(os.path.join(eval_dir, "ssim.txt"), ssim_list)
         lpips_list = numpy_and_save(os.path.join(eval_dir, "lpips.txt"), lpips_list)
 
-
+        print('Doing stereo:', False if stereo_add == '' else True,)
         print("Average PSNR: {:.2f}".format(psnr_list.mean()))
         print("Average Depth RMSE: {:.2f} cm".format(rmse_list.mean()*100))
         print("Average Depth L1: {:.2f} cm".format(l1_list.mean()*100))

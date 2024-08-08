@@ -15,7 +15,7 @@ from utils.common_utils import seed_everything
 import os
 import shutil
 import copy
-from utils.eval_traj import eval_traj, vis_grid_trajs, eval_traj_window
+from utils.eval_traj import eval_traj, vis_grid_trajs
 import glob
 from scripts.splatam import RBDG_SLAMMER
 
@@ -224,6 +224,11 @@ def get_davis_exps():
     # experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_False_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_0_aniso_deb_l2_emb_r2"]
     # names.append('less_16_128_16_20_20_5_bug_no_seg_rem_no_bbg_repeat')
 
+    experiments = list()
+    names = list()
+    experiments += ["0_kNN_200_200_200_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_240_455_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r3"]
+    names.append('r3')
+
     return experiments, names
 
 
@@ -275,6 +280,20 @@ def get_jono_exps():
     experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_False_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_transformed"]
     names.append('not_higher_lr_orig_size_jono_pc_remove_close')
 
+    # transfor check
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_False_transformed_check"]
+    names.append('CHECK_not_higher_lr_normal_size_jono_depth')
+    experiments += ["0_kNN_500_1000_0_-1_32_True_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_False_transformed_check"]
+    names.append('CHECK_not_higher_lr_normal_size_jono_pc')
+
+    experiments = list()
+    names = list()
+    # stereo
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_True_transformed_check_add_by_densification"]
+    names.append('STEREO_not_higher_lr_normal_size_jono_depth')
+    experiments += ["0_kNN_500_1000_0_-1_32_False_True_False_0.5_20_20_5_0.001_False_False_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_2_1_0_1_20_360_640_0.0_0.0_False_True_transformed_check_add_whole_pc"]
+    names.append('STEREO_WHOLE_PC_not_higher_lr_normal_size_jono_depth')
+
     return experiments, names
 
 def get_splatam_exps():
@@ -309,9 +328,9 @@ if __name__ == "__main__":
     
     dataset = 'davis'
     # dataset = 'davis_splatam'
-    # dataset = 'jono'
+    dataset = 'jono'
     # dataset = 'jono_baseline'
-    dataset = 'rgb_stacking'
+    # dataset = 'rgb_stacking'
 
     if dataset == 'jono_baseline':
         experiments, names = get_jono_base_exps()
@@ -325,7 +344,7 @@ if __name__ == "__main__":
         experiments, names = get_rgb_exps()
 
     load_gaussian_tracks = False
-    vis_trajs = True
+    vis_trajs = False
     vis_gird = False
 
     get_gauss_wise3D_track = True
@@ -343,6 +362,8 @@ if __name__ == "__main__":
     vis_all = True
     primary_device = "cuda:1"
     novel_view_mode = 'circle' # 'circle', 'test_cam'
+    stereo = False
+    novel_view_mode = None # 'zoom_out'
 
     print(f"Evaluating gauss-wise-track {get_gauss_wise3D_track} and round pixel {use_round_pix} and get from 3D {get_from3D}.")
 
@@ -382,7 +403,7 @@ if __name__ == "__main__":
             if 'annotations' in seq:
                 continue
 
-            # if 'soapbox' not in seq:
+            # if 'libby' not in seq:
             #     continue
 
             print(f"\mSEQUENCE {seq}...")
@@ -419,77 +440,64 @@ if __name__ == "__main__":
                 do_transform = False
 
             if args.eval_traj:
-                # if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
-                #     print(f"Experiment not done {run_name} yet.")
-                #     continue
-                # elif not os.path.isfile(f"{experiment}/{run_name}/params.npz") and "SplaTAM" in experiment:
-                #     print(f"Experiment not done {run_name} yet.")
-                #     continue
+                if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
+                    print(f"Experiment not done {run_name} yet.")
+                    continue
+                elif not os.path.isfile(f"{experiment}/{run_name}/params.npz") and "SplaTAM" in experiment:
+                    print(f"Experiment not done {run_name} yet.")
+                    continue
                 
-                if seq_experiment.config['time_window'] == 1:
-                    if not get_gauss_wise3D_track and (not get_from3D or 'jono' not in dataset):
-                        add_on = '_alpha'
-                    elif get_from3D:
-                        add_on = '_from_3D'
-                    elif use_round_pix:
-                        add_on = '_round'
-                    else:
-                        add_on = ''
-
-                    if best_x != 1:
-                        add_on = add_on + f'_{best_x}'
-
-                    metrics = eval_traj(
-                        seq_experiment.config,
-                        results_dir=p,
-                        load_gaussian_tracks=load_gaussian_tracks,
-                        vis_trajs=vis_trajs, # seq_experiment.config['viz']['vis_tracked'])
-                        clip=clip,
-                        use_gt_occ=use_gt_occ,
-                        vis_thresh=vis_thresh,
-                        vis_thresh_start=vis_thresh_start,
-                        best_x=best_x,
-                        traj_len=traj_len,
-                        color_thresh=color_thresh,
-                        do_transform=do_transform,
-                        use_round_pix=use_round_pix,
-                        get_gauss_wise3D_track=get_gauss_wise3D_track,
-                        get_from3D=get_from3D,
-                        vis_trajs_best_x=vis_trajs_best_x
-                        )
-                    print(metrics)
-
-                    with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.txt'), 'w') as f:
-                        f.write(f"Trajectory metrics: {metrics}")
-
-                    if vis_gird:
-                        vis_grid_trajs(
-                            seq_experiment.config,
-                            params=None,
-                            cam=None,
-                            results_dir=p,
-                            orig_image_size=True,
-                            no_bg=True,
-                            clip=True,
-                            traj_len=traj_len,
-                            vis_thresh=vis_thresh)
-                        print(f"Stored visualizations to {p}...")
+                if not get_gauss_wise3D_track and (not get_from3D or 'jono' not in dataset):
+                    add_on = '_alpha'
+                elif get_from3D:
+                    add_on = '_from_3D'
+                elif use_round_pix:
+                    add_on = '_round'
                 else:
-                    metrics = eval_traj_window(
+                    add_on = ''
+
+                if best_x != 1:
+                    add_on = add_on + f'_{best_x}'
+
+                metrics = eval_traj(
+                    seq_experiment.config,
+                    results_dir=p + '/eval',
+                    load_gaussian_tracks=load_gaussian_tracks,
+                    vis_trajs=vis_trajs, # seq_experiment.config['viz']['vis_tracked'])
+                    clip=clip,
+                    use_gt_occ=use_gt_occ,
+                    vis_thresh=vis_thresh,
+                    vis_thresh_start=vis_thresh_start,
+                    best_x=best_x,
+                    traj_len=traj_len,
+                    color_thresh=color_thresh,
+                    do_transform=do_transform,
+                    use_round_pix=use_round_pix,
+                    get_gauss_wise3D_track=get_gauss_wise3D_track,
+                    get_from3D=get_from3D,
+                    vis_trajs_best_x=vis_trajs_best_x,
+                    stereo=stereo,
+                    novel_view_mode=novel_view_mode
+                    )
+                print(metrics)
+
+                with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.txt'), 'w') as f:
+                    f.write(f"Trajectory metrics: {metrics}")
+
+                if vis_gird:
+                    vis_grid_trajs(
                         seq_experiment.config,
-                        results_dir=p,
-                        load_gaussian_tracks=load_gaussian_tracks,
-                        vis_trajs=vis_trajs, # seq_experiment.config['viz']['vis_tracked'])
-                        clip=clip,
-                        use_gt_occ=use_gt_occ,
-                        vis_thresh=vis_thresh,
-                        vis_thresh_start=vis_thresh_start,
-                        best_x=best_x,
+                        params=None,
+                        cam=None,
+                        results_dir=p + '/eval',
+                        orig_image_size=True,
+                        no_bg=True,
+                        clip=True,
                         traj_len=traj_len,
-                        color_thresh=color_thresh)
-                    print(metrics)
-                    with open(os.path.join(p, 'eval', 'traj_metrics.txt'), 'w') as f:
-                        f.write(f"Trajectory metrics: {metrics}")
+                        vis_thresh=vis_thresh,
+                        stereo=stereo,
+                        novel_view_mode=novel_view_mode)
+                    print(f"Stored visualizations to {p}...")
 
             if args.eval_renderings:
                 if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:
