@@ -19,10 +19,10 @@ def format_start_pix(start_pixels, use_norm_pix, start_pixels_normalized, use_ro
     if not use_norm_pix:
         if use_round_pix:
             if start_pixels_normalized:
-                start_pixels = unnormalize_points(start_pixels, h, w, do_round=True, do_scale=do_scale)
+                start_pixels = unnormalize_points(start_pixels, h, w, do_round=True)
         else:
             if start_pixels_normalized:
-                start_pixels = unnormalize_points(start_pixels, h, w, do_round=False, do_scale=do_scale)
+                start_pixels = unnormalize_points(start_pixels, h, w, do_round=False)
             start_pixels = start_pixels.to(params['means3D'].device).float()
     else:
         if not start_pixels_normalized:
@@ -51,11 +51,11 @@ def gauss_wise3D_track(search_fg_only, params, use_norm_pix, use_round_pix, proj
 
         if not use_norm_pix:
             if use_round_pix:
-                means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=True, do_scale=do_scale)
+                means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=True)
             else:
-                means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=False, do_scale=do_scale).float()
+                means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_round=False).float()
         else:
-            means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_normalize=True, do_scale=do_scale).float()
+            means2D_t0 = three2two(proj_matrix, means3D_t0, w, h, do_normalize=True).float()
             
         gauss_ids = find_closest_to_start_pixels(
             means2D_t0,
@@ -168,7 +168,7 @@ def get_2D_and_3D_from_sum(params, cam, start_pixels, proj_matrix, w, h, visuals
                         camera_grad=False,
                         gauss_time_idx=0,
                         delta=0)
-                loc_2D = three2two(proj_matrix, transformed_loc_3D['means3D'], w, h, do_normalize=False, do_scale=False).float()
+                loc_2D = three2two(proj_matrix, transformed_loc_3D['means3D'], w, h, do_normalize=False).float()
                 if cam_time == gauss_time:
                     visibility.append(((weight_means/weight_means.sum()) * params['visibility'][visible_means, gauss_time].squeeze()).sum())
                     traj_3D.append(loc_3D)
@@ -603,7 +603,7 @@ def _eval_traj(
         get_from3D=get_from3D,
         visuals=vis_trajs_best_x or vis_trajs,
         proj_matrices=proj_matrices)
-
+    
     pred_visibility = (pred_visibility > vis_thresh).float()
 
     if best_x > 1 and vis_trajs_best_x:
@@ -786,6 +786,9 @@ def compute_metrics_iphone3D(data, pred_points):
     time_pairs = data["time_pairs"]
     index_pairs = data["index_pairs"]
 
+    print(keypoints_3d)
+    print(pred_points)
+    
     # Compute 3D tracking metrics.
     pair_keypoints_3d = keypoints_3d[index_pairs]
     pair_visibility = visibility[index_pairs]
@@ -1366,6 +1369,8 @@ def eval_traj(
     # get projectoin matrix
     if cam is None:
         params, _, k, w2c = load_scene_data(config,  os.path.dirname(results_dir))
+        if 'visibility' not in params.keys():
+            params['visibility'] = torch.ones((params['means3D'].shape[0], params['means3D'].shape[-1]))
         if not stereo and len(params['visibility'].shape) == 3:
             params['visibility'] = params['visibility'][:, 0, :]
         elif len(params['visibility'].shape) == 3:

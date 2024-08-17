@@ -46,9 +46,12 @@ if __name__ == "__main__":
     traj_len = 0
 
     results_dirs = list()
-    results_dirs += ["../Dynamic3DGaussians/output_orig_jono/exp1"]
-    results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono/exp1"]
-    results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono_fewer_epochs/exp1"]
+    # results_dirs += ["../Dynamic3DGaussians/output_orig_jono/exp1"]
+    # results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono/exp1"]
+    # results_dirs += ["../Dynamic3DGaussians/output_one_cam_jono_fewer_epochs/stereo"]
+    results_dirs += ["../Dynamic3DGaussians/experiments/output_stereo/stereo"]
+
+    
 
     for _results_dir in results_dirs:
         print(f"Evaluating experimetn {_results_dir}")
@@ -72,7 +75,7 @@ if __name__ == "__main__":
                     get_pc_jono=False,
                     jono_depth=False
                 ))
-            results_dir = os.path.join(_results_dir, seq)
+            results_dir = os.path.join(_results_dir, seq, 'eval')
             metrics = eval_traj(
                 config,
                 results_dir=results_dir,
@@ -90,9 +93,10 @@ if __name__ == "__main__":
                 use_round_pix=use_round_pix,
                 get_gauss_wise3D_track=get_gauss_wise3D_track)
             print(metrics)
-            os.makedirs(os.path.join(results_dir, 'eval'), exist_ok=True)
+            os.makedirs(results_dir, exist_ok=True)
             with open(os.path.join(results_dir, 'eval', 'traj_metrics.txt'), 'w') as f:
                 f.write(f"Trajectory metrics: {metrics}")
+
             if False: #experiment.config['viz']['vis_grid']:
                 vis_grid_trajs(
                     experiment.config,

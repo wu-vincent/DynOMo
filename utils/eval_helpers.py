@@ -190,7 +190,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
         lookat = scene_center - avg_w2c[:3, -1]
         if avg_w2c.sum() == 4:
             if 'DAVIS' in config['data']['basedir']:
-                lookat = torch.tensor([0, 0, -10]).to(device)
+                lookat = torch.tensor([0, 0, -2]).to(device)
             else:
                 lookat = torch.tensor([0, 0, -2]).to(device)
 
@@ -255,7 +255,8 @@ def eval(
         novel_view_mode=None,
         config=None,
         stereo_add=''):
-    
+    print(viz_config['vis_gt'])
+    print()
     if final_params['log_scales'].shape[1] == num_frames and len(final_params['log_scales'].shape) == 3:
         final_params['log_scales'] = final_params['log_scales'].permute(0, 2, 1)
     
@@ -400,7 +401,7 @@ def eval(
                 # instseg
                 save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
                 # bg 
-                save_normalized(curr_data['bg'], dir_names['bg_dir'], time_idx, num_frames=num_frames)
+                save_normalized(curr_data['bg'].float(), dir_names['bg_dir'], time_idx, num_frames=num_frames)
 
         if viz_config['save_pc']:
             save_pc(final_params_time, dir_names['pc_dir'], time_idx, time_mask)
@@ -556,7 +557,7 @@ def eval_during(
             # instseg
             save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
             # bg 
-            save_normalized(curr_data['bg'], dir_names['bg_dir'], time_idx, num_frames=num_frames)
+            save_normalized(curr_data['bg'].float(), dir_names['bg_dir'], time_idx, num_frames=num_frames)
 
     return psnr, rmse, depth_l1, ssim, lpips_score, pca
 

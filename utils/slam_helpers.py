@@ -476,7 +476,8 @@ def dyno_losses(
         weight_rot=True,
         weight_rigid=True,
         weight_iso=True,
-        last_x=1):
+        last_x=1,
+        device="cuda:0"):
     losses = dict()
     if weight == 'bg':
         bg_weight = 1 - torch.abs(params['bg'][variables["self_indices"]].detach().clone() - params['bg'][variables["neighbor_indices"]].detach().clone())
@@ -497,9 +498,9 @@ def dyno_losses(
     loss_rigid = 0
     for i in range(1, min(iter_time_idx, last_x)+1):
         # get relative rotation
-        other_rot = prev_params["unnorm_rotations"][:, :, iter_time_idx - i].detach().clone()
+        other_rot = prev_params["unnorm_rotations"][:, :, iter_time_idx - i].detach().clone().to(device)
         other_rot[:, 1:] = -1 * other_rot[:, 1:]
-        other_means = prev_params["means3D"][:, :, iter_time_idx - i].detach().clone()
+        other_means = prev_params["means3D"][:, :, iter_time_idx - i].detach().clone().to(device)
         curr_rot = curr_params["unnorm_rotations"]
         rel_rot = quat_mult(curr_rot, other_rot)
         rel_rot_mat = build_rotation(rel_rot)

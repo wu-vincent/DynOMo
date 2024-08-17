@@ -30,7 +30,7 @@ jono_seqs_stereo = \
      "tennis/ims/8": "tennis/ims/27"}
 
 
-def get_dataset(config_dict, basedir, sequence, stereo=False, depth_type=None, cam_type=None, factor=2, **kwargs):
+def get_dataset(config_dict, basedir, sequence, stereo=False, depth_type=None, cam_type=None, factor=2, do_scale=False, **kwargs):
     if config_dict["dataset_name"].lower() in ["davis"]:
         return DavisDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
@@ -38,7 +38,7 @@ def get_dataset(config_dict, basedir, sequence, stereo=False, depth_type=None, c
     elif config_dict["dataset_name"].lower() in ["rgb_stacking"]:
         return RGBDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["iphone"]:
-        return IphoneDynoSplatamDataset(config_dict, basedir, sequence, depth_type, cam_type, factor, **kwargs)
+        return IphoneDynoSplatamDataset(config_dict, basedir, sequence, depth_type, cam_type, factor, do_scale, **kwargs)
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
 
@@ -86,6 +86,7 @@ def get_data(config, stereo=False):
         do_transform=dataset_config['do_transform'] if 'do_transform' in dataset_config.keys() else False,
         novel_view_mode=dataset_config['novel_view_mode'],
         factor=2 if 'factor' not in dataset_config.keys() else dataset_config['factor'],
+        do_scale=False if 'do_scale' not in dataset_config.keys() else dataset_config['do_scale']
         )
 
     return dataset
@@ -169,9 +170,10 @@ def load_iphone(config, in_torch=True):
     config = copy.deepcopy(config)
     config['data']['factor'] = 1
     config['data']['cam_type'] = 'refined'
-    config['data']['depth_type'] = 'lidar'
+    config['data']['depth_type'] = 'aligned_depth_anything_colmap'
     dataset = get_data(config=config)
     color_paths = dataset.color_paths
+    dataset.load_depth(dataset.depth_paths[0], 0)
 
     # get rgb
     video = [np.asarray(imageio.imread(path), dtype=float) for path in color_paths]
@@ -181,6 +183,7 @@ def load_iphone(config, in_torch=True):
     train_depths = np.array([np.load(p.replace('rgb', 'depth').replace('png', 'npy')) for p in dataset.color_paths])
     if dataset.do_scale:
         train_depths = train_depths / dataset.scale
+    # train_depths = dataset.depths
 
     # get poses
     dataset.load_poses(cam=0)
@@ -188,10 +191,9 @@ def load_iphone(config, in_torch=True):
 
     # scale poses
     scale = np.load(os.path.join(dataset.input_folder, "flow3d_preprocessed/colmap/scale.npy")).item()
-
-    # train_c2ws = np.linalg.inv(train_w2cs)
-    # train_c2ws[:, :3, -1] *= scale
-    # train_w2cs = np.linalg.inv(train_c2ws)
+    train_c2ws = np.linalg.inv(train_w2cs)
+    train_c2ws[:, :3, -1] *= scale
+    train_w2cs = np.linalg.inv(train_c2ws)
     
     # get keypoints
     keypoint_paths = sorted(glob.glob(os.path.join(dataset.input_folder, "keypoint/2x/train/0_*.json")))
@@ -247,6 +249,7 @@ def load_iphone(config, in_torch=True):
         )
         kps_3d[kps_3d[:, -1] != 1] = 0.0
         keypoints_3d.append(kps_3d)
+    
     keypoints_3d = np.array(keypoints_3d)
 
     data_dict = {
@@ -287,7 +290,7 @@ def get_gt_traj(config, in_torch=False, stereo=False):
         return  load_iphone(config, in_torch)
 
 
-def load_scene_data(config, results_dir, device="cuda:0", file=None):
+def load_scene_data(config=None, results_dir=None, device="cuda:0", file=None):
     if file is None:
         params = dict(np.load(f"{results_dir}/params.npz", allow_pickle=True))
     else:

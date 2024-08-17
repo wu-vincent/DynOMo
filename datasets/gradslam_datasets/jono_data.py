@@ -117,6 +117,7 @@ class JonoDynoSplatamDataset(GradSLAMDataset):
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))
         else:
             input_folder = self.input_folder.replace("/scratch/jseidens/data/data", "../Dynamic3DGaussians/rendered")
+            input_folder = self.input_folder.replace("/data3/jseidens/data", "../Dynamic3DGaussians/rendered")
             depth_paths = natsorted(glob.glob(f"{input_folder}/depth*.npy"))
         
         # get embedding paths

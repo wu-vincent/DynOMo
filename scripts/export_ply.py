@@ -57,7 +57,7 @@ if __name__ == "__main__":
     experiment = SourceFileLoader(os.path.basename(args.config), args.config).load_module()
     config = experiment.config
     work_path = config['workdir']
-    run_name = "splatam_paper-windmill/splatam_paper-windmill_0_kNN_200_200_0_-1_32_False_0.5_20_20_5_0.001_True_True_True_True_True_2000_16_16_128_16_0.1_True_False_False_True_True_1_1_0_1_20_240_180_0.0_0.0_0_False_False_True_False_True_0.1_3_aniso_deb_l2_emb_r2"
+    run_name = "splatam_haru-sit/splatam_haru-sit_0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_2_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw"
     params_path = os.path.join(work_path, run_name, "params.npz")
     os.makedirs(os.path.join(work_path, run_name, 'splats'), exist_ok=True)
 
@@ -65,12 +65,13 @@ if __name__ == "__main__":
     params = dict(np.load(params_path, allow_pickle=True))
     print('Loaded!!!')
     for timestamp in range(params['means3D'].shape[2]):
-        means = params['means3D'][:, :, timestamp]
-        scales = params['log_scales'][:, :, timestamp]
-        rotations = params['unnorm_rotations'][:, :, timestamp]
-        rgbs = params['rgb_colors'][:, :, timestamp]
-        opacities = params['logit_opacities']
+        if timestamp != 0 and timestamp != 100:
+            continue
+        means = params['means3D'][:, :, timestamp][params['timestep']<=timestamp]
+        scales = params['log_scales'][:, :, timestamp][params['timestep']<=timestamp]
+        rotations = params['unnorm_rotations'][:, :, timestamp][params['timestep']<=timestamp]
+        rgbs = params['rgb_colors'][:, :, timestamp][params['timestep']<=timestamp]
+        opacities = params['logit_opacities'][params['timestep']<=timestamp]
 
         ply_path = os.path.join(work_path, run_name, 'splats', f"splat_{timestamp}.ply")
         save_ply(ply_path, means, scales, rotations, rgbs, opacities, timestamp=timestamp)
-        quit()

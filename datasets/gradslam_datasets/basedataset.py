@@ -193,12 +193,10 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         # self.transformed_poses = datautils.poses_to_transforms(self.poses)
         self.poses = torch.stack(self.poses)
-        
         if self.relative_pose:
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
-
         self.precomp_intrinsics = precomp_intrinsics
 
     def __len__(self):
