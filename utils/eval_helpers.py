@@ -192,7 +192,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
             if 'DAVIS' in config['data']['basedir']:
                 lookat = torch.tensor([0, 0, -2]).to(device)
             else:
-                lookat = torch.tensor([0, 0, -2]).to(device)
+                lookat = torch.tensor([0, 0, -0.2]).to(device)
 
         avg_w2c[:3, -1] -= 1 * lookat
         rads = 0 if novel_view_mode == 'zoom_out' else 0.1

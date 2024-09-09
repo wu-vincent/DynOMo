@@ -1444,6 +1444,7 @@ class RBDG_SLAMMER():
         for i in range(len(stereo_cams)):
             # prepare params
             _params = copy.deepcopy(self.params)
+            print(_params.keys())
             if len(_params['visibility'].shape) == 3:
                 _params['visibility'] = _params['visibility'][:, i]
             _params['means3D'] = _params['means3D'].to(self.device)
@@ -1479,7 +1480,8 @@ class RBDG_SLAMMER():
                 cam=stereo_cams[i],
                 results_dir=self.eval_dir+stereo_adds[i], 
                 stereo=stereo_evals[i],
-                vis_trajs=vis_trajs)
+                vis_trajs=vis_trajs,
+                queries_first_t=False if 'iphone' in self.eval_dir else True)
             
             if i == 0 and eval_traj:
                 with torch.no_grad():

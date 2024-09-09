@@ -374,8 +374,14 @@ def get_iphone_exps():
     # names += ["cam_optim_s2_higher_cam_lr"]
     # experiments += ["0_kNN_200_200_200_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_2_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw_deb"]
     # names += ["cam_optim_s2"]
-    experiments += ["0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_1_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw_deb"]
-    names += ["orig_s1"]
+    # experiments += ["0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_1_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw_deb"]
+    # names += ["orig_s1"]
+    # experiments += ["0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_1_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_lidar_refined_segment_bug_rem_factor_False_bug_rem_hw_deb"]
+    # names += ["orig_s1_lidar"]
+    # experiments += ["0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_1_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_original_segment_bug_rem_factor_False_bug_rem_hw_deb"]
+    # names += ["orig_s1_orig_pose"]
+    experiments += ["0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_2_0_20_1.0_1.0_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw_deb"]
+    names += ["orig_s2_orig_size"]
 
     return experiments, names
 
@@ -388,6 +394,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_traj", default=1, type=int, help="if eval traj")
     parser.add_argument("--vis_trajs", default=0, type=int, help="if eval traj")
     parser.add_argument("--vis_grid", default=0, type=int, help="if eval traj")
+    parser.add_argument("--compute_metrics", default=1, type=int, help="if eval traj")
+    parser.add_argument("--compute_flow", default=0, type=int, help="if compute flow")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
 
 
@@ -398,7 +406,7 @@ if __name__ == "__main__":
     dataset = 'jono'
     # dataset = 'jono_baseline'
     # dataset = 'rgb_stacking'
-    # dataset = 'iphone'
+    dataset = 'iphone'
 
     if dataset == 'jono_baseline':
         experiments, names = get_jono_base_exps()
@@ -416,14 +424,16 @@ if __name__ == "__main__":
     load_gaussian_tracks = False
     vis_trajs = args.vis_trajs
     vis_gird = args.vis_grid
+    compute_flow = args.compute_flow
 
     get_gauss_wise3D_track = True
     get_from3D = False
     vis_trajs_best_x = False
-    queries_first_t = True
+    queries_first_t = True if dataset != 'iphone' else False
+    vis_thresh = 0.5
     
     best_x = 1
-    traj_len = 10
+    traj_len = 0
     vis_all = True
     vis_gt = True
     primary_device = "cuda:1"
@@ -431,7 +441,7 @@ if __name__ == "__main__":
     stereo = False
     novel_view_mode = None # 'zoom_out'
 
-    print(f"Evaluating gauss-wise-track {get_gauss_wise3D_track} and get from 3D {get_from3D}.")
+    print(f"Evaluating gauss-wise-track {get_gauss_wise3D_track} and get from 3D {get_from3D} with vis thresh {vis_thresh}.")
 
     for name, experiment in zip(names, experiments):
         if dataset == 'davis':
@@ -528,6 +538,9 @@ if __name__ == "__main__":
                 if not queries_first_t:
                     add_on = add_on + '_not_only_first'
                 
+                if vis_thresh != 0.5:
+                    add_on = add_on + f'_{vis_thresh}'
+                
                 # if os.path.isfile(os.path.join(p, 'eval', f'traj_metrics{add_on}.json')):
                 #     continue
                 
@@ -541,18 +554,25 @@ if __name__ == "__main__":
                     get_from3D=get_from3D,
                     vis_trajs_best_x=vis_trajs_best_x,
                     stereo=stereo,
-                    queries_first_t=queries_first_t)
+                    queries_first_t=queries_first_t,
+                    vis_thresh=vis_thresh,
+                    vis_thresh_start=vis_thresh,
+                    primary_device=primary_device)
 
-                metrics = evaluator.eval_traj()
-                print("Trajectory metrics:", metrics)
-                with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.json'), 'w') as f:
-                    json.dump(metrics, f)
-                with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.txt'), 'w') as f:
-                    f.write(f"Trajectory metrics: {metrics}")
+                if args.compute_metrics:
+                    metrics = evaluator.eval_traj()
+                    print("Trajectory metrics:", metrics)
+                    with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.json'), 'w') as f:
+                        json.dump(metrics, f)
+                    with open(os.path.join(p, 'eval', f'traj_metrics{add_on}.txt'), 'w') as f:
+                        f.write(f"Trajectory metrics: {metrics}")
 
                 if vis_gird:
                     evaluator.vis_grid_trajs()
                     print(f"Stored visualizations to {p}...")
+                
+                if compute_flow:
+                    evaluator.vis_flow()
 
             if args.eval_renderings or args.novel_view_mode is not None:
                 if not os.path.isfile(os.path.join(p, 'eval', 'traj_metrics.txt')) and not "SplaTAM" in experiment:

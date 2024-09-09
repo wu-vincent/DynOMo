@@ -165,12 +165,13 @@ def load_rgb(sequence, in_torch=False):
     return data
 
 
-def load_iphone(config, in_torch=True):
+def load_iphone(config, in_torch=True, device="cuda:0"):
     import copy
     config = copy.deepcopy(config)
     config['data']['factor'] = 1
     config['data']['cam_type'] = 'refined'
     config['data']['depth_type'] = 'aligned_depth_anything_colmap'
+    config['primary_device'] = device
     dataset = get_data(config=config)
     color_paths = dataset.color_paths
     dataset.load_depth(dataset.depth_paths[0], 0)
@@ -278,7 +279,7 @@ def load_iphone(config, in_torch=True):
     return data_dict
 
 
-def get_gt_traj(config, in_torch=False, stereo=False):
+def get_gt_traj(config, in_torch=False, stereo=False, device='cuda:0'):
     config_dict = get_gradslam_data_cfg(config["data"])
     if config_dict["dataset_name"].lower() in ["davis"]:
         return load_davis(config["data"]["sequence"], in_torch)
@@ -287,7 +288,7 @@ def get_gt_traj(config, in_torch=False, stereo=False):
     elif config_dict["dataset_name"].lower() in ["rgb_stacking"]:
         return  load_rgb(config["data"]["sequence"], in_torch)
     elif config_dict["dataset_name"].lower() in ["iphone"]:
-        return  load_iphone(config, in_torch)
+        return  load_iphone(config, in_torch, device)
 
 
 def load_scene_data(config=None, results_dir=None, device="cuda:0", file=None):

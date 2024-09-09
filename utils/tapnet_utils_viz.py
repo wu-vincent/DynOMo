@@ -31,6 +31,7 @@ from matplotlib.collections import LineCollection
 import imageio
 from matplotlib import cm
 import cv2
+import flow_vis
 
 
 color_map = cm.get_cmap("jet")
@@ -831,7 +832,7 @@ def vis_tracked_points(results_dir, data, clip=True, pred_visibility=None, traj_
     imageio.mimwrite(os.path.join(results_dir, 'vid.mp4'), disp, quality=8, fps=10)
 
 
-def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True):
+def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10):
     """
     This function calculates the median motion of the background, which is subsequently
     subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
@@ -840,7 +841,7 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True)
     points = data['points']
     per_time = len(points.shape) == 4
     if not per_time:
-        points = points.unsqueeze(0)
+        points = np.expand_dims(points, axis=0)
 
     # points shape B, N x T x 2
     if points.sum() == 0:
@@ -863,7 +864,7 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True)
         # kpts = kpts_foreground - np.median(kpts_background - kpts_background[i], axis=1, keepdims=True)
         img_curr = rgb[i]
         if vis_traj:
-            for t in range(i):
+            for t in range(max(0, i-traj_len), i):
                 img1 = img_curr.copy()
                 # changing opacity
                 alpha = max(1 - 0.9 * ((i - t) / ((i + 1) * .99)), 0.1)
@@ -902,8 +903,16 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True)
             p1 = (int(round(pt1[0])), int(round(pt1[1])))
             # if p1[0] > 10000 or p1[1] > 10000:
             #     continue
-            cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
+            if traj_len > 0:
+                cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
+            else:
+                cv2.circle(img_curr, p1, 5, color, -1, lineType=16)
+
 
         frames.append(img_curr.astype(np.uint8))
-    imageio.mimwrite(os.path.join(results_dir, 'vid_trails.mp4'), frames, quality=8, fps=10)
-    print('stored vis', os.path.join(results_dir, 'vid_trails.mp4'))
+    imageio.mimwrite(os.path.join(results_dir, f'vid_trails_{traj_len}.mp4'), frames, quality=8, fps=10)
+    print('stored vis', os.path.join(results_dir, f'vid_trails_{traj_len}.mp4'))
+
+
+
+# flow_color = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)
