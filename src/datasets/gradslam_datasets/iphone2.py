@@ -17,7 +17,6 @@ from .col_map_utils import get_colmap_camera_params
 import roma
 
 
-
 class IphoneDynoSplatamDataset(GradSLAMDataset):
     def __init__(
         self,
@@ -28,29 +27,22 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         cam_type='refined',
         factor=2,
         do_scale=True,
-        stride: Optional[int] = None,
+        every_x_frame: Optional[int] = None,
         start: Optional[int] = 0,
         end: Optional[int] = -0,
         desired_height: Optional[int] = 480,
         desired_width: Optional[int] = 640,
         load_embeddings: Optional[bool] = False,
-        load_instseg=True,
-        embedding_dir: Optional[str] = "embeddings",
         embedding_dim: Optional[int] = 512,
-        load_support_trajs=False,
-        feats_224=False,
         relative_pose=False,
         **kwargs,
     ):  
         self.start = start
-        self.start_frame = start
         self.end = end
-        self.max_len = end
 
         self.factor = factor
         self.do_scale = do_scale
         print(f"Doing scale {self.do_scale} and using factor {self.factor}")
-        self.feats_224 = feats_224
         self.input_folder = os.path.join(basedir, sequence)
         self.depth_type = depth_type
         self.cam_type = cam_type
@@ -64,44 +56,20 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         print(f"Using {depth_type} depth...")
         self.depths = None
 
-        img = imageio.imread(
-            natsorted(glob.glob(os.path.join(self.input_folder, f'rgb/{self.factor}x', f'0_*.png')))[0])
-        h, w, _ = img.shape
-        config_dict["camera_params"]["image_height"] = h
-        config_dict["camera_params"]["image_width"] = w
-        if desired_height <= 10:
-            desired_height = int(h * desired_height)
-            desired_width = int(w * desired_width)
-
         print(f"Using relative pose {relative_pose}!")
-        self.load_instseg = True
         super().__init__(config_dict,
-            stride=stride,
+            every_x_frame=every_x_frame,
             start=start,
             end=end,
             desired_height=desired_height,
             desired_width=desired_width,
             load_embeddings=load_embeddings,
-            embedding_dir=embedding_dir,
             embedding_dim=embedding_dim,
-            load_instseg=load_instseg,
-            precomp_intrinsics=True,
+            per_seq_intrinsics=True,
             relative_pose=relative_pose,
             **kwargs,
         )
         print(f"Length of sequence {len(self.color_paths)}")
-    
-     
-    def load_support_trajs(self):
-        self.support_trajs = None
-
-    def get_instsegpaths(self, cam=0):
-        # instseg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'seg/2x', f'{cam}_*.png')))[self.start_frame:self.end]
-        instseg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start_frame:self.end]
-        return instseg_paths
-    
-    def get_bg_paths(self):
-        return self.instseg_paths
     
     def read_embedding_from_file(self, embedding_path):
         embedding = np.load(embedding_path)
@@ -110,10 +78,6 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
             embedding = self.embedding_downscale.transform(embedding.reshape(-1, shape[2]))
             embedding = embedding.reshape((shape[0], shape[1], self.embedding_dim))
         return torch.from_numpy(embedding)
-
-    def _load_instseg(self, instseg_path):
-        instseg = imageio.imread(instseg_path)
-        return instseg
     
     def _load_bg(self, bg_path):
         bg = (imageio.imread(bg_path) / 255).astype(bool)
@@ -121,17 +85,17 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         return bg.astype(float)
     
     def get_filepaths(self, cam=0):
-        color_paths = natsorted(glob.glob(os.path.join(self.input_folder, f'rgb/{self.factor}x', f'{cam}_*.png')))[self.start_frame:self.end]
+        color_paths = natsorted(glob.glob(os.path.join(self.input_folder, f'rgb/{self.factor}x', f'{cam}_*.png')))[self.start:self.end]
         if self.depth_type == 'lidar':
-            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth/{self.factor}x/{cam}_*.npy"))[self.start_frame:self.end]
+            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth/{self.factor}x/{cam}_*.npy"))[self.start:self.end]
         elif 'aligned' in self.depth_type:
-            depth_paths = natsorted(glob.glob(f"{self.input_folder}/flow3d_preprocessed/{self.depth_type}/1x/{cam}_*.npy"))[self.start_frame:self.end]
+            depth_paths = natsorted(glob.glob(f"{self.input_folder}/flow3d_preprocessed/{self.depth_type}/1x/{cam}_*.npy"))[self.start:self.end]
         else:
-            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_anything_jenny/depth{cam}_*.npy"))[self.start_frame:self.end]
-
+            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_anything_jenny/depth{cam}_*.npy"))[self.start:self.end]
+        bg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*dino_img_quat_4_1_32_240_180.npy")))[self.start_frame:self.end]
+            embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*dino_img_quat_4_1_32_240_180.npy")))[self.start:self.end]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
@@ -140,7 +104,7 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
                 print('Features already have the right size...')
                 self.embedding_downscale = None
 
-        return color_paths, depth_paths, embedding_paths
+        return color_paths, depth_paths, embedding_paths, bg_paths
 
     def load_depth(self, depth_path, index, use_median=True, fill_remaining=True):
         if self.depths is None and (self.depth_type == 'lidar' or 'aligned' in self.depth_type):
@@ -194,7 +158,7 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
 
     def load_poses(self, cam=0):
         if self.cam_type == 'original':
-            pose_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'camera', f'{cam}_*.json')))[self.start_frame:self.end]
+            pose_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'camera', f'{cam}_*.json')))[self.start:self.end]
             w2cs, Ks = list(), list()
             for pose_path in pose_paths:
                 with open(pose_path, 'r') as jf:
@@ -233,17 +197,6 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         if self.do_scale:
             self.w2cs = self.w2cs @ torch.linalg.inv(self.transfm)
             self.w2cs[:, :3, 3] /= self.scale
-
-        # original_up = torch.nn.functional.normalize(self.w2cs[0, 1, :3], dim=-1)
-        # target_up = original_up.new_tensor([0.0, 1.0, 0.0])
-        # axis_of_rotation = torch.nn.functional.normalize(original_up.cross(target_up, dim=-1), dim=-1)
-        # mag_of_rotation = original_up.dot(target_up).acos_()
-        # if mag_of_rotation < 0.05:
-        #     mag_of_rotation = mag_of_rotation - torch.pi
-        # R = roma.rotvec_to_rotmat(
-        #     axis_of_rotation * mag_of_rotation)
-        # transfm = torch.eye(4)
-        # transfm[:3, :3] = R
 
         self.w2cs = self.w2cs @ torch.linalg.inv(self.w2cs[0])
         poses = [torch.linalg.inv(w2c) for w2c in self.w2cs]

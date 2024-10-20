@@ -83,29 +83,78 @@ class GradSLAMDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         config_dict,
-        stride: Optional[int] = 1,
+        every_x_frame: Optional[int] = 1,
         start: Optional[int] = 0,
         end: Optional[int] = -1,
-        desired_height: int = 480,
-        desired_width: int = 640,
+        desired_height: float = 1.0,
+        desired_width: float = 1.0,
         channels_first: bool = False,
         normalize_color: bool = False,
         device="cuda:0",
         dtype=torch.float,
         load_embeddings: bool = False,
-        embedding_dir: str = "feat_lseg_240_320",
         embedding_dim: int = 512,
         relative_pose: bool = False,  # If True, the pose is relative to the first frame
-        load_instseg: bool = False,
-        precomp_intrinsics: bool = False,
+        per_seq_intrinsics: bool = False,
         **kwargs,
     ):
         super().__init__()
+        
+        # intialialize variables
         self.name = config_dict["dataset_name"]
         self.device = device
         self.png_depth_scale = config_dict["camera_params"]["png_depth_scale"]
+        self.dtype = dtype
+        self.load_embeddings = load_embeddings
+        self.embedding_dim = embedding_dim
+        self.relative_pose = relative_pose
+        self.channels_first = channels_first
+        self.normalize_color = normalize_color
 
-        if not precomp_intrinsics:
+        # initialize start and end
+        self.start = start
+        self.end = end
+        if start < 0:
+            raise ValueError("start must be positive. Got {0}.".format(every_x_frame))
+        if not (end == -1 or end > start):
+            raise ValueError("end ({0}) must be -1 (use all images) or greater than start ({1})".format(end, start))
+
+        # initialize camera distotion and image crops
+        self.distortion = (
+            np.array(config_dict["camera_params"]["distortion"])
+            if "distortion" in config_dict["camera_params"]
+            else None
+        )
+        self.crop_size = (
+            config_dict["camera_params"]["crop_size"] if "crop_size" in config_dict["camera_params"] else None
+        )
+        self.crop_edge = None
+        if "crop_edge" in config_dict["camera_params"].keys():
+            self.crop_edge = config_dict["camera_params"]["crop_edge"]
+
+        # get file paths
+        self.color_paths, self.depth_paths, self.embedding_paths, self.bg_paths = self.get_filepaths()
+        self.poses = self.load_poses()
+        
+        # get image width and image height and downscale factors
+        img = imageio.imread(self.color_paths[0])
+        h, w, _ = img.shape
+        config_dict["camera_params"]["image_height"] = h
+        config_dict["camera_params"]["image_width"] = w
+        self.desired_height = int(h * desired_height)
+        self.desired_width = int(w * desired_width)
+        self.height_downsample_ratio = float(self.desired_height) / self.orig_height
+        self.width_downsample_ratio = float(self.desired_width) / self.orig_width
+        
+        # set scaling functions
+        self.trans_nearest = torchvision.transforms.Resize(
+                (self.desired_width, self.desired_height), InterpolationMode.NEAREST)
+        self.trans_bilinear = torchvision.transforms.Resize(
+                (self.desired_width, self.desired_height), InterpolationMode.BILINEAR)
+        
+        # if nnot per sequence intrinsics take intrinsics from dataset file
+        self.per_seq_intrinsics = per_seq_intrinsics
+        if not per_seq_intrinsics:
             self.orig_height = config_dict["camera_params"]["image_height"]
             self.orig_width = config_dict["camera_params"]["image_width"]
             self.fx = config_dict["camera_params"]["fx"]
@@ -116,88 +165,41 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.orig_height = config_dict["camera_params"]["image_height"]
             self.orig_width = config_dict["camera_params"]["image_width"]
 
-        self.dtype = dtype
-
-        self.desired_height = desired_height
-        self.desired_width = desired_width
-        self.height_downsample_ratio = float(self.desired_height) / self.orig_height
-        self.width_downsample_ratio = float(self.desired_width) / self.orig_width
-        self.channels_first = channels_first
-        self.normalize_color = normalize_color
-
-        self.load_embeddings = load_embeddings
-        self.load_instseg = load_instseg
-        self.embedding_dir = embedding_dir
-        self.embedding_dim = embedding_dim
-        self.relative_pose = relative_pose
-
-        self.start = start
-        self.end = end
-        if start < 0:
-            raise ValueError("start must be positive. Got {0}.".format(stride))
-        if not (end == -1 or end > start):
-            raise ValueError("end ({0}) must be -1 (use all images) or greater than start ({1})".format(end, start))
-
-        self.distortion = (
-            np.array(config_dict["camera_params"]["distortion"])
-            if "distortion" in config_dict["camera_params"]
-            else None
-        )
-        self.crop_size = (
-            config_dict["camera_params"]["crop_size"] if "crop_size" in config_dict["camera_params"] else None
-        )
-
-        self.crop_edge = None
-        if "crop_edge" in config_dict["camera_params"].keys():
-            self.crop_edge = config_dict["camera_params"]["crop_edge"]
-
-        self.color_paths, self.depth_paths, self.embedding_paths = self.get_filepaths()
-
+        # check of number of paths are the same over different inputs
         if len(self.color_paths) != len(self.depth_paths):
             raise ValueError("Number of color and depth images must be the same.")
-        
         if self.load_embeddings:
             if len(self.color_paths) != len(self.embedding_paths):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
-
-        self.num_imgs = len(self.color_paths)
-        self.poses = self.load_poses()
         if len(self.color_paths) != len(self.poses):
             raise ValueError(f"Number of color images and poses must be the same, but got {len(self.color_paths)} and {len(self.poses)}.")
-        
-        self.instseg_paths = self.get_instsegpaths()
-        self.bg_paths = self.get_bg_paths()
         if len(self.color_paths) != len(self.instseg_paths):
             raise ValueError("Number of color images and segmentation masks must be the same.")
 
+        # apply stride to paths and poses
+        self.num_imgs = len(self.color_paths)
         if self.end == -1:
             self.end = self.num_imgs
-
-        self.color_paths = self.color_paths[self.start : self.end : stride]
-        self.depth_paths = self.depth_paths[self.start : self.end : stride]
-
+        self.color_paths = self.color_paths[self.start : self.end : every_x_frame]
+        self.depth_paths = self.depth_paths[self.start : self.end : every_x_frame]
         if self.load_embeddings:
-            self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
-        if self.load_instseg:
-            self.instseg_paths = self.instseg_paths[self.start : self.end : stride]
+            self.embedding_paths = self.embedding_paths[self.start : self.end : every_x_frame]
         if self.bg_paths is not None:
-            self.bg_paths = self.bg_paths[self.start : self.end : stride]
-
-        self.poses = self.poses[self.start : self.end : stride]
+            self.bg_paths = self.bg_paths[self.start : self.end : every_x_frame]
+        self.poses = self.poses[self.start : self.end : every_x_frame]
         
         # Tensor of retained indices (indices of frames and poses that were retained)
-        self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
+        self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : every_x_frame]
 
         # Update self.num_images after subsampling the dataset
         self.num_imgs = len(self.color_paths)
 
-        # self.transformed_poses = datautils.poses_to_transforms(self.poses)
+        # transform poses into relative poses
         self.poses = torch.stack(self.poses)
         if self.relative_pose:
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
-        self.precomp_intrinsics = precomp_intrinsics
 
     def __len__(self):
         return self.num_imgs
@@ -307,9 +309,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         return depth
 
     def __getitem__(self, index):
+        # load image 
         color_path = self.color_paths[index]
-        depth_path = self.depth_paths[index]
-
         if isinstance(color_path, np.ndarray):
             color = color_path
         else:
@@ -317,65 +318,45 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if color.shape[2] > 3:
             color = color[:, :, :3]
         color = self._preprocess_color(color)
-        depth = self.load_depth(depth_path, index)
+        if self.distortion is not None:
+            color = cv2.undistort(color, K, self.distortion)
+        color = torch.from_numpy(color)
         
+        # load depth
+        depth_path = self.depth_paths[index]
+        depth = self.load_depth(depth_path, index)
         if len(depth.shape) > 2 and depth.shape[2] != 1:
             depth = depth[:, :, 1]
-
-        if not self.precomp_intrinsics:
-            K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
-        else:
-            K = self.intrinsics[index]
-
-        if self.distortion is not None:
-            # undistortion is only applied on color image, not depth!
-            color = cv2.undistort(color, K, self.distortion)
-
-        color = torch.from_numpy(color)
-        if isinstance(K, np.ndarray):
-            K = torch.from_numpy(K)
         depth = self._preprocess_depth(depth)
         depth = torch.from_numpy(depth)
 
+        # get intrinsics
+        if not self.per_seq_intrinsics:
+            K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        else:
+            K = self.intrinsics[index]
+        if isinstance(K, np.ndarray):
+            K = torch.from_numpy(K)
         K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
         intrinsics = torch.eye(4).to(K)
         intrinsics[:3, :3] = K
 
+        # get camera poses 
         pose = self.transformed_poses[index]
-        return_vals = [
-                color.to(self.device).type(self.dtype).permute(2, 0, 1) / 255,
-                depth.to(self.device).type(self.dtype).permute(2, 0, 1),
-                intrinsics.to(self.device).type(self.dtype),
-                pose.to(self.device).type(self.dtype),]
-
-        trans_nearest = torchvision.transforms.Resize(
-                (color.shape[0], color.shape[1]), InterpolationMode.NEAREST)
-        trans_bilinear = torchvision.transforms.Resize(
-                (color.shape[0], color.shape[1]), InterpolationMode.BILINEAR)
-        
-        if self.load_instseg:
-            # load and downsample to rgb size
-            instseg = self._load_instseg(self.instseg_paths[index])            
-            instseg = trans_nearest(torch.from_numpy(instseg).unsqueeze(0))            
-            return_vals = return_vals + [instseg.to(self.device).type(self.dtype)]
-        else:
-            return_vals = return_vals + [None]
 
         if self.load_embeddings:
             embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
-            embedding = trans_bilinear(embedding)
-            return_vals = return_vals + [embedding.to(self.device)] # Allow embedding to be another dtype
+            embedding = self.trans_bilinear(embedding).to(self.device)
         else:
-            return_vals = return_vals + [None]
+            embedding = None 
         
-        # rest of support trajs
-        return_vals = return_vals + [None]
-        
-        if self.bg_paths is not None:
-            bg = self._load_bg(self.bg_paths[index])
-            bg = trans_nearest(torch.from_numpy(bg).unsqueeze(0)) 
-            return_vals = return_vals + [bg.to(self.device)]
-        else:
-            return_vals = return_vals + [None]
+        bg = self._load_bg(self.bg_paths[index])
+        bg = self.trans_nearest(torch.from_numpy(bg).unsqueeze(0)).to(self.device)
 
-        return return_vals
+        return [
+                color.to(self.device).type(self.dtype).permute(2, 0, 1) / 255,
+                depth.to(self.device).type(self.dtype).permute(2, 0, 1),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                embedding, 
+                bg]

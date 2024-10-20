@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-from importlib.machinery import SourceFileLoader
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,8 +26,6 @@ from utils.losses import (
 from src.model.renderer import RenderHelper
 from src.utils.slam_external import build_rotation, prune_gaussians, densify, normalize_quat, matrix_to_quaternion
 from src.utils.neighbor_search import calculate_neighbors_seg_after_init
-
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from torch_scatter import scatter_add
 import json
@@ -62,7 +59,7 @@ class DynOMo():
     def __init__(self, config):
         self.batch = 0
         # setup pytorch
-        torch.set_num_threads(config["num_threads"])
+        torch.set_num_threads(1)
         self.hook_list = list()
         self.device = config['primary_device']
         device = torch.device(self.device)
@@ -93,8 +90,6 @@ class DynOMo():
         self.eval_pca = None
 
     def get_loss_cam(self,
-                      params,
-                      variables,
                       curr_data,
                       iter_time_idx,
                       config=None,
@@ -144,7 +139,7 @@ class DynOMo():
         
         weighted_losses['loss'] = loss
 
-        return loss, weighted_losses, variables
+        return loss, weighted_losses
 
     def get_loss_gaussians(self,
                       curr_data,
@@ -153,8 +148,7 @@ class DynOMo():
                       iter=0,
                       config=None,
                       init_next=False,
-                      early_stop_eval=False,
-                      last=False):
+                      early_stop_eval=False):
 
         # Initialize Loss Dictionary
         losses = {}
@@ -195,7 +189,7 @@ class DynOMo():
             
         # ADD DYNO LOSSES LIKE RIGIDITY
         # DYNO LOSSES
-        if config['physics_based_losses'] and iter_time_idx > 0:
+        if iter_time_idx > 0:
             # print(variables['timestep'])
             losses, offset_0 = physics_based_losses(
                 self.scene.params,
@@ -206,11 +200,6 @@ class DynOMo():
                 iter,
                 use_iso=True,
                 update_iso=True, 
-                weight=config['dyno_weight'],
-                mag_iso=config['mag_iso'],
-                weight_rot=config['weight_rot'],
-                weight_rigid=config['weight_rigid'],
-                weight_iso=config['weight_iso'],
                 device=self.device,
                 losses=losses)
             self.scene.variables['offset_0'] = offset_0
@@ -425,7 +414,7 @@ class DynOMo():
         return first_frame_w2c, time_idx
     
     def make_data_dict(self, time_idx):
-        color, depth, self.intrinsics, gt_pose, instseg, embeddings, support_trajs, bg = \
+        color, depth, self.intrinsics, gt_pose, embeddings, bg = \
              self.dataset[time_idx]
         
         # Process poses
@@ -436,7 +425,6 @@ class DynOMo():
             'depth': depth,
             'id': time_idx,
             'iter_gt_w2c_list': self.scene.variables['gt_w2c_all_frames'],
-            'instseg': instseg,
             'embeddings': embeddings,
             'cam': self.scene.cam,
             'intrinsics': self.intrinsics,
@@ -609,8 +597,7 @@ class DynOMo():
                     time_idx,
                     num_knn=int(self.config['kNN']/self.config['stride']),
                     dist_to_use=self.config['dist_to_use'],
-                    primary_device=self.device,
-                    exp_weight=self.config['exp_weight'])
+                    primary_device=self.device)
 
         if (time_idx < self.num_frames-1):
             # Initialize Gaussian poses for the next frame in params
@@ -848,8 +835,6 @@ class DynOMo():
             iter_start_time = time.time()
             # Loss for current frame
             loss, losses, self.scene.variables = self.get_loss_cam(
-                self.scene.params,
-                self.scene.variables,
                 curr_data[0],
                 time_idx,
                 config=self.config['tracking_cam'])

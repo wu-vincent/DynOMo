@@ -251,8 +251,7 @@ def eval(
     for time_idx in tqdm(range(num_frames)):
         final_params_time = copy.deepcopy(final_params)
          # Get RGB-D Data & Camera Parameters
-        data = dataset[time_idx]
-        color, depth, intrinsics, pose, instseg, embeddings, support_trajs, bg = data
+        color, depth, intrinsics, pose, embeddings, bg = dataset[time_idx]
 
         # Process Camera Parameters
         intrinsics = intrinsics[:3, :3]
@@ -281,9 +280,7 @@ def eval(
             'id': time_idx,
             'intrinsics': intrinsics,
             'w2c': w2c,
-            'instseg': instseg,
             'embeddings': embeddings,
-            'support_trajs': support_trajs,
             'bg': bg,
             'iter_gt_w2c_list': variables['gt_w2c_all_frames']}
         

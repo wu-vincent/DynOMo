@@ -64,21 +64,11 @@ def physics_based_losses(
         iter,
         use_iso,
         update_iso=False,
-        weight='bg',
         post_init=True,
-        mag_iso=False,
-        weight_rot=True,
-        weight_rigid=True,
-        weight_iso=True,
         device="cuda:0",
         losses=None):
 
-    if weight == 'bg':
-        bg_weight = 1 - torch.abs(params['bg'][variables["self_indices"]].detach().clone() - params['bg'][variables["neighbor_indices"]].detach().clone())
-    elif weight == 'none':
-        bg_weight = params['bg'][variables["self_indices"]].detach().clone()*0+1
-    else:
-        bg_weight = variables["neighbor_weight"].unsqueeze(1)
+    weight = variables["neighbor_weight"].unsqueeze(1)
     
     all_times = len(params["unnorm_rotations"].shape) == 3
     if all_times:
@@ -104,13 +94,13 @@ def physics_based_losses(
     loss_rigid = l2_loss_v2(
         offset_other_coord,
         other_offset,
-        weight=bg_weight if weight_rigid else None)
+        weight=weight)
 
     losses['rigid'] = loss_rigid
     losses['rot'] = l2_loss_v2(
         rel_rot[variables["neighbor_indices"]],
         rel_rot[variables["self_indices"]],
-        weight=bg_weight if weight_rot else None)
+        weight=weight)
 
     # store offset_0 and compute isometry
     if use_iso:
@@ -129,16 +119,10 @@ def physics_based_losses(
                       [offset_0,
                       offset[variables['timestep'][
                            variables["self_indices"]] == iter_time_idx+1].detach().clone()])
-        if mag_iso:
-            losses['iso'] = l2_loss_v2(
-                torch.sqrt((offset ** 2).sum(-1) + 1e-20),
-                torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20),
-                weight=bg_weight.squeeze() if weight_iso else None)
-        else:
-            losses['iso'] = l2_loss_v2(
-                offset,
-                offset_0,
-                weight=bg_weight.squeeze() if weight_iso else None)
+        losses['iso'] = l2_loss_v2(
+            torch.sqrt((offset ** 2).sum(-1) + 1e-20),
+            torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20),
+            weight=weight.squeeze())
 
     return losses, offset_0
 
