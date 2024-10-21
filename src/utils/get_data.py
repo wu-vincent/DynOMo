@@ -1,4 +1,4 @@
-from datasets.gradslam_datasets import (
+from datasets.datasets import (
     load_dataset_config,
     DavisDynoSplatamDataset,
     PanopticSportsDataset,
@@ -16,7 +16,7 @@ import glob
 import json
 from itertools import product
 import cv2
-from utils.two2threeD_helpers import three2two, unnormalize_points, normalize_points
+from src.utils.gaussian_utils import normalize_points
 import copy
 
 

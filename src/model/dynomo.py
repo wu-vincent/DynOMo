@@ -14,7 +14,7 @@ import copy
 
 from src.utils.get_data import get_data, load_scene_data
 from src.utils.common_utils import save_params_ckpt, save_params, load_params_ckpt
-from src.evaluate.eval_helpers import report_loss, eval, eval_during
+from src.evaluate.rendering_evaluator import RenderingEvaluator
 from utils.losses import (
     l1_loss_v1,
     quat_mult,
@@ -24,7 +24,7 @@ from utils.losses import (
     get_l1_losses
 )
 from src.model.renderer import RenderHelper
-from src.utils.slam_external import build_rotation, prune_gaussians, densify, normalize_quat, matrix_to_quaternion
+from utils.gaussian_utils import build_rotation, prune_gaussians, densify, normalize_quat, matrix_to_quaternion
 from src.utils.neighbor_search import calculate_neighbors_seg_after_init
 
 from torch_scatter import scatter_add
@@ -214,7 +214,7 @@ class DynOMo():
         weighted_losses['loss'] = loss
     
         if (iter == num_iters - 1 or early_stop_eval) and self.config['eval_during']:
-            psnr, rmse, depth_l1, ssim, lpips, self.eval_pca = eval_during(
+            self.eval_pca = self.rendering_evaluator.eval_during(
                 curr_data,
                 self.scene.params,
                 iter_time_idx,
@@ -227,8 +227,6 @@ class DynOMo():
                 pca=self.eval_pca,
                 viz_config=self.config['viz'],
                 num_frames=self.num_frames)
-
-            self.logger.update(psnr, rmse, depth_l1, ssim, lpips)
 
         return loss, weighted_losses, visible, weight
 
@@ -437,6 +435,16 @@ class DynOMo():
         self.load_dataset()
         self.first_frame_w2c, _ = self.init_Gaussian_scne()
         self.render_helper = RenderHelper()
+        self.rendering_evaluator = RenderingEvaluator(
+            self.device,
+            self.wandb_run if self.config['use_wandb'] else None,
+            save_frames=True,
+            eval_dir=self.eval_dir,
+            sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
+            viz_config=self.config['viz'],
+            get_embeddings=self.config['data']['load_embeddings'],
+            config=self.config,
+            render_helper=self.render_helper)
         
         self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid)
     
@@ -446,17 +454,11 @@ class DynOMo():
         if eval_renderings:
             # Evaluate Final Parameters
             with torch.no_grad():
-                eval(
+                self.rendering_evaluator.eval(
                     self.dataset,
                     self.scene.params,
                     self.num_frames,
-                    self.eval_dir,
-                    sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
-                    wandb_run=self.wandb_run if self.config['use_wandb'] else None,
                     variables=self.scene.params,
-                    viz_config=self.config['viz'],
-                    get_embeddings=self.config['data']['load_embeddings'],
-                    config=self.config, 
                     novel_view_mode=novel_view_mode)
 
         # eval traj
@@ -485,7 +487,15 @@ class DynOMo():
         if vis_grid:
             evaluator.vis_grid_trajs(
                 mask=torch.from_numpy(self.dataset._load_bg(self.dataset.bg_paths[0])).to(self.device))
-                
+        
+        if not novel_view_mode:
+            self.logger.log_final_stats(
+                self.rendering_evaluator.psnr_list,
+                self.rendering_evaluator.rmse_list,
+                self.rendering_evaluator.l1_list,
+                self.rendering_evaluator.ssim_list,
+                self.rendering_evaluator.lpips_list)
+             
         return metrics
 
     def track(self):
@@ -493,6 +503,16 @@ class DynOMo():
         self.first_frame_w2c, start_time_idx = self.init_Gaussian_scne()
         self.render_helper = RenderHelper()
         self.optim_handler = OptimHandler(self.config)
+        self.rendering_evaluator = RenderingEvaluator(
+            self.device,
+            self.wandb_run if self.config['use_wandb'] else None,
+            save_frames=True,
+            eval_dir=self.eval_dir,
+            sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
+            viz_config=self.config['viz'],
+            get_embeddings=self.config['data']['load_embeddings'],
+            config=self.config,
+            render_helper=self.render_helper)
         
         # Init Variables to keep track of ground truth poses and runtimes
         self.scene.variables['gt_w2c_all_frames'] = []
@@ -531,9 +551,6 @@ class DynOMo():
         self.scene.update_params_for_saving(duration, sec_per_frame)
         # Save Parameters
         save_params(self.scene.params, self.output_dir)
-
-        if self.config['eval_during']:
-            self.log_eval_during()
 
         # eval renderings, traj and grid vis
         metrics = self._eval(
@@ -664,7 +681,7 @@ class DynOMo():
 
             if self.config['use_wandb']:
                 # Report Loss
-                wandb_step = report_loss(
+                wandb_step = self.logger.report_loss(
                     losses,
                     self.wandb_run,
                     wandb_step,
@@ -847,7 +864,7 @@ class DynOMo():
 
             if self.config['use_wandb']:
                 # Report Loss
-                self.wandb_obj_tracking_step = report_loss(
+                self.wandb_obj_tracking_step = self.logger.report_loss(
                     losses,
                     self.wandb_run,
                     self.wandb_obj_tracking_step,

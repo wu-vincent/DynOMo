@@ -3,12 +3,12 @@ from src.utils.get_data import get_gt_traj, load_scene_data
 import numpy as np
 import torch
 from src.utils.camera_helpers import get_projection_matrix
-from src.utils.two2threeD_helpers import three2two, unnormalize_points, normalize_points
-from src.utils.tapnet_utils_viz import vis_trail
+from src.utils.gaussian_utils import three2two, unnormalize_points, normalize_points
+from src.utils.viz_utils import vis_trail
 from src.utils.camera_helpers import setup_camera
-from utils.losses import transform_to_frame, get_renderings
-from src.utils.slam_external import build_rotation
-from datasets.gradslam_datasets.geometryutils import relative_transformation
+from src.utils.losses import transform_to_frame, get_renderings
+from src.utils.gaussian_utils import build_rotation
+from datasets.datasets.geometryutils import relative_transformation
 import copy
 import imageio
 import cv2
@@ -62,8 +62,8 @@ class TrajEvaluator():
             dataset = 'davis'
         elif 'iphone' in self.config['data']["gradslam_data_cfg"].lower():
             dataset = 'iphone'
-        elif 'jono' in self.config['data']["gradslam_data_cfg"].lower():
-            dataset = 'jono'
+        elif 'panoptic_sports' in self.config['data']["gradslam_data_cfg"].lower():
+            dataset = 'panoptic_sports'
 
         # get metrics
         metrics = self._eval_traj(
@@ -75,7 +75,7 @@ class TrajEvaluator():
     def _eval_traj(
             self,
             data,
-            dataset='jono'
+            dataset='panoptic_sports'
         ):
 
         # get GT
@@ -85,7 +85,7 @@ class TrajEvaluator():
         valids = 1-occluded.float()
 
         # move by one pix
-        if dataset == 'jono':
+        if dataset == 'panoptic_sports':
             gt_traj_2D[:, :, 0] = ((gt_traj_2D[:, :, 0] * self.w) - 1)/self.w
             gt_traj_2D[:, :, 1] = ((gt_traj_2D[:, :, 1] * self.h) - 1)/self.h
             search_fg_only = True
@@ -310,7 +310,6 @@ class TrajEvaluator():
 
         return start_pixels
 
-
     def gauss_wise3D_track(self, search_fg_only, start_pixels, start_time, start_3D, do_3D=False, only_t0=True):
         first_occurance = self.params['timestep']
         if search_fg_only:
@@ -362,7 +361,6 @@ class TrajEvaluator():
         
         return gs_traj_3D, unnorm_rotations, visibility
 
-
     def get_2D_track_from_3D(self, gs_traj_3D, unnorm_rotations):
         params_gs_traj_3D = copy.deepcopy(self.params)
         params_gs_traj_3D['means3D'] = gs_traj_3D
@@ -384,7 +382,6 @@ class TrajEvaluator():
         gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
 
         return gs_traj_2D
-
 
     def get_2D_track_from_3D_for_vis(self, gs_traj_3D, unnorm_rotations):
         params_gs_traj_3D = copy.deepcopy(self.params)
@@ -412,7 +409,6 @@ class TrajEvaluator():
             gs_traj_2D_per_time.append(gs_traj_2D)
         gs_traj_2D_per_time = torch.stack(gs_traj_2D_per_time)
         return gs_traj_2D_per_time
-
 
     def get_2D_and_3D_from_sum(self, start_pixels, start_time):
         # initialize tensors
@@ -503,7 +499,6 @@ class TrajEvaluator():
             gs_traj_2D_per_time = None
         return all_trajs_2D, all_trajs_3D, all_visibilities, gs_traj_2D_per_time
 
-
     def get_gs_traj_pts(
             self,
             start_pixels,
@@ -542,7 +537,6 @@ class TrajEvaluator():
             
         return gs_traj_2D, gs_traj_3D, visibility, gs_traj_2D_for_vis
 
-
     def find_closest_not_round(self, means2D, pix, params_vis, from_closest=0, topk=30):
         dist = torch.cdist(pix.unsqueeze(0).unsqueeze(0), means2D.unsqueeze(0)).squeeze()
         dist_top_k = dist.topk(largest=False, k=topk)
@@ -550,7 +544,6 @@ class TrajEvaluator():
             if params_vis[k] >= self.vis_thresh_start:
                 return k
         return dist_top_k.indices[0]
-
 
     def find_closest_to_start_pixels(
             self,
@@ -576,7 +569,6 @@ class TrajEvaluator():
                 gauss_ids.extend([torch.tensor([0]).to(self.dev)]*self.best_x)
         return torch.stack(gauss_ids).squeeze()
             
-
     def get_3D_trajs_for_track(self, gauss_ids, return_all=False):
         gs_traj_3D = list()
         unnorm_rotations = list()
@@ -690,13 +682,10 @@ class TrajEvaluator():
         torch.save(scene_flow, os.path.join(self.results_dir, 'scene_flow.pth'))
         self.vis_thresh, self.vis_thresh_start = vis_thresh, vis_thresh_start
 
-
     def eval_cam_traj(self):
         gt_w2c_list = self.params['gt_w2c_all_frames']
-        print(type(gt_w2c_list))
         if isinstance(gt_w2c_list, np.ndarray):
             gt_w2c_list = torch.from_numpy(gt_w2c_list)
-        print(type(gt_w2c_list))
         num_frames = self.params['cam_unnorm_rots'].shape[-1]
         latest_est_w2c = self.params['w2c']
         latest_est_w2c_list = []
@@ -1435,7 +1424,7 @@ def compute_metrics(
     return metrics
 
 
-def meshgrid2d(B, Y, X, stack=False, norm=False, device='cuda:0', on_chans=False):
+def meshgrid2d(B, Y, X, stack=False, device='cuda:0', on_chans=False):
     # returns a meshgrid sized B x Y x X
 
     grid_y = torch.linspace(0.0, Y-1, Y, device=torch.device(device))
@@ -1445,10 +1434,6 @@ def meshgrid2d(B, Y, X, stack=False, norm=False, device='cuda:0', on_chans=False
     grid_x = torch.linspace(0.0, X-1, X, device=torch.device(device))
     grid_x = torch.reshape(grid_x, [1, 1, X])
     grid_x = grid_x.repeat(B, Y, 1)
-
-    if norm:
-        grid_y, grid_x = normalize_grid2d(
-            grid_y, grid_x, Y, X)
 
     if stack:
         # note we stack in xy order

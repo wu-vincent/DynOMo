@@ -1,100 +1,29 @@
-from utils.slam_external import build_rotation
+from utils.gaussian_utils import build_rotation
 import torch
 import torch.nn.functional as F
-from torch_scatter import scatter_mean, scatter_add
+from torch_scatter import scatter_add
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from utils.gaussian_utils import quat_mult
 
 
 class RenderHelper():
 
-    def mask_timestamp(self, rendervar, timestamp, first_occurance, moving_mask=None, strictly_less=False):
+    def mask_timestamp(
+            self,
+            rendervar,
+            timestamp,
+            first_occurance,
+            strictly_less=False):
+        
         if strictly_less:
             time_mask = first_occurance < timestamp
         else:
             time_mask = first_occurance <= timestamp
 
-        if moving_mask is not None:
-            time_mask = time_mask & moving_mask
-
         masked_rendervar = dict()
         for k, v in rendervar.items():
             masked_rendervar[k] = v[time_mask]
         return masked_rendervar, time_mask
-
-    def transformed_params2rendervar(self, params, transformed_gaussians, time_idx, first_occurance, log_scales):
-        rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, time_idx]
-
-        # Initialize Render Variables
-        rendervar = {
-            'means3D': transformed_gaussians['means3D'],
-            'colors_precomp': rgb,
-            'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-            'opacities': torch.sigmoid(params['logit_opacities']),
-            'scales': torch.exp(log_scales),
-            'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-        }
-        rendervar, time_mask =  self.mask_timestamp(rendervar, time_idx, first_occurance)
-        return rendervar, time_mask
-
-    def transformed_params2depthplussilhouette(self, params, w2c, transformed_gaussians, time_idx, first_occurance, log_scales):
-        # Initialize Render Variables
-        rendervar = {
-            'means3D': transformed_gaussians['means3D'],
-            'colors_precomp': self.get_depth_and_silhouette(transformed_gaussians['means3D'], w2c),
-            'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-            'opacities': torch.sigmoid(params['logit_opacities']),
-            'scales': torch.exp(log_scales),
-            'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
-        }
-        rendervar, time_mask = self.mask_timestamp(rendervar, time_idx, first_occurance)
-        return rendervar, time_mask
-
-    def transformed_params2instsegbg(
-            self,
-            params,
-            transformed_gaussians,
-            time_idx,
-            variables,
-            log_scales):
-        # Initialize Render Variables
-        rendervar = {
-            'means3D': transformed_gaussians['means3D'],
-            'colors_precomp': self.get_instsegbg(transformed_gaussians['means3D'].shape[0], params['instseg'], params['bg']),
-            'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-            'opacities': torch.sigmoid(params['logit_opacities']),
-            'scales': torch.exp(log_scales),
-            'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
-        }
-        rendervar, time_mask = self.mask_timestamp(rendervar, time_idx, variables['timestep'])
-        return rendervar, time_mask
-
-    def transformed_params2emb(
-            self,
-            params,
-            transformed_gaussians,
-            time_idx,
-            variables,
-            emb_idx,
-            max_idx,
-            log_scales):
-        # Initialize Render Variables
-        # embs = torch.ones([params['embeddings'].shape[0], 3], device=params['embeddings'].device)
-        embs = params['embeddings'][:, emb_idx:emb_idx+max_idx]
-        if max_idx < 3:
-            embs = torch.cat((embs, torch.ones((embs.shape[0], 1), device=embs.device)), dim=-1).float()
-
-        rendervar = {
-            'means3D': transformed_gaussians['means3D'],
-            'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
-            'opacities': torch.sigmoid(params['logit_opacities']),
-            'scales': torch.exp(log_scales),
-            'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0,
-            'colors_precomp': embs
-        }
-
-        rendervar, time_mask = self.mask_timestamp(rendervar, time_idx, variables['timestep'])
-
-        return rendervar, time_mask
 
     def transform_to_frame(
             self,
@@ -102,9 +31,7 @@ class RenderHelper():
             time_idx,
             gaussians_grad,
             camera_grad=False,
-            gauss_time_idx=None,
-            delta=0,
-            variables=None):
+            gauss_time_idx=None):
         """
         Function to transform Isotropic or Anisotropic Gaussians from world frame to camera frame.
         
@@ -167,7 +94,10 @@ class RenderHelper():
 
         return transformed_gaussians
 
-    def get_depth_and_silhouette(self, pts_3D, w2c):
+    def get_depth_and_silhouette(
+            self,
+            pts_3D,
+            w2c):
         """
         Function to compute depth and silhouette for each gaussian.
         These are evaluated at gaussian center.
@@ -187,7 +117,10 @@ class RenderHelper():
         return depth_silhouette
 
 
-    def get_instsegbg(self, tensor_shape, instseg, bg):
+    def get_bg(
+            self,
+            tensor_shape,
+            bg):
         """
         Function to compute depth and silhouette for each gaussian.
         These are evaluated at gaussian center.
@@ -196,10 +129,16 @@ class RenderHelper():
         depth_silhouette = torch.zeros((tensor_shape, 3), device=bg.device).float()
         depth_silhouette[:, 0] = bg.float().squeeze()
         depth_silhouette[:, 1] = 1
-        depth_silhouette[:, 2] = instseg.squeeze()
+        depth_silhouette[:, 2] = 1
         return depth_silhouette
     
-    def get_log_scales(self, params, time_idx):
+    def get_log_scales(
+            self,
+            params,
+            time_idx):
+        """
+        Function to get log scales depending on if iso or anisotropic
+        """
         if len(params['log_scales'].squeeze().shape) == 1:
             log_scales = params['log_scales'] 
         elif len(params['log_scales'].squeeze().shape) == 2 and params['log_scales'].squeeze().shape[1] == 3:
@@ -226,27 +165,33 @@ class RenderHelper():
             disable_grads=False,
             track_cam=False,
             get_rgb=True,
+            get_bg=True,
             get_depth=True,
-            get_seg=False,
             get_embeddings=True,
-            delta=False,
             do_compute_visibility=False):
+        """
+        Function to compute all renderings needed for loss computation and 
+        visualizations
+        """
 
         transformed_gaussians = self.transform_to_frame(params, iter_time_idx,
                                             gaussians_grad=True if not disable_grads and not track_cam else False,
-                                            camera_grad=track_cam,
-                                            delta=delta)
+                                            camera_grad=track_cam)
         
-        log_scales = self.get_log_scales(params, iter_time_idx)    
-
+        log_scales = self.get_log_scales(params, iter_time_idx)
+        rendervar = {
+            'means3D': transformed_gaussians['means3D'],
+            'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
+            'opacities': torch.sigmoid(params['logit_opacities']),
+            'scales': torch.exp(log_scales),
+            'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
+        } 
+        rendervar, time_mask =  self.mask_timestamp(rendervar, iter_time_idx, variables['timestep'])
+        
         if get_rgb:
             # RGB Rendering
-            rendervar, time_mask = self.transformed_params2rendervar(
-                params,
-                transformed_gaussians,
-                iter_time_idx,
-                first_occurance=variables['timestep'],
-                log_scales=log_scales)
+            rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, iter_time_idx]
+            rendervar['colors_precomp'] = rgb[time_mask]
             if not disable_grads:
                 rendervar['means2D'].retain_grad()
             im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 
@@ -260,13 +205,8 @@ class RenderHelper():
 
         if get_depth:
             # Depth & Silhouette Rendering
-            depth_sil_rendervar, _ = self.transformed_params2depthplussilhouette(
-                params,
-                data['w2c'],
-                transformed_gaussians,
-                iter_time_idx,
-                first_occurance=variables['timestep'])
-            depth_sil, _, _, _, _  = Renderer(raster_settings=data['cam'])(**depth_sil_rendervar)
+            rendervar['colors_precomp'] = self.get_depth_and_silhouette(transformed_gaussians['means3D'], data['w2c'])[time_mask]
+            depth_sil, _, _, _, _  = Renderer(raster_settings=data['cam'])(**rendervar)
 
             # silouette
             silhouette = depth_sil[1, :, :]
@@ -284,16 +224,12 @@ class RenderHelper():
         else:
             mask, depth, silhouette = None, None, None
 
-        if get_seg:
-            # Instseg rendering
-            seg_rendervar, _ = self.transformed_params2instsegbg(
-                params,
-                transformed_gaussians,
-                iter_time_idx,
-                variables)
-            instseg, _, _, _, _ = Renderer(raster_settings=data['cam'])(**seg_rendervar)
+        if get_bg:
+            # BG rendering
+            rendervar['colors_precomp'] = self.get_bg(transformed_gaussians['means3D'].shape[0], params['bg'])[time_mask]
+            bg, _, _, _, _ = Renderer(raster_settings=data['cam'])(**rendervar)
             # instseg 
-            bg = instseg[0, :, :].unsqueeze(0)
+            bg = bg[0, :, :].unsqueeze(0)
         else:
             bg = None
         
@@ -301,21 +237,26 @@ class RenderHelper():
             rendered_embeddings = list()
             for emb_idx in range(0, params['embeddings'].shape[1], 3):
                 max_idx = min(params['embeddings'].shape[1]-emb_idx, 3)
-                emb_rendervar, _ = self.transformed_params2emb(
-                    params,
-                    transformed_gaussians,
-                    iter_time_idx,
-                    variables,
-                    emb_idx,
-                    max_idx)
-                _embeddings, _, _, _, _ = Renderer(raster_settings=data['cam'])(**emb_rendervar)
+                embs = params['embeddings'][:, emb_idx:emb_idx+max_idx]
+                if max_idx < 3:
+                    embs = torch.cat((embs, torch.ones((embs.shape[0], 1), device=embs.device)), dim=-1).float()
+                rendervar['colors_precomp'] = embs[time_mask]
+                _embeddings, _, _, _, _ = Renderer(raster_settings=data['cam'])(**rendervar)
                 rendered_embeddings.append(_embeddings[:max_idx])
             rendered_embeddings = torch.cat(rendered_embeddings, dim=0)
         else:
             rendered_embeddings = None
         return variables, im, radius, depth, mask, transformed_gaussians, visible, weight, time_mask, None, silhouette, rendered_embeddings, bg, visibility
 
-    def compute_visibility(self, visible, weight, visibility_modus='thresh', get_norm_pix_pos=False, thresh=0.5, num_gauss=0):
+    def compute_visibility(
+            self,
+            visible,
+            weight,
+            visibility_modus='thresh',
+            num_gauss=0):
+        """
+        Function to compute visibility needed for trajectory evaluation
+        """
         w, h, contrib = visible.shape[2], visible.shape[1], visible.shape[0]
 
         # get max visible gauss per pix
@@ -331,8 +272,7 @@ class RenderHelper():
         if visibility_modus == 'max':
             visibility = torch.zeros(num_gauss, dtype=bool)
             visibility[max_gauss_id.flatten().long()] = True
-            if not get_norm_pix_pos:
-                return visibility
+            return visibility
 
         # flattened visibility, weight, and pix id 
         # (1000 because of #contributers per tile not pix in cuda code)
@@ -351,42 +291,7 @@ class RenderHelper():
         weight_sum_per_gauss[torch.unique(vis_pix_flat)] = \
             scatter_add(weight_pix_flat, vis_pix_flat)[torch.unique(vis_pix_flat)]
 
-        if visibility_modus == 'thresh':
-            visibility = weight_sum_per_gauss
-            if not get_norm_pix_pos:
-                return visibility
-
-        weighted_norm_x, weighted_norm_y = self.get_weighted_pix_pos(
-            params,
-            w,
-            h,
-            pix_id,
-            vis_pix_flat,
-            weight_pix_flat,
-            weight_sum_per_gauss,
-            num_gauss)
+        visibility = weight_sum_per_gauss
         
-        return visibility, weighted_norm_x, weighted_norm_y
-        
-    def get_weighted_pix_pos(self, w, h, pix_id, vis_pix_flat, weight_pix_flat, weight_sum_per_gauss, num_gauss):
-        # normalize weights per Gaussian for normalized pix position
-        weight_pix_flat_norm = weight_pix_flat/(weight_sum_per_gauss[vis_pix_flat])
-        
-        x_grid, y_grid = torch.meshgrid(torch.arange(w).to(vis_pix_flat.device).float(), 
-                                        torch.arange(h).to(vis_pix_flat.device).float(),
-                                        indexing='xy')
-        x_grid = (x_grid.flatten()+1)/w
-        y_grid = (y_grid.flatten()+1)/h
-
-        # initializing necessary since last gaussian might be invisible
-        weighted_norm_x = torch.zeros(num_gauss).to(weight_pix_flat.device)
-        weighted_norm_y = torch.zeros(num_gauss).to(weight_pix_flat.device)
-        weighted_norm_x[torch.unique(vis_pix_flat)] = \
-            scatter_add(x_grid[pix_id] * weight_pix_flat_norm, vis_pix_flat)[torch.unique(vis_pix_flat)]
-        weighted_norm_y[torch.unique(vis_pix_flat)] = \
-            scatter_add(y_grid[pix_id] * weight_pix_flat_norm, vis_pix_flat)[torch.unique(vis_pix_flat)]
-        
-        weighted_norm_x[0] = 1/w
-        weighted_norm_y[0] = 1/h
-
-        return weighted_norm_x, weighted_norm_y
+        return visibility
+    

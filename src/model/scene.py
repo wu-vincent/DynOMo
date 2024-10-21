@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import os
 from utils.camera_helpers import setup_camera
-from utils.slam_external import build_rotation
+from utils.gaussian_utils import build_rotation
 from utils.neighbor_search import torch_3d_knn
 from utils.losses import (
     transformed_params2depthplussilhouette,
