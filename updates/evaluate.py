@@ -97,21 +97,6 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3, dev
 
         # Save image, depth, pred for visualization
         if "save_images" in config and config.save_images:
-            # print("Saving images ...")
-            from PIL import Image
-            import torchvision.transforms as transforms
-            from zoedepth.utils.misc import colorize
-
-            # os.makedirs(config.save_images, exist_ok=True)
-            # def save_image(img, path):
-            # d = colorize(depth.squeeze().cpu().numpy(), 0, 10)
-            # p = colorize(pred.squeeze().cpu().numpy(), 0, 10)
-
-            # im = transforms.ToPILImage()(image.squeeze().cpu())
-            # im.save(os.path.join(config.save_images, "frame{:0>5}.png").format(i))
-            # colorized
-            # Image.fromarray(p).save(os.path.join(config.save_images, "DCMAP{:0>5}.png").format(i))
-            
             os.makedirs(os.path.dirname(os.path.join(save_dir, save_name)), exist_ok=True)
             np.save(os.path.join(save_dir, save_name).format(i), pred.squeeze().unsqueeze(2).cpu().numpy())
             print(os.path.join(save_dir, save_name).format(i))

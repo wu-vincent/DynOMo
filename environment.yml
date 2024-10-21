@@ -1,4 +1,4 @@
-name: splatam
+name: dynomo
 channels:
   - pytorch
   - conda-forge
@@ -25,4 +25,3 @@ dependencies:
     - open3d==0.16.0
     - torchmetrics
     - cyclonedds
-    - git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth/tree/cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110
