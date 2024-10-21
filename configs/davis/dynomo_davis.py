@@ -166,6 +166,7 @@ config = dict(
     ),
     viz=dict(
         vis_grid=True,
+        vis_trajs=False,
         vis_tracked=True,
         save_pc=False,
         save_videos=False,

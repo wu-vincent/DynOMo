@@ -178,6 +178,8 @@ def run_splatam(args):
         ).load_module()
 
     if 'panoptic' in config_file:
+        run_name = f"splatam_{seq}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}"
+    else:
         run_name = f"splatam_{seq}/splatam_{seq}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}"
     print(run_name)    
 
@@ -209,6 +211,7 @@ def run_splatam(args):
             experiment_args['eval_renderings'],
             experiment_args['eval_traj'],
             experiment_args['vis_trajs'],
+            experiment_args['vis_grid'],
             )
 
     else:

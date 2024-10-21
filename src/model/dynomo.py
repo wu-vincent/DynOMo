@@ -433,14 +433,14 @@ class DynOMo():
         
         return curr_data
         
-    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True):
+    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False):
         self.load_dataset()
         self.first_frame_w2c, _ = self.init_Gaussian_scne()
         self.render_helper = RenderHelper()
         
-        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs)
+        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid)
     
-    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False):
+    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False):
         # metrics empty dict
         metrics = dict()
         if eval_renderings:
@@ -482,7 +482,7 @@ class DynOMo():
                 cam_metrics = evaluator.eval_cam_traj()
             print(f'Cam Traj Metrics: {cam_metrics}')
 
-        if self.config['viz']['vis_grid']:
+        if vis_grid:
             evaluator.vis_grid_trajs(
                 mask=torch.from_numpy(self.dataset._load_bg(self.dataset.bg_paths[0])).to(self.device))
                 
@@ -536,7 +536,10 @@ class DynOMo():
             self.log_eval_during()
 
         # eval renderings, traj and grid vis
-        metrics = self._eval(eval_renderings=not self.config['eval_during'])
+        metrics = self._eval(
+            eval_renderings=not self.config['eval_during'],
+            vis_trajs=self.config['viz']['vis_trajs'],
+            vis_grid=self.config['viz']['vis_grid'])
 
         # Close WandB Run
         if self.config['use_wandb']:
