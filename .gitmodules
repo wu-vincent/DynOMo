@@ -1,0 +1,9 @@
+[submodule "diff-gaussian-rasterization-w-depth-vis-weights"]
+	path = diff-gaussian-rasterization-w-depth-vis-weights
+	url = https://github.com/JennySeidenschwarz/diff-gaussian-rasterization-w-depth-vis-weights.git
+[submodule "Depth-Anything-V2"]
+	path = Depth-Anything-V2
+	url = https://github.com/DepthAnything/Depth-Anything-V2.git
+[submodule "Depth-Anything"]
+	path = Depth-Anything
+	url = https://github.com/LiheYoung/Depth-Anything.git
