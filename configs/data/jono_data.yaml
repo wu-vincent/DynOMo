@@ -1,0 +1,10 @@
+dataset_name: 'jono_data'
+camera_params:
+  image_height: 360
+  image_width: 640
+  fx: 544.5800
+  fy: 543.1133
+  cx: 314.3020
+  cy: 185.4937
+  png_depth_scale: 1.0 # 0.00022888532845044633
+  crop_edge: 0
