@@ -1,9 +1,5 @@
 import torch
-try:
-    from diff_gaussian_rasterization import GaussianRasterizationSettings as Camera
-except:
-    pass
-
+from diff_gaussian_rasterization_w_dwv import GaussianRasterizationSettings as Camera
 import numpy as np
 
 
