@@ -6,14 +6,14 @@ from src.utils.camera_helpers import get_projection_matrix
 from src.utils.gaussian_utils import three2two, unnormalize_points, normalize_points
 from src.utils.viz_utils import vis_trail
 from src.utils.camera_helpers import setup_camera
-from src.utils.losses import transform_to_frame, get_renderings
+from src.model.renderer import RenderHelper
 from src.utils.gaussian_utils import build_rotation
 from datasets.datasets.geometryutils import relative_transformation
 import copy
 import imageio
 import cv2
 import flow_vis
-from src.evaluate.eval_helpers import make_vid
+from src.utils.viz_utils import make_vid
 
 
 class TrajEvaluator():
@@ -35,6 +35,7 @@ class TrajEvaluator():
             queries_first_t=True,
             primary_device='cuda:0'):
         
+        self.render_helper = RenderHelper()
         self.config = config
         self.results_dir = results_dir
         self.params = params
@@ -56,6 +57,7 @@ class TrajEvaluator():
 
     def eval_traj(self):
         self.visuals = (self.vis_trajs_best_x or self.vis_trajs) and self.traj_len > 0
+
         # get gt data
         data = get_gt_traj(self.config, in_torch=True, device=self.dev)
         if 'davis' in self.config['data']["gradslam_data_cfg"].lower():
@@ -110,7 +112,7 @@ class TrajEvaluator():
             search_fg_only=search_fg_only,
             start_3D=start_3D,
             start_time=start_time)
-                
+        
         # get bet our of x
         gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility = self.best_x_idx(
             occluded, dataset, gt_traj_2D, gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility, valids)
@@ -133,7 +135,7 @@ class TrajEvaluator():
                     pred_visibility.unsqueeze(0),
                     gt_traj_3D.unsqueeze(0) if gt_traj_3D is not None else None,
                     gs_traj_3D.unsqueeze(0) if gs_traj_3D is not None else None,
-                    gs_traj_2D_for_vis=gs_traj_2D_for_vis.unsqueeze(0) if self.vis_trajs_best_x or self.vis_trajs else None)
+                    gs_traj_2D_for_vis=gs_traj_2D_for_vis.unsqueeze(0) if self.visuals else None)
 
             # compute metrics from pips
             pips_metrics = compute_metrics(
@@ -178,6 +180,7 @@ class TrajEvaluator():
 
         if self.vis_trajs:
             print('Visualizeing tracked points')
+            gs_traj_2D_for_vis = gs_traj_2D_for_vis if gs_traj_2D_for_vis is not None else gs_traj_2D
             data['points'] = normalize_points(gs_traj_2D_for_vis, self.h, self.w).squeeze()
             data['occluded'] = occluded.squeeze()
             data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
@@ -222,7 +225,7 @@ class TrajEvaluator():
         gs_traj_2D = gs_traj_2D.reshape(-1, self.best_x, T, 2).permute(1, 0, 2, 3)
         gs_traj_3D = gs_traj_3D.reshape(-1, self.best_x, T, 3).permute(1, 0, 2, 3)
         pred_visibility = pred_visibility.reshape(-1, self.best_x, T).permute(1, 0, 2)
-        if self.vis_trajs_best_x or self.vis_trajs:
+        if self.visuals:
             gs_traj_2D_for_vis = gs_traj_2D_for_vis.reshape(
                 T, -1, self.best_x, T, 2).permute(0, 2, 1, 3, 4)
         
@@ -232,7 +235,7 @@ class TrajEvaluator():
                 gs_traj_2D = gs_traj_2D.median(dim=0).values
                 pred_visibility = pred_visibility.median(dim=0).values
                 gs_traj_3D = gs_traj_3D.median(dim=0).values
-                if self.vis_trajs_best_x or self.vis_trajs:
+                if self.visuals:
                     gs_traj_2D_for_vis = gs_traj_2D_for_vis.median(dim=1).values
                 torch.use_deterministic_algorithms(True)
                 return gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility   
@@ -271,7 +274,7 @@ class TrajEvaluator():
         pred_visibility = pred_visibility[min_idx, torch.arange(N), :]
         gs_traj_2D = gs_traj_2D[min_idx, torch.arange(N), :, :]
         gs_traj_3D = gs_traj_3D[min_idx, torch.arange(N), :, :]
-        if self.vis_trajs_best_x or self.vis_trajs:
+        if self.visuals:
             gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, min_idx, torch.arange(N), :, :]
         
         return gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility
@@ -335,12 +338,12 @@ class TrajEvaluator():
         gauss_ids = torch.zeros(start_pixels.shape[0] * self.best_x, device=self.dev).long()
         start_time_best_x = start_time[..., None].repeat((1, self.best_x)).flatten()
         for time in start_time.unique():
-            gaussians_start_time_t, _ = transform_to_frame(
+            gaussians_start_time_t = self.render_helper.transform_to_frame(
                     params_gs_traj_3D,
                     time,
                     gaussians_grad=False,
-                    camera_grad=False,
-                    delta=0)
+                    camera_grad=False)
+            
             means3D_start = gaussians_start_time_t['means3D']
             if not do_3D:
                 means2D_start= three2two(
@@ -370,12 +373,11 @@ class TrajEvaluator():
         for time in range(gs_traj_3D.shape[-1]):
             if gs_traj_3D[:, :, time].sum() == 0:
                 continue
-            transformed_gs_traj_3D, _ = transform_to_frame(
+            transformed_gs_traj_3D = self.render_helper.transform_to_frame(
                     params_gs_traj_3D,
                     time,
                     gaussians_grad=False,
-                    camera_grad=False,
-                    delta=0)
+                    camera_grad=False)
             gs_traj_2D.append(
                 three2two(self.proj_matrix, transformed_gs_traj_3D['means3D'], self.w, self.h, do_normalize=False))
         gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
@@ -396,13 +398,12 @@ class TrajEvaluator():
             for gauss_time in range(gs_traj_3D.shape[-1]):
                 if gs_traj_3D[:, :, gauss_time].sum() == 0:
                     continue
-                transformed_gs_traj_3D, _ = transform_to_frame(
+                transformed_gs_traj_3D = self.render_helper.transform_to_frame(
                         params_gs_traj_3D,
                         cam_time,
                         gaussians_grad=False,
                         camera_grad=False,
-                        gauss_time_idx=gauss_time,
-                        delta=0)
+                        gauss_time_idx=gauss_time)
                 gs_traj_2D.append(
                     three2two(self.proj_matrix, transformed_gs_traj_3D['means3D'], self.w, self.h, do_normalize=False))
             gs_traj_2D = torch.stack(gs_traj_2D).permute(1, 0, 2)
@@ -422,7 +423,7 @@ class TrajEvaluator():
         for time in start_time.unique():
             start_pixels_time = start_pixels[start_time==time]
             with torch.no_grad():
-                _, im, _, _, _, _, _, visible, weight, time_mask, _, _, _, _, _, _ = get_renderings(
+                _, im, _, _, _, _, _, visible, weight, time_mask, _, _, _, _, _, _, _ = self.render_helper.get_renderings(
                     self.params,
                     self.params,
                     time,
@@ -457,13 +458,12 @@ class TrajEvaluator():
                         loc_3D = ((weight_means/weight_means.sum()).unsqueeze(1) * self.params['means3D'][visible_means, :, gauss_time]).sum(dim=0).unsqueeze(0).unsqueeze(-1)
                         start_pix_params['means3D'] = loc_3D
                         start_pix_params['unnorm_rotations'] = torch.zeros(1, 4, 1).to(self.dev)
-                        transformed_loc_3D, _ = transform_to_frame(
+                        transformed_loc_3D = self.render_helper.transform_to_frame(
                                 start_pix_params,
                                 cam_time,
                                 gaussians_grad=False,
                                 camera_grad=False,
-                                gauss_time_idx=0,
-                                delta=0)
+                                gauss_time_idx=0)
                         loc_2D = three2two(self.proj_matrix, transformed_loc_3D['means3D'], self.w, self.h, do_normalize=False).float()
                         if cam_time == gauss_time:
                             visibility.append(((weight_means/weight_means.sum()) * self.params['visibility'][visible_means, gauss_time].squeeze()).sum())
@@ -1450,7 +1450,7 @@ def meshgrid2d(B, Y, X, stack=False, device='cuda:0', on_chans=False):
 def get_xy_grid(H, W, N=2048, B=1, device='cuda:0', mask=None):
     # pick N points to track; we'll use a uniform grid
     N_ = np.sqrt(N).round().astype(np.int32)
-    grid_y, grid_x = meshgrid2d(B, N_, N_, stack=False, norm=False, device=device)
+    grid_y, grid_x = meshgrid2d(B, N_, N_, stack=False, device=device)
     grid_y = 8 + grid_y.reshape(B, -1)/float(N_-1) * (H-16)
     grid_x = 8 + grid_x.reshape(B, -1)/float(N_-1) * (W-16)
     xy0 = torch.stack([grid_x, grid_y], dim=-1) # B, N_*N_, 2

@@ -53,6 +53,7 @@ import json
 from src.model.scene import GaussianScene
 from src.model.logger import Logger
 from src.model.optimization import OptimHandler
+from src.utils.common_utils import params2device
 
 
 class DynOMo():
@@ -85,6 +86,9 @@ class DynOMo():
                                 group=config['wandb']['group'],
                                 name=config['wandb']['name'],
                                 config=config)
+        else:
+            self.wandb_run = None
+        self.logger = Logger(self.config, self.wandb_run, self.eval_dir)
         
         # initalize eval lists
         self.eval_pca = None
@@ -98,7 +102,7 @@ class DynOMo():
  
         # Initialize Loss Dictionary
         losses = {}
-        self.scene.variables, im, _, depth, mask, _, _, _, time_mask, _, _, embeddings, bg, _, _ = \
+        self.scene.variables, im, _, depth, mask, _, _, _, time_mask, _, _, embeddings, bg, _ = \
             self.render_helper.get_renderings(
                 self.scene.params,
                 self.scene.variables,
@@ -106,7 +110,6 @@ class DynOMo():
                 curr_data,
                 config,
                 track_cam=True,
-                get_seg=True,
                 get_embeddings=self.config['data']['load_embeddings'])
         
         bg_mask = bg.detach().clone() > 0.5
@@ -120,19 +123,19 @@ class DynOMo():
             depth_error = torch.abs(curr_data['depth'] - depth) * (curr_data['depth'] > 0)
             error_depth = (depth > curr_data['depth']) * (depth_error > 25*depth_error.median())
             mask = mask | error_depth
-        
+        mask = mask.detach().unsqueeze(0)
         losses = get_rendered_losses(
             config,
             losses,
-            curr_data,
-            im,
-            depth,
-            embeddings,
-            mask,
-            self.dataset.load_embeddings,
-            iter_time_idx,
-            self.scene,
-            self.device)
+            curr_data=curr_data,
+            im=im,
+            depth=depth,
+            embeddings=embeddings,
+            mask=mask,
+            load_embeddings=self.dataset.load_embeddings,
+            iter_time_idx=iter_time_idx,
+            scene=self.scene,
+            device=self.device)
 
         weighted_losses = {k: v * config['loss_weights'][k] for k, v in losses.items()}
         loss = sum(weighted_losses.values())
@@ -148,7 +151,8 @@ class DynOMo():
                       iter=0,
                       config=None,
                       init_next=False,
-                      early_stop_eval=False):
+                      early_stop_eval=False,
+                      last=False):
 
         # Initialize Loss Dictionary
         losses = {}
@@ -160,25 +164,23 @@ class DynOMo():
                 iter_time_idx,
                 curr_data,
                 config,
-                get_seg=True,
                 disable_grads=init_next,
-                get_embeddings=self.config['data']['load_embeddings'])
-
+                get_embeddings=self.config['data']['load_embeddings'],
+                last=last)
         mask = mask.detach()
-
         losses = get_rendered_losses(
             config,
             losses,
-            curr_data,
-            im,
-            depth,
-            embeddings,
-            mask,
-            bg,
-            self.dataset.load_embeddings,
-            iter_time_idx,
-            self.scene,
-            self.device)
+            curr_data=curr_data,
+            im=im,
+            depth=depth,
+            embeddings=embeddings,
+            mask=mask,
+            bg=bg,
+            load_embeddings=self.dataset.load_embeddings,
+            iter_time_idx=iter_time_idx,
+            scene=self.scene,
+            device=self.device)
         
         losses = get_l1_losses(
             losses,
@@ -213,7 +215,7 @@ class DynOMo():
         self.scene.variables['seen'][time_mask] = True
         weighted_losses['loss'] = loss
     
-        if (iter == num_iters - 1 or early_stop_eval) and self.config['eval_during']:
+        if (iter == num_iters - 1 or early_stop_eval or last) and self.config['eval_during']:
             self.eval_pca = self.rendering_evaluator.eval_during(
                 curr_data,
                 self.scene.params,
@@ -359,7 +361,7 @@ class DynOMo():
         # Load Dataset
         print("Loading Dataset ...")
         # Poses are relative to the first frame
-        self.dataset = get_data(self.config, stereo=False)
+        self.dataset = get_data(self.config)
         self.config['data']['desired_image_height'] = self.dataset.desired_height
         self.config['data']['desired_image_width'] = self.dataset.desired_width
         print(f"Original image height {self.dataset.orig_height} and width {self.dataset.orig_width}...")
@@ -372,7 +374,7 @@ class DynOMo():
 
     def init_Gaussian_scne(self):
         # init Gaussian scene 
-        self.scene = GaussianScene(self.config)
+        self.scene = GaussianScene(self.config, self.render_helper, self.dataset.load_embeddings, self.num_frames, self.device)
         
         # maybe load checkpoint
         ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
@@ -387,7 +389,8 @@ class DynOMo():
                 self.config['mean_sq_dist_method'],
                 gaussian_distribution=self.config['gaussian_distribution'],
                 timestep=0,
-                w2c=first_frame_w2c)
+                w2c=first_frame_w2c,
+                data=self.dataset[0])
             time_idx = min(self.num_frames, self.scene.variables['last_time_idx'].item() + 1)
         elif self.config['checkpoint'] and final_params:
             self.scene.params, _, _,first_frame_w2c = load_scene_data(self.config, ckpt_output_dir, device=self.device)
@@ -396,7 +399,8 @@ class DynOMo():
                 self.config['mean_sq_dist_method'],
                 gaussian_distribution=self.config['gaussian_distribution'],
                 timestep=0,
-                w2c=first_frame_w2c)
+                w2c=first_frame_w2c,
+                data=self.dataset[0])
             time_idx = self.num_frames
         else:
             self.config['checkpoint'] = False
@@ -404,15 +408,17 @@ class DynOMo():
                 self.config['scene_radius_depth_ratio'],
                 self.config['mean_sq_dist_method'],
                 gaussian_distribution=self.config['gaussian_distribution'],
-                timestep=0)
+                timestep=0,
+                data=self.dataset[0],
+                w2c=self.dataset.first_time_w2c.to(self.device))
             self.scene.variables['first_frame_w2c'] = first_frame_w2c
             self.scene.variables['offset_0'] = None
             time_idx = 0
 
-        return first_frame_w2c, time_idx
+        return first_frame_w2c, time_idx, final_params
     
     def make_data_dict(self, time_idx):
-        color, depth, self.intrinsics, gt_pose, embeddings, bg = \
+        color, depth, self.intrinsics, gt_pose, embeddings, bg, instseg = \
              self.dataset[time_idx]
         
         # Process poses
@@ -427,17 +433,18 @@ class DynOMo():
             'cam': self.scene.cam,
             'intrinsics': self.intrinsics,
             'w2c': self.first_frame_w2c,
-            'bg': bg}
+            'bg': bg,
+            'instseg': instseg}
         
         return curr_data
         
     def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False):
         self.load_dataset()
-        self.first_frame_w2c, _ = self.init_Gaussian_scne()
         self.render_helper = RenderHelper()
+        self.first_frame_w2c, _, _ = self.init_Gaussian_scne()
         self.rendering_evaluator = RenderingEvaluator(
             self.device,
-            self.wandb_run if self.config['use_wandb'] else None,
+            self.wandb_run,
             save_frames=True,
             eval_dir=self.eval_dir,
             sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
@@ -449,6 +456,9 @@ class DynOMo():
         self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid)
     
     def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False):
+        # make sure everything on same device
+        self.scene.params = params2device(self.scene.params, self.device)
+        
         # metrics empty dict
         metrics = dict()
         if eval_renderings:
@@ -468,7 +478,8 @@ class DynOMo():
             cam=self.scene.cam,
             results_dir=self.eval_dir, 
             vis_trajs=vis_trajs,
-            queries_first_t=False if 'iphone' in self.eval_dir else True)
+            queries_first_t=False if 'iphone' in self.eval_dir else True,
+            traj_len=10)
         
         if eval_traj:
             with torch.no_grad():
@@ -500,12 +511,12 @@ class DynOMo():
 
     def track(self):
         self.load_dataset()
-        self.first_frame_w2c, start_time_idx = self.init_Gaussian_scne()
         self.render_helper = RenderHelper()
+        self.first_frame_w2c, start_time_idx, final_params = self.init_Gaussian_scne()
         self.optim_handler = OptimHandler(self.config)
         self.rendering_evaluator = RenderingEvaluator(
             self.device,
-            self.wandb_run if self.config['use_wandb'] else None,
+            self.wandb_run,
             save_frames=True,
             eval_dir=self.eval_dir,
             sil_thres=self.config['add_gaussians']['sil_thres_gaussians'],
@@ -514,9 +525,12 @@ class DynOMo():
             config=self.config,
             render_helper=self.render_helper)
         
+        if final_params:
+            self._eval()
+            return
+        
         # Init Variables to keep track of ground truth poses and runtimes
         self.scene.variables['gt_w2c_all_frames'] = []
-        self.logger = Logger(self.config, self.wandb_run, self.eval_dir)
 
         if start_time_idx != 0:
             time_idx = start_time_idx
@@ -548,7 +562,14 @@ class DynOMo():
         self.logger.log_time_stats()
 
         # Add Camera Parameters to Save them
-        self.scene.update_params_for_saving(duration, sec_per_frame)
+        self.scene.update_params_for_saving(
+            duration,
+            sec_per_frame,
+            self.first_frame_w2c,
+            self.dataset.orig_width,
+            self.dataset.orig_height,
+            self.dataset.desired_width,
+            self.dataset.desired_height)
         # Save Parameters
         save_params(self.scene.params, self.output_dir)
 
@@ -576,25 +597,20 @@ class DynOMo():
                 time_idx,
                 curr_data)
         else:
-            pass
             with torch.no_grad():
                 # Get the ground truth pose relative to frame 0
-                print(curr_data[0]['iter_gt_w2c_list'][-1])
-                print(self.first_frame_w2c)
-                rel_w2c = curr_data[0]['iter_gt_w2c_list'][-1]
+                rel_w2c = curr_data['iter_gt_w2c_list'][-1]
                 rel_w2c_rot = rel_w2c[:3, :3].unsqueeze(0).detach().clone()
                 rel_w2c_rot_quat = matrix_to_quaternion(rel_w2c_rot)
                 rel_w2c_tran = rel_w2c[:3, 3].detach().clone()
                 # Update the camera parameters
                 self.scene.params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
                 self.scene.params['cam_trans'][..., time_idx] = rel_w2c_tran
-                print(self.scene.params['cam_trans'][..., time_idx])
-                print(self.scene.params['cam_unnorm_rots'][..., time_idx])
 
         # Initialize Gaussian poses for the current frame in params
 
         # Densification
-        if (time_idx+1) % self.config['add_every'] == 0 and time_idx > 0:
+        if time_idx > 0:
             self.densify(time_idx, curr_data)
 
         if self.config['tracking_obj']['num_iters'] != 0:
@@ -621,7 +637,7 @@ class DynOMo():
 
         if (time_idx < self.num_frames-1):
             # Initialize Gaussian poses for the next frame in params
-            self.forward_propagate_gaussians(time_idx)            
+            self.forward_propagate_gaussians(time_idx, forward_prop=self.config['tracking_obj']['forward_prop'])            
             # initialize cam pos for next frame
             self.forward_propagate_camera(time_idx, forward_prop=self.config['tracking_cam']['forward_prop'])
 
@@ -666,11 +682,10 @@ class DynOMo():
         early_stop_count = 0
         early_stop_eval = False
         while iter <= num_iters_tracking:
-            data_idx = random.choice(list(range(len(curr_data))))
             iter_start_time = time.time()
             # Loss for current frame
             loss, losses, visible, weight = self.get_loss_gaussians(
-                curr_data[data_idx],
+                curr_data,
                 time_idx,
                 num_iters=num_iters_tracking,
                 iter=iter,
@@ -750,23 +765,23 @@ class DynOMo():
                 self.scene.params['means3D']= candidate_dyno_trans
         
         # visibility
-        for data_idx in range(len(curr_data)):
+        with torch.no_grad():
             _, _, visible, weight = self.get_loss_gaussians(
-                curr_data[data_idx],
+                curr_data,
                 time_idx,
                 num_iters=num_iters_tracking,
                 iter=iter,
                 config=config,
                 early_stop_eval=early_stop_eval,
                 last=True)
-            
-            optimizer.zero_grad(set_to_none=True)
-            self.scene.variables['visibility'][:, data_idx, time_idx] = \
-                self.render_helper.compute_visibility(visible, weight, num_gauss=self.scene.params['means3D'].shape[0])
+        
+        optimizer.zero_grad(set_to_none=True)
+        self.scene.variables['visibility'][:, time_idx] = \
+            self.render_helper.compute_visibility(visible, weight, num_gauss=self.scene.params['means3D'].shape[0])
             
         # update params
         for k in ['rgb_colors', 'log_scales', 'means3D', 'unnorm_rotations']:
-            self.scnee.update_params(k, time_idx)
+            self.scene.update_params(k, time_idx)
         
         if self.config['use_wandb']:
             self.wandb_obj_tracking_step = wandb_step
@@ -825,8 +840,6 @@ class DynOMo():
             time_idx,
             curr_data):
 
-        assert len(curr_data) == 1, "Cam tracking currently not implemented for stereo..."
-
         # get instance segementation mask for Gaussians
         tracking_start_time = time.time()
 
@@ -854,8 +867,8 @@ class DynOMo():
         while iter <= num_iters_tracking:
             iter_start_time = time.time()
             # Loss for current frame
-            loss, losses, self.scene.variables = self.get_loss_cam(
-                curr_data[0],
+            loss, losses = self.get_loss_cam(
+                curr_data,
                 time_idx,
                 config=self.config['tracking_cam'])
 
@@ -927,22 +940,19 @@ class DynOMo():
 
     def densify(self, time_idx, curr_data):
         if self.config['add_gaussians']['add_new_gaussians']:
-            for i in  range(len(curr_data)):
             # Add new Gaussians to the scene based on the Silhouette
-                pre_num_pts = self.scene.params['means3D'].shape[0]
-                self.scene.add_new_gaussians(curr_data[i], 
-                                        self.config['add_gaussians']['sil_thres_gaussians'],
-                                        self.config['add_gaussians']['depth_error_factor'],
-                                        time_idx,
-                                        self.config['mean_sq_dist_method'],
-                                        self.config['gaussian_distribution'],
-                                        self.scene.params, 
-                                        self.scene.variables)
+            pre_num_pts = self.scene.params['means3D'].shape[0]
+            self.scene.add_new_gaussians(curr_data, 
+                                    self.config['add_gaussians']['sil_thres_gaussians'],
+                                    self.config['add_gaussians']['depth_error_factor'],
+                                    time_idx,
+                                    self.config['mean_sq_dist_method'],
+                                    self.config['gaussian_distribution'])
 
-                post_num_pts = self.scene.params['means3D'].shape[0]
-                if self.config['use_wandb']:
-                    self.wandb_run.log({"Adding/Number of Gaussians": post_num_pts-pre_num_pts,
-                                    "Adding/step": self.wandb_time_step})
+            post_num_pts = self.scene.params['means3D'].shape[0]
+            if self.config['use_wandb']:
+                self.wandb_run.log({"Adding/Number of Gaussians": post_num_pts-pre_num_pts,
+                                "Adding/step": self.wandb_time_step})
 
 
 

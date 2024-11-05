@@ -13,7 +13,7 @@ import pickle
 from sklearn.decomposition import PCA
 
 
-class DavisDynoSplatamDataset(GradSLAMDataset):
+class DavisDataset(GradSLAMDataset):
     def __init__(
         self,
         config_dict,
@@ -28,7 +28,7 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
         embedding_dim: Optional[int] = 512,
         **kwargs,
     ):  
-        with open(os.path.join(os.path.dirname(basedir), '/tapvid_davis/tapvid_davis.pkl'), 'rb') as f:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(basedir))), 'tapvid_davis/tapvid_davis.pkl'), 'rb') as f:
             data = pickle.load(f)
             dat = data[sequence]
 
@@ -66,13 +66,18 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
         bg = bg == 0
         return bg
     
+    def _load_instseg(self, instseg_path):
+        instseg = np.asarray(imageio.imread(instseg_path), dtype=int).sum(-1)
+        return instseg
+    
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[self.start:self.end]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'DEPTH')}/depth*.npy"))[self.start:self.end]
+        depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Depth')}/*.npy"))[self.start:self.end]
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
         embedding_paths = None
         if self.load_embeddings:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'FEATS')}/*dino_img_quat_4_1.npy"))[self.start:self.end]
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Feats')}/*.npy"))[self.start:self.end]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
@@ -81,7 +86,7 @@ class DavisDynoSplatamDataset(GradSLAMDataset):
                 print('Features already have the right size...')
                 self.embedding_downscale = None
 
-        return color_paths, depth_paths, embedding_paths, bg_paths
+        return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
 
     def load_poses(self):
         poses = []

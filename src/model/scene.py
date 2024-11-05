@@ -4,17 +4,16 @@ import os
 from utils.camera_helpers import setup_camera
 from utils.gaussian_utils import build_rotation
 from utils.neighbor_search import torch_3d_knn
-from utils.losses import (
-    transformed_params2depthplussilhouette,
-    transformed_params2rendervar,
-    transform_to_frame,
-)
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from diff_gaussian_rasterization_w_dwv import GaussianRasterizer as Renderer
 
 
 class GaussianScene():
-    def __init__(self, config):
+    def __init__(self, config, render_helper, load_embeddings, num_frames, device):
         self.config = config
+        self.render_helper = render_helper
+        self.load_embeddings = load_embeddings
+        self.num_frames = num_frames
+        self.device = device
     
     def get_pointcloud(
             self,
@@ -35,7 +34,7 @@ class GaussianScene():
             mask = (depth > 0)
         else:
             mask = mask & (depth > 0)
-        
+     
         if bg is not None:
             bg = bg[:, ::self.config['stride'], ::self.config['stride']]
             bg = bg.reshape(-1, 1)
@@ -78,11 +77,11 @@ class GaussianScene():
             raise ValueError(f"Unknown mean_sq_dist_method {mean_sq_dist_method}")
 
         # Colorize point cloud
-        cols = torch.permute(color, (1, 2, 0)) # (C, H, W) -> (H, W, C) -> (H * W, C)
+        cols = color.permute(1, 2, 0) # (C, H, W) -> (H, W, C) -> (H * W, C)
         cols = cols[::self.config['stride'], ::self.config['stride']].reshape(-1, 3)
         point_cld = torch.cat((pts, cols), -1)
         if instseg is not None:
-            instseg = torch.permute(instseg, (1, 2, 0))
+            instseg = instseg.permute(1, 2, 0)
             instseg = instseg[::self.config['stride'], ::self.config['stride']].reshape(-1, 1) # (C, H, W) -> (H, W, C) -> (H * W, C)
             point_cld = torch.cat((point_cld, instseg), -1)
         if embeddings is not None:
@@ -127,11 +126,9 @@ class GaussianScene():
     def initialize_params(
             self,
             init_pt_cld,
-            num_frames,
             mean3_sq_dist,
             gaussian_distribution,
-            bg,
-            width=1):
+            bg):
         
         num_pts = init_pt_cld.shape[0]
 
@@ -159,12 +156,12 @@ class GaussianScene():
     
         # Initialize a single gaussian trajectory to model the camera poses relative to the first frame
         cam_rots = np.tile([1, 0, 0, 0], (1, 1))
-        cam_rots = np.tile(cam_rots[:, :, None], (1, 1, num_frames))
+        cam_rots = np.tile(cam_rots[:, :, None], (1, 1, self.num_frames))
         params['cam_unnorm_rots'] = cam_rots
-        params['cam_trans'] = np.zeros((1, 3, num_frames))
+        params['cam_trans'] = np.zeros((1, 3, self.num_frames))
         # params['cam_dfx_dfy_dcx_dcy'] = np.zeros((1, 4))
 
-        if self.dataset.load_embeddings:
+        if self.load_embeddings:
             params['embeddings'] = init_pt_cld[:, 7:].to(self.device).float()
 
         if bg is not None:
@@ -179,38 +176,29 @@ class GaussianScene():
         
         all_log_scales = torch.zeros(params['means3D'].shape[0], self.num_frames).to(self.device).float()
 
-        num_cams = 2 if self.do_stereo else 1
         variables = {
             'max_2D_radius': torch.zeros(means3D.shape[0]).to(self.device).float(),
             'means2D_gradient_accum': torch.zeros(means3D.shape[0], dtype=torch.float32).to(self.device),
             'denom': torch.zeros(params['means3D'].shape[0]).to(self.device).float(),
             'timestep': torch.zeros(params['means3D'].shape[0]).to(self.device).float(),
-            'visibility': torch.zeros(params['means3D'].shape[0], num_cams, self.num_frames).to(self.device).float(),
+            'visibility': torch.zeros(params['means3D'].shape[0], self.num_frames).to(self.device).float(),
             'rgb_colors': torch.zeros(params['means3D'].shape[0], 3, self.num_frames).to(self.device).float(),
             'log_scales': all_log_scales if gaussian_distribution == "isotropic" else torch.tile(all_log_scales[..., None], (1, 1, 3)).permute(0, 2, 1),
             "means3D": means3D.cpu(),
             "unnorm_rotations": unnorm_rotations.cpu()}
         
-        instseg_mask = params["instseg"].long()
-        if not self.config['use_seg_for_nn']:
-            instseg_mask = torch.ones_like(instseg_mask).long().to(instseg_mask.device)
-
         self.params = params
         self.variables = variables
 
 
     def initialize_timestep(self, scene_radius_depth_ratio, \
-            mean_sq_dist_method, gaussian_distribution=None, timestep=0, w2c=None):
+            mean_sq_dist_method, gaussian_distribution=None, timestep=0, w2c=None, data=None):
         # Get RGB-D Data & Camera Parameters
         embeddings = None
-        data = self.dataset[timestep]
-        color, depth, self.intrinsics, pose, instseg, embeddings, _, bg = data
+        color, depth, self.intrinsics, pose, embeddings, bg, instseg = data
 
         # Process Camera Parameters
         self.intrinsics = self.intrinsics[:3, :3]
-        if w2c is None:
-            w2c = self.dataset.first_time_w2c.to(self.device)
-            # w2c = torch.linalg.inv(pose).to(self.device)
 
         # Setup Camera
         if timestep == 0:
@@ -234,14 +222,13 @@ class GaussianScene():
                 self.intrinsics,
                 w2c,
                 mean_sq_dist_method=mean_sq_dist_method,
-                instseg=instseg,
                 embeddings=embeddings,
-                bg=bg)
+                bg=bg,
+                instseg=instseg)
 
         # Initialize Parameters
         self.initialize_params(
             init_pt_cld,
-            self.num_frames,
             mean3_sq_dist,
             gaussian_distribution,
             bg)
@@ -280,7 +267,7 @@ class GaussianScene():
                 'instseg': new_pt_cld[:, 6].long().to(self.device)
             }
 
-        if self.dataset.load_embeddings:
+        if self.load_embeddings:
             params['embeddings'] = new_pt_cld[:, 7:].to(self.device).float()
         
         if bg is not None:
@@ -302,43 +289,38 @@ class GaussianScene():
     
     def get_depth_for_new_gauss(
             self,
-            params,
             time_idx,
             curr_data,
-            gauss_time_idx=None,
-            rgb=False):
+            gauss_time_idx=None):
         
-        # Silhouette Rendering
-        transformed_gaussians, _ = transform_to_frame(
-            params,
-            time_idx,
-            gaussians_grad=False,
-            camera_grad=False,
-            gauss_time_idx=gauss_time_idx)
-        
-        if rgb:
-            rendervar, time_mask = transformed_params2rendervar(
-                params,
-                transformed_gaussians,
+        # Silhouette Rendering        
+        _, _, _, depth, _, _, _, _, _, _, silhouette, _, _, _ = \
+            self.render_helper.get_renderings(
+                self.params,
+                self.variables,
                 time_idx,
-                first_occurance=self.variables['timestep'],
-                active_gaussians_mask=None)
-            im, _, _, _, _ = Renderer(raster_settings=curr_data['cam'])(**rendervar)
-            return im
+                curr_data,
+                get_rgb=False,
+                get_bg=False,
+                get_depth=True,
+                get_embeddings=False,
+                disable_grads=True,
+                track_cam=False,
+                gauss_time_idx=gauss_time_idx)
         
-        depth_sil_rendervar, _ = transformed_params2depthplussilhouette(
-            params,
-            torch.eye(4).to(curr_data['w2c'].device),
-            transformed_gaussians,
-            time_idx,
-            self.variables['timestep'])
-        
-        cam = curr_data['cam']
         gt_depth = curr_data['depth'][0, :, :]
 
-        depth_sil, _, _, _, _ = Renderer(raster_settings=cam)(**depth_sil_rendervar)
-
-        return depth_sil, gt_depth
+        return depth, silhouette, gt_depth
+    
+    def store_vis(self, time_idx, to_save, save_dir):
+        os.makedirs(os.path.join(self.eval_dir, save_dir), exist_ok=True)
+        non_presence_depth_mask_cpu = (to_save.detach().clone()*255).cpu().numpy().astype(np.uint8)
+        imageio.imwrite(
+            os.path.join(self.eval_dir, save_dir, "gs_{:04d}_{:04d}.png".format(self.batch, time_idx)),
+            non_presence_depth_mask_cpu)
+        del non_presence_depth_mask_cpu
+        if time_idx == self.num_frames - 1:
+            make_vid(os.path.join(self.eval_dir, save_dir))
     
     def add_new_gaussians(
             self,
@@ -348,32 +330,29 @@ class GaussianScene():
             time_idx,
             mean_sq_dist_method,
             gaussian_distribution,
-            params,
-            variables):
+            do_store_vis=False):
         
         # get depth for adding gaussians and rescaled cam
-        depth_sil, gt_depth = self.get_depth_for_new_gauss(
-            params,
+        render_depth, silhouette, gt_depth = self.get_depth_for_new_gauss(
             time_idx,
             curr_data)
 
-        silhouette = depth_sil[1, :, :]
         non_presence_sil_mask = (silhouette < sil_thres)
-        self.store_vis(time_idx, silhouette, 'presence_mask')
+        if do_store_vis:
+            self.store_vis(time_idx, silhouette, 'presence_mask')
         # Check for new foreground objects by u sing GT depth
-        render_depth = depth_sil[0, :, :]
 
         if self.config['add_gaussians']['use_depth_error_for_adding_gaussians']:
             depth_error = (torch.abs(gt_depth - render_depth)/gt_depth) * (gt_depth > 0)
             non_presence_depth_mask =  (depth_error > depth_error_factor*depth_error.median()) # * (render_depth > gt_depth)
             non_presence_mask = non_presence_sil_mask | non_presence_depth_mask
-
-            # depth error
-            # depth_error_store = (depth_error-depth_error.min())/(depth_error.max()-depth_error.min())
-            # self.store_vis(time_idx, depth_error_store, 'depth_error')
             
-            # non presence depth mask
-            # self.store_vis(time_idx, non_presence_depth_mask, 'non_presence_depth_mask')
+            if do_store_vis:
+                # depth error
+                depth_error_store = (depth_error-depth_error.min())/(depth_error.max()-depth_error.min())
+                self.store_vis(time_idx, depth_error_store, 'depth_error')
+                # non presence depth mask
+                self.store_vis(time_idx, non_presence_depth_mask, 'non_presence_depth_mask')
 
         else:
             non_presence_mask = non_presence_sil_mask
@@ -425,8 +404,7 @@ class GaussianScene():
             self.init_reset('denom', 0, (num_gaussians))
             self.init_reset('means2D_gradient_accum', 0, (num_gaussians))
 
-            num_cams = 2 if self.do_stereo else 1
-            self.init_new_var('visibility', 0, (num_new_gauss, num_cams, self.num_frames))
+            self.init_new_var('visibility', 0, (num_new_gauss, self.num_frames))
             self.init_new_var('rgb_colors', 0, (num_new_gauss, 3, self.num_frames))
             self.init_new_var('timestep', time_idx, (num_new_gauss))
             if gaussian_distribution == "anisotropic":
@@ -446,20 +424,16 @@ class GaussianScene():
     def cat_old_new(self, k, new_variables):
         self.variables[k] = torch.cat((self.variables[k], new_variables[k]), dim=0).contiguous()
 
-    def update_params_for_saving(self, duration, sec_per_frame):
+    def update_params_for_saving(self, duration, sec_per_frame, first_frame_w2c, orig_width, orig_height, desired_width, desired_height):
         # Add Camera Parameters to Save them
         self.params['timestep'] = self.variables['timestep']
         self.params['intrinsics'] = self.intrinsics.detach().cpu().numpy()
-        self.params['w2c'] = self.first_frame_w2c.detach().cpu().numpy()
-        self.params['orig_width'] = self.dataset.orig_width
-        self.params['orig_height'] = self.dataset.orig_height
-        self.params['desired_width'] = self.dataset.desired_width
-        self.params['desired_height'] = self.dataset.desired_height
+        self.params['w2c'] = first_frame_w2c.detach().cpu().numpy()
+        self.params['orig_width'] = orig_width
+        self.params['orig_height'] = orig_height
+        self.params['desired_width'] = desired_width
+        self.params['desired_height'] = desired_height
         self.params['gt_w2c_all_frames'] = torch.stack(self.variables['gt_w2c_all_frames']).detach().cpu().numpy()
-        if self.do_stereo:
-            self.params['w2c_stereo'] = self.first_frame_w2c_stereo.detach().cpu().numpy()
-            self.params['gt_w2c_all_frames_stereo'] = torch.stack(self.variables['gt_w2c_all_frames_stereo']).detach().cpu().numpy()
-
 
         if 'gauss_ids_to_track' in self.variables.keys():
             if self.variables['gauss_ids_to_track'] == np.array(None):
@@ -487,20 +461,20 @@ class GaussianScene():
                 self.params[k] = v.detach().clone()
 
     def update_params(self, k, time_idx):
-        if k in self.scene.variables.keys():
-            if len(self.scene.variables[k].shape) == 3:
-                self.scene.variables[k][:, :, time_idx] = self.scene.params[k].detach().clone().squeeze()
+        if k in self.variables.keys():
+            if len(self.variables[k].shape) == 3:
+                self.variables[k][:, :, time_idx] = self.params[k].detach().clone().squeeze()
             else:
-                self.scene.variables[k][:, time_idx] = self.scene.params[k].detach().clone().squeeze()
+                self.variables[k][:, time_idx] = self.params[k].detach().clone().squeeze()
     
     def ema_update_all_prev(self):
         for key in ['prev_bg', 'prev_embeddings', 'prev_rgb_colors', 'prev_log_scales', 'prev_logit_opacities']:
             try:
-                self.scene.variables[key] = self.ema_update(key, key[5:])
+                self.variables[key] = self.ema_update(key, key[5:])
             except:
-                if key != 'prev_embeddings' or 'embeddings' in self.scene.params.keys():
-                    self.scene.variables[key] = self.scene.params[key[5:]]
+                if key != 'prev_embeddings' or 'embeddings' in self.params.keys():
+                    self.variables[key] = self.params[key[5:]]
 
     def ema_update(self, key, prev_key):
-        return (1-self.config['ema']) * self.scene.params[key].detach().clone() \
-            + self.config['ema'] * self.scene.variables[prev_key]
+        return (1-self.config['ema']) * self.params[key].detach().clone() \
+            + self.config['ema'] * self.variables[prev_key]

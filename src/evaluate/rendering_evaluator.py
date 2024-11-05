@@ -107,7 +107,7 @@ class RenderingEvaluator():
         for time_idx in tqdm(range(num_frames)):
             final_params_time = copy.deepcopy(final_params)
             # Get RGB-D Data & Camera Parameters
-            color, depth, intrinsics, pose, embeddings, bg = dataset[time_idx]
+            color, depth, intrinsics, pose, embeddings, bg, instseg = dataset[time_idx]
 
             # Process Camera Parameters
             intrinsics = intrinsics[:3, :3]
@@ -140,7 +140,7 @@ class RenderingEvaluator():
                 'bg': bg,
                 'iter_gt_w2c_list': variables['gt_w2c_all_frames']}
             
-            variables, im, _, rastered_depth, rastered_inst, _, _, _, _, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg, visibility, _ = self.render_helper.get_renderings(
+            variables, im, radius, rastered_depth, _, _, _, _, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg, visibility = self.render_helper.get_renderings(
                 final_params_time,
                 variables,
                 time_idx,
@@ -205,10 +205,6 @@ class RenderingEvaluator():
                 #     # silouette
                 #     self.save_normalized(rastered_sil.unsqueeze(0).detach().float(), dir_names['render_sil_dir'], time_idx, num_frames=num_frames)
 
-                if self.viz_config['vis_all']:
-                    # instseg
-                    self.save_normalized(rastered_inst.detach(), dir_names['render_instseg_dir'], time_idx, num_frames=num_frames)
-
                 if self.viz_config['vis_gt'] and novel_view_mode is None:
                     # Save GT RGB and Depth
                     self.save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames)
@@ -240,10 +236,6 @@ class RenderingEvaluator():
             dir_names['render_emb_gt_dir'] = os.path.join(self.eval_dir, f"pca_emb_gt_{name}")
             os.makedirs(dir_names['render_emb_dir'], exist_ok=True)
             os.makedirs(dir_names['render_emb_gt_dir'], exist_ok=True)
-
-        if self.viz_config['vis_all']:
-            dir_names['render_instseg_dir'] = os.path.join(self.eval_dir, f"rendered_instseg_{name}")
-            os.makedirs(dir_names['render_instseg_dir'], exist_ok=True)
 
         if self.viz_config['vis_all']:
             dir_names['render_sil_dir'] = os.path.join(self.eval_dir, f"rendered_sil_{name}")
@@ -327,10 +319,6 @@ class RenderingEvaluator():
             if rendered_embeddings is not None and self.viz_config['vis_all']:
                 self.save_pca_downscaled(rendered_embeddings, dir_names['render_emb_dir'], pca, time_idx, num_frames)
                 self.save_pca_downscaled(curr_data['embeddings'], dir_names['render_emb_gt_dir'], pca, time_idx, num_frames)
-
-            if self.viz_config['vis_all']:
-                # instseg
-                self.save_normalized(rastered_inst.detach(), dir_names['render_instseg_dir'], time_idx, num_frames=num_frames)
 
             if self.viz_config['vis_gt']:
                 # Save GT RGB and Depth

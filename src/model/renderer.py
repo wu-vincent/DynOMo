@@ -2,7 +2,8 @@ from utils.gaussian_utils import build_rotation
 import torch
 import torch.nn.functional as F
 from torch_scatter import scatter_add
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+# from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from diff_gaussian_rasterization_w_dwv import GaussianRasterizer as Renderer
 from utils.gaussian_utils import quat_mult
 
 
@@ -56,6 +57,7 @@ class RenderHelper():
         else:
             cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
             cam_tran = params['cam_trans'][..., time_idx].detach()
+
         rel_w2c = torch.eye(4, device=params['means3D'].device).float()
         rel_w2c[:3, :3] = build_rotation(cam_rot)
         rel_w2c[:3, 3] = cam_tran
@@ -161,22 +163,25 @@ class RenderHelper():
             variables,
             iter_time_idx,
             data,
-            config, 
+            config={'use_sil_for_loss': False, 'sil_thres': 0.5}, 
             disable_grads=False,
             track_cam=False,
             get_rgb=True,
             get_bg=True,
             get_depth=True,
             get_embeddings=True,
-            do_compute_visibility=False):
+            do_compute_visibility=False,
+            last=False,
+            gauss_time_idx=None):
         """
         Function to compute all renderings needed for loss computation and 
         visualizations
         """
 
         transformed_gaussians = self.transform_to_frame(params, iter_time_idx,
-                                            gaussians_grad=True if not disable_grads and not track_cam else False,
-                                            camera_grad=track_cam)
+                                            gaussians_grad=True if not disable_grads else False,
+                                            camera_grad=track_cam,
+                                            gauss_time_idx=iter_time_idx if gauss_time_idx is None else gauss_time_idx)
         
         log_scales = self.get_log_scales(params, iter_time_idx)
         rendervar = {
@@ -192,7 +197,7 @@ class RenderHelper():
             # RGB Rendering
             rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, iter_time_idx]
             rendervar['colors_precomp'] = rgb[time_mask]
-            if not disable_grads:
+            if not disable_grads and not last:
                 rendervar['means2D'].retain_grad()
             im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 
             variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
@@ -246,6 +251,7 @@ class RenderHelper():
             rendered_embeddings = torch.cat(rendered_embeddings, dim=0)
         else:
             rendered_embeddings = None
+        
         return variables, im, radius, depth, mask, transformed_gaussians, visible, weight, time_mask, None, silhouette, rendered_embeddings, bg, visibility
 
     def compute_visibility(

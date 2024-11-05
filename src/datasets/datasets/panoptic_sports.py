@@ -67,6 +67,10 @@ class PanopticSportsDataset(GradSLAMDataset):
         bg = ~(imageio.imread(bg_path))
         return bg
     
+    def _load_instseg(self, instseg_path):
+        instseg = imageio.imread(instseg_path)
+        return instseg
+    
     def get_filepaths(self):
         # get color paths
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))
@@ -81,6 +85,7 @@ class PanopticSportsDataset(GradSLAMDataset):
         
         # get background paths
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
+        instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
         
         # get embedding paths
         embedding_paths = None
@@ -94,7 +99,7 @@ class PanopticSportsDataset(GradSLAMDataset):
                 print('Features already have the right size...')
                 self.embedding_downscale = None
 
-        return color_paths, depth_paths, embedding_paths, bg_paths
+        return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
             
     def load_poses(self):
         if self.do_transform:

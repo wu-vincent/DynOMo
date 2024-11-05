@@ -18,7 +18,7 @@ from .geometryutils import relative_transformation
 from . import datautils
 import torchvision
 from torchvision.transforms.functional import InterpolationMode
-from utils.camera_helpers import as_intrinsics_matrix
+from src.utils.camera_helpers import as_intrinsics_matrix
 
 
 def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
@@ -126,7 +126,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
         # get file paths
-        self.color_paths, self.depth_paths, self.embedding_paths, self.bg_paths = self.get_filepaths()
+        self.color_paths, self.depth_paths, self.embedding_paths, self.bg_paths, self.instseg_paths = self.get_filepaths()
+        self.num_imgs = len(self.color_paths)
         self.poses = self.load_poses()
         
         # get image width and image height and downscale factors
@@ -134,16 +135,16 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         h, w, _ = img.shape
         config_dict["camera_params"]["image_height"] = h
         config_dict["camera_params"]["image_width"] = w
+        self.height_downsample_ratio = desired_height
+        self.width_downsample_ratio = desired_width
         self.desired_height = int(h * desired_height)
         self.desired_width = int(w * desired_width)
-        self.height_downsample_ratio = float(self.desired_height) / self.orig_height
-        self.width_downsample_ratio = float(self.desired_width) / self.orig_width
         
         # set scaling functions
         self.trans_nearest = torchvision.transforms.Resize(
-                (self.desired_width, self.desired_height), InterpolationMode.NEAREST)
+                (self.desired_height, self.desired_width), InterpolationMode.NEAREST)
         self.trans_bilinear = torchvision.transforms.Resize(
-                (self.desired_width, self.desired_height), InterpolationMode.BILINEAR)
+                (self.desired_height, self.desired_width), InterpolationMode.BILINEAR)
         
         # if nnot per sequence intrinsics take intrinsics from dataset file
         self.per_seq_intrinsics = per_seq_intrinsics
@@ -166,11 +167,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
         if len(self.color_paths) != len(self.poses):
             raise ValueError(f"Number of color images and poses must be the same, but got {len(self.color_paths)} and {len(self.poses)}.")
-        if len(self.color_paths) != len(self.instseg_paths):
-            raise ValueError("Number of color images and segmentation masks must be the same.")
 
         # apply stride to paths and poses
-        self.num_imgs = len(self.color_paths)
         if self.end == -1:
             self.end = self.num_imgs
         self.color_paths = self.color_paths[self.start : self.end : every_x_frame]
@@ -314,7 +312,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.distortion is not None:
             color = cv2.undistort(color, K, self.distortion)
         color = torch.from_numpy(color)
-        
+
         # load depth
         depth_path = self.depth_paths[index]
         depth = self.load_depth(depth_path, index)
@@ -341,15 +339,18 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
             embedding = self.trans_bilinear(embedding).to(self.device)
         else:
-            embedding = None 
-        
+            embedding = None
         bg = self._load_bg(self.bg_paths[index])
         bg = self.trans_nearest(torch.from_numpy(bg).unsqueeze(0)).to(self.device)
-
+        
+        instseg = self._load_instseg(self.instseg_paths[index])
+        instseg = self.trans_nearest(torch.from_numpy(instseg).unsqueeze(0)).to(self.device)
+        
         return [
                 color.to(self.device).type(self.dtype).permute(2, 0, 1) / 255,
                 depth.to(self.device).type(self.dtype).permute(2, 0, 1),
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
                 embedding, 
-                bg]
+                bg,
+                instseg]

@@ -17,7 +17,7 @@ from .col_map_utils import get_colmap_camera_params
 import roma
 
 
-class IphoneDynoSplatamDataset(GradSLAMDataset):
+class IphoneDataset(GradSLAMDataset):
     def __init__(
         self,
         config_dict,
@@ -84,6 +84,10 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         bg = ~bg
         return bg.astype(float)
     
+    def _load_instseg(self, instseg_path):
+        instseg = (imageio.imread(instseg_path) / 255).astype(bool)
+        return instseg.astype(float)
+    
     def get_filepaths(self, cam=0):
         color_paths = natsorted(glob.glob(os.path.join(self.input_folder, f'rgb/{self.factor}x', f'{cam}_*.png')))[self.start:self.end]
         if self.depth_type == 'lidar':
@@ -93,6 +97,7 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
         else:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_anything_jenny/depth{cam}_*.npy"))[self.start:self.end]
         bg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
+        instseg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*dino_img_quat_4_1_32_240_180.npy")))[self.start:self.end]
@@ -104,7 +109,7 @@ class IphoneDynoSplatamDataset(GradSLAMDataset):
                 print('Features already have the right size...')
                 self.embedding_downscale = None
 
-        return color_paths, depth_paths, embedding_paths, bg_paths
+        return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
 
     def load_depth(self, depth_path, index, use_median=True, fill_remaining=True):
         if self.depths is None and (self.depth_type == 'lidar' or 'aligned' in self.depth_type):
@@ -314,10 +319,10 @@ def masked_median_blur(image, mask, kernel_size=11):
 
     return median
 
-class IphoneDynoSplatamDatasetKeyPoints():
+class IphoneDatasetKeyPoints():
     """Return a dataset view of the annotated keypoints."""
 
-    def __init__(self, dataset: IphoneDynoSplatamDataset):
+    def __init__(self, dataset: IphoneDataset):
         super().__init__()
         self.dataset = dataset
 
