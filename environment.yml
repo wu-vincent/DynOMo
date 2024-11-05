@@ -25,3 +25,5 @@ dependencies:
     - open3d==0.16.0
     - torchmetrics
     - cyclonedds
+    - imageio-ffmpeg
+    - gdown

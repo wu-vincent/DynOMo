@@ -9,14 +9,6 @@ import json
 import argparse
 
 
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-sys.path.insert(0, _BASE_DIR)
-
-print("System Paths:")
-for p in sys.path:
-    print(p)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", type=str, help="which dataset to summarize", choices=['davis', 'panoptic_sports', 'iphone'])

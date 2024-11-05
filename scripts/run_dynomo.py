@@ -1,7 +1,9 @@
+import os
+import sys
+sys.path.append(os.getcwd())
 from src.model.dynomo import DynOMo
 from importlib.machinery import SourceFileLoader
 from src.utils.common_utils import seed_everything
-import os
 import shutil
 import argparse
 

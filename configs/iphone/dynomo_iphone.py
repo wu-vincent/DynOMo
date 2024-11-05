@@ -44,6 +44,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
+        name='iphone',
         basedir="/data3/jseidens/iphone2",
         gradslam_data_cfg="./configs/data/iphone.yaml",
         sequence=scene_name,
@@ -106,6 +107,7 @@ config = dict(
         use_sil_for_loss=False,
         take_best_candidate=False,
         disable_rgb_grads_old=True,
+        forward_prop=True,
         make_grad_bg_smaller=False,
         make_grad_bg_smaller_weight=0, 
         calc_ssmi=True,

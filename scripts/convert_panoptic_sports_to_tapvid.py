@@ -8,18 +8,10 @@ import numpy as np
 import os
 import sys
 import pickle
-
-
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-sys.path.insert(0, _BASE_DIR)
-
-print("System Paths:")
-for p in sys.path:
-    print(p)
-
-from utils.camera_helpers import setup_camera
-from utils.viz_utils import paint_point_track, plot_tracks_v2, vis_tracked_points
+import sys
+sys.path.append(os.getcwd())
+from src.utils.camera_helpers import setup_camera
+from src.utils.viz_utils import paint_point_track, plot_tracks_v2, vis_tracked_points
 
 
 def convert_data(cam_id=0, base_dir=''):

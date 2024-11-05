@@ -44,6 +44,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
+        name='panoptic_sports',
         basedir="/scratch/jseidens/data/DAVIS/JPEGImages/480p",
         gradslam_data_cfg="./configs/data/davis.yaml",
         sequence=scene_name,
@@ -104,6 +105,7 @@ config = dict(
         disable_rgb_grads_old=True,
         make_grad_bg_smaller=False,
         make_grad_bg_smaller_weight=0, 
+        forward_prop=True,
         calc_ssmi=True,
         bg_reg=True,
         gt_w2c=False,

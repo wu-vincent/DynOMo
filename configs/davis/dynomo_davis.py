@@ -1,7 +1,7 @@
 import os
 from os.path import join as p_join
 
-scenes = ['motocross-jump', 'camel', 'pigs', 'car-roundabout', 'dance-twirl', 'goat', 'breakdance', 'drift-chicane', 'drift-straight', 'judo', 'soapbox', 'dogs-jump', 'parkour', 'india', 'pigs', 'cows', 'gold-fish', 'paragliding-launch', 'blackswan', 'dog', 'bike-packing', 'shooting', 'lab-coat', 'kite-surf', 'bmx-trees', 'car-shadow', 'libby', 'scooter-black', 'mbike-trick', 'loading', 'horsejump-high']
+scenes = ['car-shadow']
 
 primary_device="cuda:0"
 seed = 0
@@ -18,7 +18,7 @@ run_name = f"splatam_{scene_name}/splatam_{scene_name}_{tracking_iters}_{trackin
 config = dict(
     workdir=f"./experiments/{group_name}",
     run_name=run_name,
-    checkpoint=False,
+    checkpoint=True,
     just_eval=False,
     seed=seed,
     primary_device=primary_device,
@@ -44,8 +44,10 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="/scratch/jseidens/data/DAVIS/JPEGImages/480p",
-        gradslam_data_cfg="./configs/data/davis.yaml",
+        name="DAVIS",
+        basedir="data/DAVIS/JPEGImages/480p",
+        gt_traj_data="data/tapvid_davis/tapvid_davis.pkl",
+        gradslam_data_cfg=f"./configs/data/davis.yaml",
         sequence=scene_name,
         desired_image_height=0.5, #480,
         desired_image_width=0.5, #910,
@@ -102,6 +104,7 @@ config = dict(
         use_sil_for_loss=False,
         take_best_candidate=False,
         disable_rgb_grads_old=True,
+        forward_prop=True,
         make_grad_bg_smaller=False,
         make_grad_bg_smaller_weight=0, 
         calc_ssmi=True,
@@ -133,6 +136,7 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
             embeddings=0.01,
+            instseg=0.0,
             bg=0.0001
         ),
     ),
@@ -161,6 +165,7 @@ config = dict(
             cam_unnorm_rots=0.01,
             cam_trans=0.01,
             embeddings=0.00,
+            instseg=0.0,
             bg=0.000
         ),
     ),

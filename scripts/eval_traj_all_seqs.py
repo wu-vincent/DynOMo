@@ -1,9 +1,6 @@
 import os
-import sys 
-
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _BASE_DIR)
-
+import sys
+sys.path.append(os.getcwd())
 import argparse
 from importlib.machinery import SourceFileLoader
 import os

@@ -8,21 +8,14 @@ import multiprocessing
 import os
 import tqdm
 import sys
-
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-sys.path.insert(0, _BASE_DIR)
-
-print("System Paths:")
-for p in sys.path:
-    print(p)
-
+sys.path.append(os.getcwd())
 import argparse
 from importlib.machinery import SourceFileLoader
 from src.utils.common_utils import seed_everything
 import os 
 import shutil
 from src.model.dynomo import DynOMo
+from src.datasets.sequence_dicts import SEQEUNCE_DICT
 
 
 def gpu_map(func, args, n_ranks=None, gpus=None, method="static", progress_msg=None):
@@ -177,12 +170,11 @@ def run_splatam(args):
             os.path.basename(config_file), config_file
         ).load_module()
 
-    if 'panoptic' in config_file:
-        run_name = f"splatam_{seq}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}"
-    else:
-        run_name = f"splatam_{seq}/splatam_{seq}_{experiment_args['tracking_iters']}_{experiment_args['tracking_iters_init']}_{experiment_args['tracking_iters_cam']}"
-    print(run_name)    
-
+    tracking_iters = seq_experiment.config['tracking_obj']['num_iters']
+    tracking_iters_init = seq_experiment.config['tracking_obj']['num_iters_init']
+    tracking_iters_cam = seq_experiment.config['tracking_cam']['num_iters']
+    run_name = f"splatam_{seq}/splatam_{seq}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
+    
     seq_experiment.config['run_name'] = run_name
     seq_experiment.config['data']['sequence'] = seq
     seq_experiment.config['wandb']['name'] = run_name
@@ -232,7 +224,7 @@ if __name__ == "__main__":
     parser.add_argument("--vis_trajs", default=0, type=int, help="if eval traj")
     parser.add_argument("--vis_grid", default=1, type=int, help="if eval traj")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
-    parser.add_argument("--gpus", default=[0,1,2,3,4,5,6,7], type=list, help="gpus to use")
+    parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
     args = parser.parse_args()
 
     experiment = SourceFileLoader(
@@ -250,55 +242,13 @@ if __name__ == "__main__":
         eval_traj=args.eval_traj,
         vis_grid=args.vis_grid
         )
-    
-    davis_seqs = [
-        'motocross-jump',
-        'goat',
-        'car-roundabout',
-        'breakdance',
-        'drift-chicane',
-        'drift-straight',
-        'judo',
-        'soapbox',
-        'dogs-jump',
-        'parkour',
-        'india',
-        'pigs',
-        'cows',
-        'gold-fish',
-        'paragliding-launch',
-        'camel',
-        'blackswan',
-        'dog',
-        'bike-packing',
-        'shooting',
-        'lab-coat',
-        'kite-surf',
-        'bmx-trees',
-        'dance-twirl',
-        'car-shadow',
-        'libby',
-        'scooter-black',
-        'mbike-trick',
-        'loading',
-        'horsejump-high']
-    
-    # davis_seqs = ['splatam_libby', 'splatam_india', 'splatam_gold-fish', 'splatam_bmx-trees']
-    
-    jono_seqs = ["boxes/ims/27", "softball/ims/27", "basketball/ims/21", "football/ims/18", "juggle/ims/14", "tennis/ims/8"]
-
-    rgb = [0] # list(range(50))
-
+        
     configs_to_paralellize = list()
-    for seq in davis_seqs:
+    for seq in SEQEUNCE_DICT[experiment.config['data']['name']]:
         # copy config and get create runname
         configs_to_paralellize.append([args.experiment, seq, experiment_args])
-    
-    # n_ranks = min(torch.cuda.device_count(), len(configs_to_paralellize))
-    # gpus = ','.join([str(i) for i in range(n_ranks)])
-    
-    n_ranks = len(args.gpus)
-    gpus = args.gpus
+    gpus = [int(g[0]) for g in args.gpus]
+    n_ranks = len(gpus)
 
     gpu_map(
         run_splatam,
