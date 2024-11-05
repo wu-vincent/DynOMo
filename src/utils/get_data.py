@@ -1,8 +1,8 @@
 from datasets.datasets import (
     load_dataset_config,
-    DavisDynoSplatamDataset,
+    DavisDataset,
     PanopticSportsDataset,
-    IphoneDynoSplatamDataset,
+    IphoneDataset,
     datautils
 )
 import pickle
@@ -30,11 +30,11 @@ def get_dataset(
     do_scale=False,
     **kwargs):
     if config_dict["dataset_name"].lower() in ["davis"]:
-        return DavisDynoSplatamDataset(config_dict, basedir, sequence, **kwargs)
+        return DavisDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
         return PanopticSportsDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["iphone"]:
-        return IphoneDynoSplatamDataset(config_dict, basedir, sequence, depth_type, cam_type, factor, do_scale, **kwargs)
+        return IphoneDataset(config_dict, basedir, sequence, depth_type, cam_type, factor, do_scale, **kwargs)
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
 
@@ -99,16 +99,16 @@ def get_cam_data(config, orig_image_size=False):
     return intrinsics, pose, desired_image_height, desired_image_width
 
 
-def load_davis_all(in_torch=False, basedir=''):
-    with open(os.path.join(basedir, 'tapvid_davis/tapvid_davis.pkl'), 'rb') as jf:
+def load_davis_all(in_torch=False, gt_traj_data=''):
+    with open(gt_traj_data, 'rb') as jf:
         gt = pickle.load(jf)
     if in_torch:
         gt = {seq: {k: torch.from_numpy(v) for k, v in data.items()} for seq, data in gt.items()}
     return gt
 
 
-def load_davis(sequence, in_torch=False, basedir=''):
-    data = load_davis_all(in_torch, basedir)[sequence] # N x T x 2
+def load_davis(sequence, gt_traj_data='', in_torch=False):
+    data = load_davis_all(in_torch, gt_traj_data)[sequence] # N x T x 2
     return data
 
 
@@ -243,7 +243,7 @@ def load_iphone(config, in_torch=True, device="cuda:0"):
 def get_gt_traj(config, in_torch=False, device='cuda:0'):
     config_dict = load_dataset_config(config['data']["gradslam_data_cfg"])
     if config_dict["dataset_name"].lower() in ["davis"]:
-        return load_davis(config["data"]["sequence"], in_torch)
+        return load_davis(config["data"]["sequence"], config["data"]["gt_traj_data"], in_torch)
     elif config_dict["dataset_name"].lower() in ["jono_data"]:
         return  load_panoptic_sports(config["data"]["sequence"], in_torch)
     elif config_dict["dataset_name"].lower() in ["iphone"]:

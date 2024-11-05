@@ -18,6 +18,7 @@
 import numpy as np
 import torch
 from torch_scatter import scatter_add
+import torch.nn.functional as F
 
 
 def build_rotation(q):

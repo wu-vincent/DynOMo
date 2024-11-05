@@ -34,6 +34,17 @@ def params2cpu(params):
     return res
 
 
+def params2device(params, device):
+    res = {}
+    for k, v in params.items():
+        if isinstance(v, torch.Tensor):
+            res[k] = v.to(device)
+        else:
+            res[k] = v
+    return res
+
+
+
 def save_params(output_params, output_dir, time_idx=0, end_frame=0, keep_all=False):
     # Convert to CPU Numpy Arrays
     to_save = params2cpu(output_params)

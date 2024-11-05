@@ -157,16 +157,10 @@ def physics_based_losses(
             if iter_time_idx == 1:
                 offset_0 = offset.detach().clone()
             else:
-                if not post_init:
-                    offset_0 = torch.cat(
-                      [offset_0,
-                      offset[variables['timestep'][
-                           variables["self_indices"]] == iter_time_idx].detach().clone()])
-                else:
-                    offset_0 = torch.cat(
-                      [offset_0,
-                      offset[variables['timestep'][
-                           variables["self_indices"]] == iter_time_idx+1].detach().clone()])
+                offset_0 = torch.cat(
+                    [offset_0,
+                    offset[variables['timestep'][
+                        variables["self_indices"]] == iter_time_idx-1].detach().clone()])
         losses['iso'] = l2_loss_v2(
             torch.sqrt((offset ** 2).sum(-1) + 1e-20),
             torch.sqrt((offset_0 ** 2).sum(-1) + 1e-20),
@@ -181,7 +175,7 @@ def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, 
         losses['im'] = l1_loss_v1(
             curr_data['im'].permute(1, 2, 0),
             im.permute(1, 2, 0),
-            mask,
+            mask.squeeze(),
             reduction='mean')
     else:
         losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) \
@@ -198,11 +192,10 @@ def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, 
     # EMBEDDING LOSS
     if load_embeddings and config['loss_weights']['embeddings'] != 0:
         embeddings_gt = curr_data['embeddings']
-        if config['norm_embeddings']:
-            embeddings_gt = torch.nn.functional.normalize(
-                curr_data['embeddings'], p=2, dim=0)
-            embeddings = torch.nn.functional.normalize(
-                embeddings, p=2, dim=0)
+        embeddings_gt = torch.nn.functional.normalize(
+            curr_data['embeddings'], p=2, dim=0)
+        embeddings = torch.nn.functional.normalize(
+            embeddings, p=2, dim=0)
 
         losses['embeddings'] = l2_loss_v2(
             embeddings_gt.permute(1, 2, 0),
