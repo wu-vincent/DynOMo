@@ -176,6 +176,7 @@ config = dict(
         save_pc=False,
         save_videos=False,
         vis_gt=False,
-        vis_all=False
+        vis_all=False,
+        vis_fg_only=True
     ),
 )

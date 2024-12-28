@@ -51,16 +51,17 @@
 ## Installation
 
 ### Main Repository
-SplaTAM has been tested on python 3.10, CUDA>=11.6. The simplest way to install all dependences is to use [anaconda](https://www.anaconda.com/) and [pip](https://pypi.org/project/pip/) in the following steps: 
+We provide a conda environment file to create our environment.
 
-```bash
-conda conda env create -f environment.yml
+```
+git clone --recurse-submodules https://github.com/JennySeidenschwarz/DynoSplatTAM.git
+conda env create -f environment.yml
 conda activate dynomo
 pip install imageio-ffmpeg
-conda install -c "nvidia/label/cuda-11.6.0" cuda-toolkit
 cd diff-gaussian-rasterization-w-depth-vis-weights
 python setup.py install 
 pip install . 
+cd ../
 ```
 
 ### DepthAnything
@@ -68,24 +69,19 @@ Depth Anything V2
 
 ```
 cd Depth-Anything-V2/metric_depth
-mkdir checkpoints && cd checkpoints && wget https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Large/resolve/main/depth_anything_v2_metric_hypersim_vitl.pth && wget https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-VKITTI-Large/resolve/main/depth_anything_v2_metric_vkitti_vitl.pth && cd ../
-```
-
-Depth Anything
-
-```
-cd Depth-Anything/metric_depth
-mkdir checkpoints && cd checkpoints && wget https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints_metric_depth/depth_anything_metric_depth_indoor.pt && wget https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints_metric_depth/depth_anything_metric_depth_outdoor.pt && wget https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints/depth_anything_vitl14.pth && cd ../../../
-
-export CODE_DIR=$PWD && cp scripts/get_depth_anything_prediction.py  Depth-Anything/metric_depth/ && cd Depth-Anything/metric_depth/  && python get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::$CODE_DIR/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path $CODE_DIR/data/DAVIS/JPEGImages/480p/ --save_dir $CODE_DIR/data/DAVIS/Depth/480p/ && cd ../../ && rm Depth-Anything/metric_depth/get_depth_anything_prediction.py
-
-
+mkdir checkpoints && cd checkpoints && wget https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Large/resolve/main/depth_anything_v2_metric_hypersim_vitl.pth && wget https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-VKITTI-Large/resolve/main/depth_anything_v2_metric_vkitti_vitl.pth && cd ../../../
 ```
 
 ## Download Data
 
 ```
+bash scripts/prepare_data.sh
+```
 
+## Prepare Data
+
+```
+export CODE_DIR=$PWD && cd Depth-Anything/metric_depth/  && python get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::$CODE_DIR/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path $CODE_DIR/data/DAVIS/JPEGImages/480p/ --save_dir $CODE_DIR/data/DAVIS/Depth/480p/ && cd ../../ && rm Depth-Anything/metric_depth/get_depth_anything_prediction.py
 ```
 
 ## RUN DYNOMO PARALLEL

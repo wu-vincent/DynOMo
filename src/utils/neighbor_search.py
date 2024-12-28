@@ -229,13 +229,6 @@ def calculate_neighbors_seg(
                     dim=1)
                 neighbor_dist = (neighbor_dist + 1)/2
                 neighbor_dist = 1 - neighbor_dist
-                # neighbor_dist = torch.cdist(
-                #         q_embeddings.float()[q_idx, :].unsqueeze(1),
-                #         k_embeddings.float()[neighbor_indices.flatten(), :].unsqueeze(1)
-                #     ).squeeze()
-                # use cosine distance (between 0 and 2)
-                # l2(x,y)**2 = 2-2cos(x,y)
-                # neighbor_dist = 1 - torch.pow(neighbor_dist, exponent=2)/2
                 neighbor_dist = neighbor_dist.reshape(neighbor_indices.shape[0], -1)
 
             # sort rgb neighbot distance and re-index to get closest points in 
@@ -247,7 +240,6 @@ def calculate_neighbors_seg(
                 q_idx, idx.flatten()].squeeze().reshape(q_colors.shape[0], num_knn)
             neighbor_dist = neighbor_dist.values[:, :num_knn]
             neighbor_weight = 1 - neighbor_dist
-            # neighbor_weight = torch.exp(-exp_weight * torch.square(neighbor_dist))
 
         if existing_params is not None:
             num_samps = neighbor_indices.shape[0]

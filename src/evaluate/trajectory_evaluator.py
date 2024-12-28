@@ -112,7 +112,7 @@ class TrajEvaluator():
             search_fg_only=search_fg_only,
             start_3D=start_3D,
             start_time=start_time)
-        
+
         # get bet our of x
         gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility = self.best_x_idx(
             occluded, dataset, gt_traj_2D, gs_traj_2D, gs_traj_3D, gs_traj_2D_for_vis, pred_visibility, valids)
@@ -515,12 +515,12 @@ class TrajEvaluator():
         gs_traj_2D_for_vis = None
         if self.get_gauss_wise3D_track: 
             gs_traj_3D, unnorm_rotations, visibility = \
-            self.gauss_wise3D_track(
-                search_fg_only,
-                start_pixels,
-                start_time,
-                start_3D,
-                do_3D=self.get_from3D and start_3D is not None)
+                self.gauss_wise3D_track(
+                    search_fg_only,
+                    start_pixels,
+                    start_time,
+                    start_3D,
+                    do_3D=self.get_from3D and start_3D is not None)
             
             if self.visuals:
                 gs_traj_2D_for_vis = self.get_2D_track_from_3D_for_vis(
@@ -530,7 +530,6 @@ class TrajEvaluator():
             gs_traj_2D = self.get_2D_track_from_3D(
                 gs_traj_3D, unnorm_rotations)
             gs_traj_3D = gs_traj_3D.permute(0, 2, 1)
-
         else:
             gs_traj_2D, gs_traj_3D, visibility, gs_traj_2D_for_vis = self.get_2D_and_3D_from_sum(
                 start_pixels, start_time)
@@ -595,9 +594,9 @@ class TrajEvaluator():
     
     def vis_grid_trajs(
             self,
-            mask=None,
-            search_fg_only=True):
+            mask=None):
         self.visuals = self.traj_len > 0
+        search_fg_only = False if mask is None else False
 
         # get trajectories to track
         N = 2048 if search_fg_only else 1024

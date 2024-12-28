@@ -298,7 +298,7 @@ class DynOMo():
     def forward_propagate_gaussians(
             self,
             curr_time_idx,
-            forward_prop=False,
+            forward_prop=True,
             simple_rot=False,
             simple_trans=True):
 
@@ -438,7 +438,7 @@ class DynOMo():
         
         return curr_data
         
-    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False):
+    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True):
         self.load_dataset()
         self.render_helper = RenderHelper()
         self.first_frame_w2c, _, _ = self.init_Gaussian_scne()
@@ -453,9 +453,9 @@ class DynOMo():
             config=self.config,
             render_helper=self.render_helper)
         
-        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid)
+        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid, vis_fg_only)
     
-    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False):
+    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False, vis_fg_only=True):
         # make sure everything on same device
         self.scene.params = params2device(self.scene.params, self.device)
         
@@ -496,8 +496,9 @@ class DynOMo():
             print(f'Cam Traj Metrics: {cam_metrics}')
 
         if vis_grid:
+            vis_mask = None if not vis_fg_only else torch.from_numpy(self.dataset._load_bg(self.dataset.bg_paths[0])).to(self.device)
             evaluator.vis_grid_trajs(
-                mask=torch.from_numpy(self.dataset._load_bg(self.dataset.bg_paths[0])).to(self.device))
+                mask=vis_mask)
         
         if not novel_view_mode:
             self.logger.log_final_stats(
@@ -577,7 +578,8 @@ class DynOMo():
         metrics = self._eval(
             eval_renderings=not self.config['eval_during'],
             vis_trajs=self.config['viz']['vis_trajs'],
-            vis_grid=self.config['viz']['vis_grid'])
+            vis_grid=self.config['viz']['vis_grid'],
+            vis_fg_only=self.config['viz']['vis_fg_only'])
 
         # Close WandB Run
         if self.config['use_wandb']:
@@ -606,8 +608,6 @@ class DynOMo():
                 # Update the camera parameters
                 self.scene.params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
                 self.scene.params['cam_trans'][..., time_idx] = rel_w2c_tran
-
-        # Initialize Gaussian poses for the current frame in params
 
         # Densification
         if time_idx > 0:
@@ -756,7 +756,7 @@ class DynOMo():
                 early_stop_count, last_loss, loss, early_stop_eval)
             if early_stop_eval:
                 break
-        
+
         progress_bar.close()
         if config['take_best_candidate']:
             # Copy over the best candidate rotation & translation

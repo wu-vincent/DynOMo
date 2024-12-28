@@ -239,3 +239,4 @@ def get_l1_losses(losses, config, iter_time_idx, scene, load_embeddings):
         losses['l1_opacity'] = l1_loss_v1(scene.params['logit_opacities'][l1_mask], scene.variables['prev_logit_opacities'])
 
     return losses
+ 

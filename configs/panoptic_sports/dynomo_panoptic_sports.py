@@ -45,7 +45,7 @@ config = dict(
     ),
     data=dict(
         name='panoptic_sports',
-        basedir="/scratch/jseidens/data/DAVIS/JPEGImages/480p",
+        basedir="data/panoptic_sport",
         gradslam_data_cfg="./configs/data/davis.yaml",
         sequence=scene_name,
         desired_image_height=1.0, #480,
@@ -173,6 +173,7 @@ config = dict(
         save_pc=False,
         save_videos=False,
         vis_gt=False,
-        vis_all=False
+        vis_all=False,
+        vis_fg_only=True
     ),
 )

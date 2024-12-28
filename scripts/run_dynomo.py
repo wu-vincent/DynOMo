@@ -181,6 +181,10 @@ def run_splatam(args):
     seq_experiment.config['just_eval'] = experiment_args['just_eval']
     seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
 
+    seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs'],
+    seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid'],
+    seq_experiment.config['viz']['vis_fg_only'] = experiment_args['vis_fg_only'],
+
     # Set Experiment Seed
     seed_everything(seed=seq_experiment.config['seed'])
     
@@ -204,6 +208,7 @@ def run_splatam(args):
             experiment_args['eval_traj'],
             experiment_args['vis_trajs'],
             experiment_args['vis_grid'],
+            experiment_args['vis_fg_only'],
             )
 
     else:
@@ -221,10 +226,12 @@ if __name__ == "__main__":
     parser.add_argument("--just_eval", default=0, type=int, help="if only eval")
     parser.add_argument("--eval_renderings", default=1, type=int, help="if eval renderings")
     parser.add_argument("--eval_traj", default=1, type=int, help="if eval traj")
-    parser.add_argument("--vis_trajs", default=0, type=int, help="if eval traj")
-    parser.add_argument("--vis_grid", default=1, type=int, help="if eval traj")
+    parser.add_argument("--vis_trajs", default=1, type=int, help="if vis evaluation grids")
+    parser.add_argument("--vis_grid", default=1, type=int, help="if vis grid")
+    parser.add_argument("--vis_fg_only", default=1, type=int, help="if only vis fg")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
     parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
+    parser.add_argument("--sequence", default=None, help="gpus to use")
     args = parser.parse_args()
 
     experiment = SourceFileLoader(
@@ -240,11 +247,13 @@ if __name__ == "__main__":
         eval_renderings=args.eval_renderings,
         vis_trajs=args.vis_trajs,
         eval_traj=args.eval_traj,
-        vis_grid=args.vis_grid
+        vis_grid=args.vis_grid,
+        vis_fg_only=args.vis_fg_only
         )
         
     configs_to_paralellize = list()
-    for seq in SEQEUNCE_DICT[experiment.config['data']['name']]:
+    sequences = list([args.sequence]) if args.sequence is not None else SEQEUNCE_DICT[experiment.config['data']['name']]
+    for seq in sequences:
         # copy config and get create runname
         configs_to_paralellize.append([args.experiment, seq, experiment_args])
     gpus = [int(g[0]) for g in args.gpus]

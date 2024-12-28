@@ -177,7 +177,6 @@ class RenderHelper():
         Function to compute all renderings needed for loss computation and 
         visualizations
         """
-
         transformed_gaussians = self.transform_to_frame(params, iter_time_idx,
                                             gaussians_grad=True if not disable_grads else False,
                                             camera_grad=track_cam,

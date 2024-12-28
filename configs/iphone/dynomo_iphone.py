@@ -45,7 +45,7 @@ config = dict(
     ),
     data=dict(
         name='iphone',
-        basedir="/data3/jseidens/iphone2",
+        basedir="data/iphone",
         gradslam_data_cfg="./configs/data/iphone.yaml",
         sequence=scene_name,
         desired_image_height=1.0, #480,
@@ -177,6 +177,7 @@ config = dict(
         save_pc=False,
         save_videos=False,
         vis_gt=False,
-        vis_all=False
+        vis_all=False,
+        vis_fg_only=True
     ),
 )
