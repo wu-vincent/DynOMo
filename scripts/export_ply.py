@@ -47,6 +47,7 @@ def save_ply(path, means, scales, rotations, rgbs, opacities, normals=None, time
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", type=str, help="Path to config file.")
+    parser.add_argument("--run_name", type=str, help="Path to experiment directory.")
     return parser.parse_args()
 
 
@@ -57,9 +58,8 @@ if __name__ == "__main__":
     experiment = SourceFileLoader(os.path.basename(args.config), args.config).load_module()
     config = experiment.config
     work_path = config['workdir']
-    run_name = "splatam_haru-sit/splatam_haru-sit_0_kNN_200_200_0_20_20_5_0.001_False_False_True_True_True_16_16_128_16_0.1_True_2_0_20_0.5_0.5_False_False_False_0.1_3_aniso_deb_l2_emb_aligned_depth_anything_colmap_refined_segment_bug_rem_factor_False_bug_rem_hw"
-    params_path = os.path.join(work_path, run_name, "params.npz")
-    os.makedirs(os.path.join(work_path, run_name, 'splats'), exist_ok=True)
+    params_path = os.path.join(work_path, args.run_name, "params.npz")
+    os.makedirs(os.path.join(work_path, args.run_name, 'splats'), exist_ok=True)
 
     print('Loading...')
     params = dict(np.load(params_path, allow_pickle=True))
@@ -73,5 +73,5 @@ if __name__ == "__main__":
         rgbs = params['rgb_colors'][:, :, timestamp][params['timestep']<=timestamp]
         opacities = params['logit_opacities'][params['timestep']<=timestamp]
 
-        ply_path = os.path.join(work_path, run_name, 'splats', f"splat_{timestamp}.ply")
+        ply_path = os.path.join(work_path, args.run_name, 'splats', f"splat_{timestamp}.ply")
         save_ply(ply_path, means, scales, rotations, rgbs, opacities, timestamp=timestamp)
