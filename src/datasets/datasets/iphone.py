@@ -35,6 +35,8 @@ class IphoneDataset(GradSLAMDataset):
         load_embeddings: Optional[bool] = False,
         embedding_dim: Optional[int] = 512,
         relative_pose=False,
+        online_depth=None,
+        online_emb=None,
         **kwargs,
     ):  
         self.start = start
@@ -67,9 +69,10 @@ class IphoneDataset(GradSLAMDataset):
             embedding_dim=embedding_dim,
             per_seq_intrinsics=True,
             relative_pose=relative_pose,
+            online_depth=online_depth,
+            online_emb=online_emb,
             **kwargs,
         )
-        print(f"Length of sequence {len(self.color_paths)}")
     
     def read_embedding_from_file(self, embedding_path):
         embedding = np.load(embedding_path)
@@ -94,20 +97,24 @@ class IphoneDataset(GradSLAMDataset):
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth/{self.factor}x/{cam}_*.npy"))[self.start:self.end]
         elif 'aligned' in self.depth_type:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/flow3d_preprocessed/{self.depth_type}/1x/{cam}_*.npy"))[self.start:self.end]
-        else:
+        elif self.online_depth is None:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_anything_jenny/depth{cam}_*.npy"))[self.start:self.end]
+        else:
+            depth_paths = None
+            
         bg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
         instseg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
-        embedding_paths = None
-        if self.load_embeddings:
+
+        if self.load_embeddings and self.online_emb is None:
             embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*dino_img_quat_4_1_32_240_180.npy")))[self.start:self.end]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
                 self.embedding_downscale = pca.fit(features.reshape(-1, features.shape[2]))
             else:
-                print('Features already have the right size...')
                 self.embedding_downscale = None
+        else:
+            embedding_paths = None
 
         return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
 

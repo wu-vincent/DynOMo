@@ -16,6 +16,10 @@ import os
 import shutil
 from src.model.dynomo import DynOMo
 from src.datasets.sequence_dicts import SEQEUNCE_DICT
+import json
+import glob
+import pandas as pd
+import numpy as np
 
 
 def gpu_map(func, args, n_ranks=None, gpus=None, method="static", progress_msg=None):
@@ -173,12 +177,16 @@ def run_splatam(args):
     tracking_iters = seq_experiment.config['tracking_obj']['num_iters']
     tracking_iters_init = seq_experiment.config['tracking_obj']['num_iters_init']
     tracking_iters_cam = seq_experiment.config['tracking_cam']['num_iters']
-    run_name = f"splatam_{seq}/splatam_{seq}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
-    
+    online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
+    online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
+    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+
     seq_experiment.config['run_name'] = run_name
     seq_experiment.config['data']['sequence'] = seq
     seq_experiment.config['wandb']['name'] = run_name
     seq_experiment.config['just_eval'] = experiment_args['just_eval']
+    seq_experiment.config['data']['online_depth'] = experiment_args['online_depth']
+    seq_experiment.config['data']['online_emb'] = experiment_args['online_emb']
     seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
 
     seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs'],
@@ -194,7 +202,7 @@ def run_splatam(args):
     )
     if seq_experiment.config['just_eval']:
         seq_experiment.config['checkpoint'] = True
-    
+
     dynomo = DynOMo(seq_experiment.config)
 
     if seq_experiment.config['just_eval']:
@@ -209,34 +217,46 @@ def run_splatam(args):
             experiment_args['vis_trajs'],
             experiment_args['vis_grid'],
             experiment_args['vis_fg_only'],
+            experiment_args['best_x'],
+            experiment_args['alpha_traj']
             )
 
     else:
-        if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
-            print(f"Experiment already done {run_name}\n\n")
-            return
+        # if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
+        #     print(f"Experiment already done {run_name}\n\n")
+        #     return
         os.makedirs(results_dir, exist_ok=True)
-        shutil.copy(config_file, os.path.join(results_dir, "config.py"))
+        with open(os.path.join(results_dir, 'config.json'), 'w') as f:
+            json.dump(seq_experiment.config, f)
         dynomo.track()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str, help="Path to experiment file")
-    parser.add_argument("--just_eval", default=0, type=int, help="if only eval")
-    parser.add_argument("--eval_renderings", default=1, type=int, help="if eval renderings")
-    parser.add_argument("--eval_traj", default=1, type=int, help="if eval traj")
-    parser.add_argument("--vis_trajs", default=1, type=int, help="if vis evaluation grids")
-    parser.add_argument("--vis_grid", default=1, type=int, help="if vis grid")
-    parser.add_argument("--vis_fg_only", default=1, type=int, help="if only vis fg")
+    parser.add_argument("--just_eval", action="store_true", help="if only eval")
+    parser.add_argument("--eval_renderings", action="store_false", help="if eval renderings")
+    parser.add_argument("--eval_traj", action="store_false", help="if eval traj")
+    parser.add_argument("--vis_trajs", action="store_false", help="if vis evaluation grids")
+    parser.add_argument("--vis_grid", action="store_false", help="if vis grid")
+    parser.add_argument("--vis_fg_only", action="store_false", help="if only vis fg")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
     parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
     parser.add_argument("--sequence", default=None, help="gpus to use")
+    parser.add_argument("--best_x", default=1, type=int, help="oracle result, get best Gaussian out of x")
+    parser.add_argument("--alpha_traj", action="store_true", help="if using alpha blending for trajectory")
+    parser.add_argument("--online_depth", default=None, choices=[None, 'DepthAnything', 'DepthAnythingV2-vitl'], help="if computing depth online")
+    parser.add_argument("--online_emb", default=None, choices=[None, 'dinov2_vits14', 'dinov2_vits14_reg'], help="if computing embeddings online")
     args = parser.parse_args()
 
     experiment = SourceFileLoader(
             os.path.basename(args.experiment), args.experiment
         ).load_module()
+
+    args.online_depth = args.online_depth if args.online_depth is not None else \
+        experiment.config['data']['online_depth']
+    args.online_emb = args.online_emb if args.online_emb is not None else \
+        experiment.config['data']['online_emb']
 
     if args.just_eval or args.novel_view_mode is not None:
         experiment.config['just_eval'] = True
@@ -248,7 +268,11 @@ if __name__ == "__main__":
         vis_trajs=args.vis_trajs,
         eval_traj=args.eval_traj,
         vis_grid=args.vis_grid,
-        vis_fg_only=args.vis_fg_only
+        vis_fg_only=args.vis_fg_only,
+        best_x=args.best_x,
+        alpha_traj=args.alpha_traj,
+        online_depth=args.online_depth,
+        online_emb=args.online_emb
         )
         
     configs_to_paralellize = list()
@@ -256,7 +280,7 @@ if __name__ == "__main__":
     for seq in sequences:
         # copy config and get create runname
         configs_to_paralellize.append([args.experiment, seq, experiment_args])
-    gpus = [int(g[0]) for g in args.gpus]
+    gpus = [int(g[0]) for g in args.gpus[0] if g != ',']
     n_ranks = len(gpus)
 
     gpu_map(
@@ -265,3 +289,42 @@ if __name__ == "__main__":
         n_ranks=n_ranks,
         gpus=gpus,
         method='static')
+
+    tracking_iters = experiment.config['tracking_obj']['num_iters']
+    tracking_iters_init = experiment.config['tracking_obj']['num_iters_init']
+    tracking_iters_cam = experiment.config['tracking_cam']['num_iters']
+    online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
+    online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
+
+    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_*"
+    alpha_add = '' if not args.alpha_traj else '_alpha_traj'
+    best_add = '' if args.best_x == 1 else f'_{args.best_x}'
+    result_files = os.path.join(
+        experiment.config["workdir"], run_name, f"eval/traj_metrics{best_add}{alpha_add}.json"
+    )
+    summary_short = None
+    summary_long = None
+    columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
+    for f in glob.glob(result_files):
+        with open(f, 'r') as jf:
+            metrics = json.load(jf)
+        if 'iphone' not in args.experiment:
+            metrics = {k1: v1 for k, v in metrics.items() for k1, v1 in metrics[k].items()}
+        seq = f.split('/')[3].split('_')[-1]
+        params = np.load(os.path.join(os.path.dirname(os.path.dirname(f)), 'params.npz'))
+        metrics['FPS']  = (params['duration'].item()) # +2.3)
+        metrics['duration [min]']  = params['overall_duration'].item() / 60
+
+        if summary_short is None:
+            summary_short = pd.DataFrame(columns=columns)
+            summary_long = pd.DataFrame(columns=list(metrics.keys()))
+        summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
+        summary_long.loc[seq] = metrics
+    summary_short.loc['mean'] = summary_short.mean()
+    summary_long.loc['mean'] = summary_long.mean()
+    print(f"METRICS: \n {summary_short}")
+
+    summary_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
+    summary_short.to_json(os.path.join(experiment.config["workdir"], "summary", f"{summary_name}{best_add}{alpha_add}.json"))
+    summary_long.to_json(os.path.join(experiment.config["workdir"], "summary", f"{summary_name}{best_add}{alpha_add}_long.json"))
+

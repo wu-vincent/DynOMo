@@ -30,6 +30,8 @@ class PanopticSportsDataset(GradSLAMDataset):
         start_from_complete_pc=False,
         do_transform=False,
         novel_view_mode=None,
+        online_depth=None,
+        online_emb=None,
         **kwargs,
     ): 
         self.input_folder = os.path.join(basedir, sequence)
@@ -51,9 +53,10 @@ class PanopticSportsDataset(GradSLAMDataset):
             desired_width=desired_width,
             load_embeddings=load_embeddings,
             embedding_dim=embedding_dim,
+            online_depth=online_depth,
+            online_emb=online_emb,
             **kwargs,
         )
-        print(f"Length of sequence {len(self.color_paths)}")
     
     def read_embedding_from_file(self, embedding_path):
         embedding = np.load(embedding_path)
@@ -76,28 +79,30 @@ class PanopticSportsDataset(GradSLAMDataset):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))
 
         # get depth paths
-        if self.depth_type != 'Dynamic3DGaussians':
+        if self.depth_type != 'Dynamic3DGaussians' and self.online_depth is None:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))
-        else:
+        elif self.online_depth is None:
             input_folder = self.input_folder.replace("/scratch/jseidens/data/data", "../Dynamic3DGaussians/rendered")
             input_folder = self.input_folder.replace("/data3/jseidens/data", "../Dynamic3DGaussians/rendered")
             depth_paths = natsorted(glob.glob(f"{input_folder}/depth*.npy"))
+        else:
+            depth_paths = None
         
         # get background paths
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
         instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
         
         # get embedding paths
-        embedding_paths = None
-        if self.load_embeddings:
+        if self.load_embeddings and self.online_emb is None:
             embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)
                 self.embedding_downscale = pca.fit(features.reshape(-1, features.shape[2]))
             else:
-                print('Features already have the right size...')
                 self.embedding_downscale = None
+        else:
+            embedding_paths = None
 
         return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
             

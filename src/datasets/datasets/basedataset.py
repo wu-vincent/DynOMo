@@ -19,6 +19,14 @@ from . import datautils
 import torchvision
 from torchvision.transforms.functional import InterpolationMode
 from src.utils.camera_helpers import as_intrinsics_matrix
+import sys
+import torchvision.transforms as T
+from preprocess.get_dino_prediction import generate_im_feats
+import os
+from sklearn.decomposition import PCA
+from preprocess.get_depth_anything_prediction import infer
+from PIL import Image
+from torchvision.transforms.functional import to_tensor
 
 
 def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
@@ -72,6 +80,97 @@ def readEXR_onlydepth(filename):
     return Y
 
 
+def get_depth_model(model, name):
+    if "DepthAnythingV2" in model:
+        sys.path.append("Depth-Anything-V2/metric_depth")
+        from depth_anything_v2.dpt import DepthAnythingV2
+
+        model_configs = {
+            'DepthAnythingV2-vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+            'DepthAnythingV2-vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'DepthAnythingV2-vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]}
+        }
+        if name == 'davis':
+            dataset = 'vkitti'
+            max_depth = 80
+            url = "https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-VKITTI-Large/resolve/main/depth_anything_v2_metric_vkitti_vitl.pth"
+        else:
+            dataset = 'hypersim'
+            max_depth = 20
+            url = "https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Large/resolve/main/depth_anything_v2_metric_hypersim_vitl.pth"
+        encoder = model.split('-')[-1]
+
+        depth_model = DepthAnythingV2(**{**model_configs[model], 'max_depth': max_depth})
+        model_name = f'depth_anything_v2_metric_{dataset}_{encoder}.pth'
+        model_dir = f'Depth-Anything-V2/metric_depth/checkpoints'
+        if not os.path.isfile(f"{model_dir}/{model_name}"):
+            import subprocess
+            print(os.getcwd())
+            print(f"wget {url}; mkdir {model_dir}; mv {model_name} {model_dir}/",)
+            subprocess.run(
+                f"wget {url}; mkdir {model_dir}; mv {model_name} {model_dir}/",
+                shell=True
+            )
+        depth_model.load_state_dict(torch.load(f"{model_dir}/{model_name}", map_location='cpu'))
+        depth_model.eval()
+        depth_transform = None
+
+    elif model == "DepthAnything":
+        sys.path.append("Depth-Anything/metric_depth")
+        from zoedepth.models.builder import build_model
+        from zoedepth.utils.config import get_config
+        from zoedepth.data.diml_outdoor_test import ToTensor
+
+        model_dir = "Depth-Anything/metric_depth/checkpoints"
+        if name == 'davis':
+            dataset = 'vkitti2'
+            model_name = "depth_anything_metric_depth_outdoor.pt"
+            pretrained_resource = f"local::{os.getcwd()}/{model_dir}/{model_name}"
+            url = f"https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints_metric_depth/{model_name}"
+        else:
+            dataset = 'hypersim_test'
+            model_name = "depth_anything_metric_depth_indoor.pt"
+            pretrained_resource = f"local::{os.getcwd()}/{model_dir}/{model_name}"
+            url = f"https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints_metric_depth/{model_name}"
+        
+        vit_name = "depth_anything_vitl14.pth"
+        vit_url = f"https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints/{vit_name}"
+
+        if not os.path.isfile(pretrained_resource.replace("local::", '')):
+            import subprocess
+            subprocess.run(
+                f"wget {url}; wget {vit_url}; mkdir {model_dir}; mv {model_name} {model_dir}/; mv {vit_name} {model_dir}",
+                shell=True
+            )
+
+        overwrite = {"pretrained_resource": pretrained_resource}
+        config = get_config("zoedepth", "eval", dataset, **overwrite)
+        depth_model = build_model(config)
+        depth_transform = ToTensor()
+        depth_model.eval()
+    return depth_model, depth_transform
+
+def get_emb_model(desired_img_height, desired_img_width, model='dinov2_vits14_reg', embedding_dim=384, model_input_size=896, num_crops_l0=4, crop_n_layers=1, device='cuda:0'):
+    emb_model = torch.hub.load('facebookresearch/dinov2', model).to(device)
+    emb_transform = T.Compose([
+        T.Resize(model_input_size, interpolation=T.InterpolationMode.BICUBIC),
+        T.CenterCrop(model_input_size),
+        T.ToTensor(),
+        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
+    emb_kwargs = {
+        'model_input_size': model_input_size,
+        'num_crops_l0': num_crops_l0,
+        'crop_n_layers': crop_n_layers,
+        'embedding_dim': embedding_dim,
+        'device': device}
+    emb_model.eval()
+    output_size = (desired_img_height, desired_img_width)
+    emb_initial_scale = torchvision.transforms.Resize(
+        output_size, InterpolationMode.BILINEAR)
+    return emb_model, emb_transform, emb_kwargs, emb_initial_scale
+
+
 class GradSLAMDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -89,10 +188,11 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         embedding_dim: int = 512,
         relative_pose: bool = False,  # If True, the pose is relative to the first frame
         per_seq_intrinsics: bool = False,
+        online_depth=False,
+        online_emb=False,
         **kwargs,
     ):
         super().__init__()
-        
         # intialialize variables
         self.name = config_dict["dataset_name"]
         self.device = device
@@ -103,6 +203,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.relative_pose = relative_pose
         self.channels_first = channels_first
         self.normalize_color = normalize_color
+        self.online_depth = online_depth
+        self.online_emb = online_emb
 
         # initialize start and end
         self.start = start
@@ -160,9 +262,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.orig_width = config_dict["camera_params"]["image_width"]
 
         # check of number of paths are the same over different inputs
-        if len(self.color_paths) != len(self.depth_paths):
+        if self.online_depth is None and len(self.color_paths) != len(self.depth_paths):
             raise ValueError("Number of color and depth images must be the same.")
-        if self.load_embeddings:
+        if self.online_emb is None and self.load_embeddings:
             if len(self.color_paths) != len(self.embedding_paths):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
         if len(self.color_paths) != len(self.poses):
@@ -172,8 +274,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.end == -1:
             self.end = self.num_imgs
         self.color_paths = self.color_paths[self.start : self.end : every_x_frame]
-        self.depth_paths = self.depth_paths[self.start : self.end : every_x_frame]
-        if self.load_embeddings:
+        if self.online_depth is None:
+            self.depth_paths = self.depth_paths[self.start : self.end : every_x_frame]
+        if self.load_embeddings and self.online_emb is None:
             self.embedding_paths = self.embedding_paths[self.start : self.end : every_x_frame]
         if self.bg_paths is not None:
             self.bg_paths = self.bg_paths[self.start : self.end : every_x_frame]
@@ -191,6 +294,16 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
+        
+        if self.online_depth is not None:
+            self.depth_model, self.depth_transform = get_depth_model(self.online_depth, self.name)
+            self.depth_model = self.depth_model.to(self.device)
+        if self.online_emb is not None:
+            self.emb_model, self.emb_transform, self.emb_kwargs, self.emb_initial_scale = get_emb_model(
+                self.desired_height,
+                self.desired_width,
+                self.online_emb)
+            self.pca = None
 
     def __len__(self):
         return self.num_imgs
@@ -227,6 +340,28 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.channels_first:
             color = datautils.channels_first(color)
         return color
+
+    def _get_online_depth(self, color_path):
+        if self.online_depth == "DepthAnything":
+            image = np.asarray(Image.open(color_path), dtype=np.float32)
+            image = image / 255.0
+            depth = np.zeros((image.shape[0], image.shape[1], 1))
+            sample = dict(image=image, depth=depth)
+            sample = self.depth_transform(sample)
+            image, depth = sample['image'], sample['depth']
+            image, depth = image.to(self.device), depth.to(self.device)
+            depth = depth.squeeze().unsqueeze(0).unsqueeze(0)
+            image = image.unsqueeze(0)
+            focal = sample.get('focal', torch.Tensor(
+                [715.0873]).to(self.device))  # This magic number (focal) is only used for evaluating BTS model
+
+            # get depth
+            pred = infer(self.depth_model, image.float(), dataset=sample['dataset'][0], focal=focal).squeeze().cpu().numpy()
+        else:
+            image = cv2.imread(color_path)
+            pred = self.depth_model.infer_image(image)
+
+        return pred
 
     def _preprocess_depth(self, depth: np.ndarray):
         r"""Preprocesses the depth image by resizing, adding channel dimension, and scaling values to meters. Optionally
@@ -289,6 +424,28 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         """
         raise NotImplementedError
     
+    def _get_online_emb(self, image):
+        image = self.emb_initial_scale(image).permute(1, 2, 0).numpy()
+        features = generate_im_feats(
+            image,
+            self.emb_model,
+            self.emb_transform,
+            output_size=(self.desired_height, self.desired_width),
+            **self.emb_kwargs)
+        features = features.permute(0, 2, 3, 1)
+        features = features.cpu().squeeze().numpy()
+
+        if features.shape[-1] != self.embedding_dim:
+            shape = features.shape
+            features = features.reshape(-1, shape[2])
+            if self.pca is None:
+                self.pca = PCA(n_components=self.embedding_dim)
+                self.pca.fit(features)
+            features = self.pca.transform(features)
+            features = features.reshape(shape[0], shape[1], self.embedding_dim)
+
+        return torch.from_numpy(features)
+    
     def load_depth(self, depth_path, index):
         if ".png" in depth_path:
             # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -308,18 +465,38 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             color = np.asarray(imageio.imread(color_path), dtype=float)
         if color.shape[2] > 3:
             color = color[:, :, :3]
+
+        # load depth
+        if self.online_depth is None:
+            depth_path = self.depth_paths[index]
+            depth = self.load_depth(depth_path, index)
+        else:
+            depth = self._get_online_depth(color_path)
+
+        if len(depth.shape) > 2 and depth.shape[2] != 1:
+            depth = depth[:, :, 1]
+
+        # load embedding
+        if self.load_embeddings:
+            if self.online_emb is None:
+                embedding = self.read_embedding_from_file(self.embedding_paths[index])
+            else:
+                # embedding = self._get_online_emb(color)
+                embedding = self._get_online_emb(to_tensor(Image.open(color_path))[:3])
+        else:
+            embedding = None
+
+        # preprocess RGB, depth, and embeddings
         color = self._preprocess_color(color)
         if self.distortion is not None:
             color = cv2.undistort(color, K, self.distortion)
         color = torch.from_numpy(color)
 
-        # load depth
-        depth_path = self.depth_paths[index]
-        depth = self.load_depth(depth_path, index)
-        if len(depth.shape) > 2 and depth.shape[2] != 1:
-            depth = depth[:, :, 1]
         depth = self._preprocess_depth(depth)
         depth = torch.from_numpy(depth)
+        
+        if self.load_embeddings:
+            embedding = self.trans_bilinear(embedding.permute(2, 0, 1)).to(self.device)
 
         # get intrinsics
         if not self.per_seq_intrinsics:
@@ -335,11 +512,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         # get camera poses 
         pose = self.transformed_poses[index]
 
-        if self.load_embeddings:
-            embedding = self.read_embedding_from_file(self.embedding_paths[index]).permute(2, 0, 1)
-            embedding = self.trans_bilinear(embedding).to(self.device)
-        else:
-            embedding = None
+        # get BG
         bg = self._load_bg(self.bg_paths[index])
         bg = self.trans_nearest(torch.from_numpy(bg).unsqueeze(0)).to(self.device)
         

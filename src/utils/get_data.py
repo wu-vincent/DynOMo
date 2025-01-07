@@ -46,6 +46,8 @@ def get_data(config):
     # Poses are relative to the first frame
     dataset = get_dataset(
         config_dict=gradslam_data_cfg,
+        relative_pose=True,
+        device=config["primary_device"],
         basedir=dataset_config["basedir"],
         sequence=dataset_config["sequence"],
         every_x_frame=dataset_config["every_x_frame"],
@@ -56,13 +58,13 @@ def get_data(config):
         load_embeddings=dataset_config["load_embeddings"],
         depth_type=dataset_config['depth_type'] if 'depth_type' in dataset_config.keys() else None,
         cam_type=dataset_config['cam_type'] if 'cam_type' in dataset_config.keys() else None,
-        device=config["primary_device"],
-        relative_pose=True,
         embedding_dim=dataset_config["embedding_dim"],
         start_from_complete_pc=dataset_config["start_from_complete_pc"],
         novel_view_mode=dataset_config['novel_view_mode'],
         factor=2 if 'factor' not in dataset_config.keys() else dataset_config['factor'],
-        do_scale=False if 'do_scale' not in dataset_config.keys() else dataset_config['do_scale']
+        do_scale=False if 'do_scale' not in dataset_config.keys() else dataset_config['do_scale'],
+        online_emb=dataset_config['online_emb'],
+        online_depth=dataset_config['online_depth']
         )
 
     return dataset

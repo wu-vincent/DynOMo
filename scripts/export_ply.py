@@ -46,8 +46,7 @@ def save_ply(path, means, scales, rotations, rgbs, opacities, normals=None, time
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("config", type=str, help="Path to config file.")
-    parser.add_argument("--run_name", type=str, help="Path to experiment directory.")
+    parser.add_argument("--params_path", type=str, help="Path to experiment directory.")
     return parser.parse_args()
 
 
@@ -55,14 +54,10 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Load SplaTAM config
-    experiment = SourceFileLoader(os.path.basename(args.config), args.config).load_module()
-    config = experiment.config
-    work_path = config['workdir']
-    params_path = os.path.join(work_path, args.run_name, "params.npz")
-    os.makedirs(os.path.join(work_path, args.run_name, 'splats'), exist_ok=True)
+    os.makedirs(os.path.join(os.path.dirname(args.params_path), 'splats'), exist_ok=True)
 
     print('Loading...')
-    params = dict(np.load(params_path, allow_pickle=True))
+    params = dict(np.load(args.params_path, allow_pickle=True))
     print('Loaded!!!')
     for timestamp in range(params['means3D'].shape[2]):
         if timestamp != 0 and timestamp != 100:
@@ -73,5 +68,5 @@ if __name__ == "__main__":
         rgbs = params['rgb_colors'][:, :, timestamp][params['timestep']<=timestamp]
         opacities = params['logit_opacities'][params['timestep']<=timestamp]
 
-        ply_path = os.path.join(work_path, args.run_name, 'splats', f"splat_{timestamp}.ply")
+        ply_path = os.path.join(os.path.dirname(args.params_path), 'splats', f"splat_{timestamp}.ply")
         save_ply(ply_path, means, scales, rotations, rgbs, opacities, timestamp=timestamp)

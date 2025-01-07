@@ -61,7 +61,9 @@ config = dict(
         depth_type='aligned_depth_anything_colmap',
         cam_type='refined',
         do_scale=False,
-        every_x_frame=1
+        every_x_frame=1,
+        online_emb=None,
+        online_depth=None
     ),
     add_gaussians=dict(
         add_new_gaussians=True,

@@ -438,7 +438,7 @@ class DynOMo():
         
         return curr_data
         
-    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True):
+    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False):
         self.load_dataset()
         self.render_helper = RenderHelper()
         self.first_frame_w2c, _, _ = self.init_Gaussian_scne()
@@ -453,9 +453,9 @@ class DynOMo():
             config=self.config,
             render_helper=self.render_helper)
         
-        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid, vis_fg_only)
+        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid, vis_fg_only, best_x, alpha_traj)
     
-    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False, vis_fg_only=True):
+    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False):
         # make sure everything on same device
         self.scene.params = params2device(self.scene.params, self.device)
         
@@ -479,15 +479,17 @@ class DynOMo():
             results_dir=self.eval_dir, 
             vis_trajs=vis_trajs,
             queries_first_t=False if 'iphone' in self.eval_dir else True,
-            traj_len=10)
+            traj_len=10,
+            best_x=best_x,
+            get_gauss_wise3D_track=not alpha_traj)
         
         if eval_traj:
+            alpha_add = '' if not alpha_traj else '_alpha_traj'
+            best_add = '' if best_x == 1 else f'_{best_x}'
             with torch.no_grad():
                 metrics = evaluator.eval_traj()
-                with open(os.path.join(self.eval_dir, f'traj_metrics.json'), 'w') as f:
+                with open(os.path.join(self.eval_dir, f'traj_metrics{best_add}{alpha_add}.json'), 'w') as f:
                     json.dump(metrics, f)
-                with open(os.path.join(self.eval_dir, f'traj_metrics.txt'), 'w') as f:
-                    f.write(f"Trajectory metrics: {metrics}")
             print("Trajectory metrics: ",  metrics)
         
         if eval_traj and 'iphone' in self.eval_dir:

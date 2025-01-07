@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from natsort import natsorted
 
-from .basedataset import GradSLAMDataset
+from .basedataset_w_online import GradSLAMDataset
 import imageio
 import pickle
 from sklearn.decomposition import PCA
@@ -26,6 +26,8 @@ class DavisDataset(GradSLAMDataset):
         desired_width: Optional[int] = 640,
         load_embeddings: Optional[bool] = False,
         embedding_dim: Optional[int] = 512,
+        online_depth=None,
+        online_emb=None,
         **kwargs,
     ):  
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(basedir))), 'tapvid_davis/tapvid_davis.pkl'), 'rb') as f:
@@ -46,6 +48,8 @@ class DavisDataset(GradSLAMDataset):
             desired_width=desired_width,
             load_embeddings=load_embeddings,
             embedding_dim=embedding_dim,
+            online_depth=online_depth,
+            online_emb=online_emb,
             **kwargs,
         )
         print(f"Length of sequence {len(self.color_paths)}")
@@ -72,11 +76,14 @@ class DavisDataset(GradSLAMDataset):
     
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[self.start:self.end]
-        depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Depth')}/*.npy"))[self.start:self.end]
+        if self.online_depth is None:
+            depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Depth')}/*.npy"))[self.start:self.end]
+        else:
+            depth_paths = None
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
         instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
-        embedding_paths = None
-        if self.load_embeddings:
+
+        if self.load_embeddings and self.online_emb is None:
             embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Feats')}/*.npy"))[self.start:self.end]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
@@ -85,6 +92,8 @@ class DavisDataset(GradSLAMDataset):
             else:
                 print('Features already have the right size...')
                 self.embedding_downscale = None
+        else:
+            embedding_paths = None
 
         return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
 

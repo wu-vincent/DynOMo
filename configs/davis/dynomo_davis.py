@@ -58,7 +58,9 @@ config = dict(
         embedding_dim=32,
         start_from_complete_pc=False,
         novel_view_mode=None,
-        every_x_frame=1
+        every_x_frame=1,
+        online_emb=None,
+        online_depth=None
     ),
     add_gaussians=dict(
         add_new_gaussians=True,
