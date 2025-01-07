@@ -75,9 +75,7 @@ def dosnload_iphone(download, embedding, depth):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--davis", action="store_true", help="If downloading davis.")
-    parser.add_argument("--panoptic_sport", action="store_true", help="If downloading panoptic_sport.")
-    parser.add_argument("--iphone", action="store_true", help="If downloading iphone.")
+    parser.add_argument("dataset", choices=["davis", "panoptic_sport", "iphone"], help="If downloading davis.")
     parser.add_argument("--download", action="store_true", help="If download needed.")
     parser.add_argument("--embeddings", action="store_true", help="If precompute embeddings.")
     parser.add_argument("--depths", action="store_true", help="If precompute depth.")
@@ -88,10 +86,10 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.davis:
+    if args.dataset == "davis":
         download_davis(args.download, args.embeddings, args.depths)
-    if args.panoptic_sport:
+    if args.dataset == "panoptic_sport":
         download_panoptic(args.download, args.embeddings, args.depths)
-    if args.iphone:
+    if args.dataset == "iphone":
         download_iphone(args.download, args.embeddings, args.depths)
     
