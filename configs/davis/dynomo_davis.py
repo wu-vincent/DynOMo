@@ -59,6 +59,7 @@ config = dict(
         start_from_complete_pc=False,
         novel_view_mode=None,
         every_x_frame=1,
+        depth_type='DepthAnything', # "DepthAnythingV2"
         online_emb=None,
         online_depth=None
     ),

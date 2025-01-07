@@ -26,6 +26,7 @@ class DavisDataset(GradSLAMDataset):
         desired_width: Optional[int] = 640,
         load_embeddings: Optional[bool] = False,
         embedding_dim: Optional[int] = 512,
+        depth_type="DepthAnything",
         online_depth=None,
         online_emb=None,
         **kwargs,
@@ -39,6 +40,7 @@ class DavisDataset(GradSLAMDataset):
         end = rgbs.shape[0]
         del rgbs
         
+        self.depth_type = depth_type
         self.input_folder = os.path.join(basedir, sequence)
         super().__init__(config_dict,
             every_x_frame=every_x_frame,
@@ -76,10 +78,13 @@ class DavisDataset(GradSLAMDataset):
     
     def get_filepaths(self):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))[self.start:self.end]
-        if self.online_depth is None:
+        if self.depth_type == 'DepthAnything' and self.online_depth is None:
             depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Depth')}/*.npy"))[self.start:self.end]
+        elif self.depth_type == 'DepthAnythingV2' and self.online_depth is None:
+            depth_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Depth_V2')}/*.npy"))[self.start:self.end]
         else:
             depth_paths = None
+
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
         instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('JPEGImages', 'Annotations')}/*.png"))[self.start:self.end]
 

@@ -46,7 +46,7 @@ config = dict(
     data=dict(
         name='panoptic_sports',
         basedir="data/panoptic_sport",
-        gradslam_data_cfg="./configs/data/davis.yaml",
+        gradslam_data_cfg="./configs/data/panoptic_sport.yaml",
         sequence=scene_name,
         desired_image_height=1.0, #480,
         desired_image_width=1.0, #910,
@@ -58,6 +58,7 @@ config = dict(
         start_from_complete_pc=False,
         novel_view_mode=None,
         every_x_frame=1,
+        depth_type='Dynamic3DGaussians', # DepthAnything, DepthAnythingV2
         online_emb=None,
         online_depth=None
     ),
@@ -137,7 +138,8 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
             embeddings=0.001,
-            bg=0.0001
+            bg=0.0001,
+            instseg=0.0
         ),
     ),
     tracking_cam=dict(
@@ -165,7 +167,8 @@ config = dict(
             cam_unnorm_rots=0.001,
             cam_trans=0.001,
             embeddings=0.00,
-            bg=0.000
+            bg=0.000,
+            instseg=0.0
         ),
     ),
     viz=dict(

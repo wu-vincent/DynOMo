@@ -71,7 +71,7 @@ class PanopticSportsDataset(GradSLAMDataset):
         return bg
     
     def _load_instseg(self, instseg_path):
-        instseg = imageio.imread(instseg_path)
+        instseg = imageio.imread(instseg_path).astype(np.float32)
         return instseg
     
     def get_filepaths(self):
@@ -79,11 +79,15 @@ class PanopticSportsDataset(GradSLAMDataset):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/*.jpg"))
 
         # get depth paths
-        if self.depth_type != 'Dynamic3DGaussians' and self.online_depth is None:
-            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth*.npy"))
+        if self.depth_type == 'DepthAnything' and self.online_depth is None:
+            input_folder = self.input_folder.replace("ims", "Depth")
+            depth_paths = natsorted(glob.glob(f"{input_folder}/*.npy"))
+        elif self.depth_type == 'DepthAnythingV2' and self.online_depth is None:
+            input_folder = self.input_folder.replace("ims", "Depth_V2")
+            depth_paths = natsorted(glob.glob(f"{input_folder}/*.npy"))
         elif self.online_depth is None:
-            input_folder = self.input_folder.replace("/scratch/jseidens/data/data", "../Dynamic3DGaussians/rendered")
-            input_folder = self.input_folder.replace("/data3/jseidens/data", "../Dynamic3DGaussians/rendered")
+            input_folder = self.input_folder.replace("ims", "Dynamic3DGaussianDepth")
+            input_folder = input_folder.replace("panoptic_sport", "Dynamic3DGaussianDepth")
             depth_paths = natsorted(glob.glob(f"{input_folder}/depth*.npy"))
         else:
             depth_paths = None
@@ -91,10 +95,10 @@ class PanopticSportsDataset(GradSLAMDataset):
         # get background paths
         bg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
         instseg_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'seg')}/*.png"))
-        
+
         # get embedding paths
         if self.load_embeddings and self.online_emb is None:
-            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*dino_img_quat_4_1.npy"))
+            embedding_paths = natsorted(glob.glob(f"{self.input_folder.replace('ims', 'feats')}/*.npy"))
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)

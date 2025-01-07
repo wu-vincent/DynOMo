@@ -1,4 +1,4 @@
-dataset_name: 'jono_data'
+dataset_name: 'panoptic_sport'
 camera_params:
   image_height: 360
   image_width: 640

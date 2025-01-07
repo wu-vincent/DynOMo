@@ -31,7 +31,7 @@ def get_dataset(
     **kwargs):
     if config_dict["dataset_name"].lower() in ["davis"]:
         return DavisDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["jono_data"]:
+    elif config_dict["dataset_name"].lower() in ["panoptic_sport"]:
         return PanopticSportsDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["iphone"]:
         return IphoneDataset(config_dict, basedir, sequence, depth_type, cam_type, factor, do_scale, **kwargs)
@@ -56,7 +56,7 @@ def get_data(config):
         desired_height=dataset_config["desired_image_height"],
         desired_width=dataset_config["desired_image_width"],
         load_embeddings=dataset_config["load_embeddings"],
-        depth_type=dataset_config['depth_type'] if 'depth_type' in dataset_config.keys() else None,
+        depth_type=dataset_config['depth_type'],
         cam_type=dataset_config['cam_type'] if 'cam_type' in dataset_config.keys() else None,
         embedding_dim=dataset_config["embedding_dim"],
         start_from_complete_pc=dataset_config["start_from_complete_pc"],

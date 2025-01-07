@@ -97,8 +97,10 @@ class IphoneDataset(GradSLAMDataset):
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth/{self.factor}x/{cam}_*.npy"))[self.start:self.end]
         elif 'aligned' in self.depth_type:
             depth_paths = natsorted(glob.glob(f"{self.input_folder}/flow3d_preprocessed/{self.depth_type}/1x/{cam}_*.npy"))[self.start:self.end]
-        elif self.online_depth is None:
-            depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_anything_jenny/depth{cam}_*.npy"))[self.start:self.end]
+        elif self.depth_type == 'DepthAnything' and self.online_depth is None:
+            depth_paths = natsorted([p.replace("rgb", "DepthAnything")[:-3] + 'npy' for p in color_paths])
+        elif self.depth_type == 'DepthAnythingV2' and self.online_depth is None:
+            depth_paths = natsorted([p.replace("rgb", "DepthAnythingV2")[:-3] + 'npy' for p in color_paths])
         else:
             depth_paths = None
             

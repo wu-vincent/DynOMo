@@ -58,7 +58,7 @@ config = dict(
         embedding_dim=32,
         start_from_complete_pc=False,
         novel_view_mode=None,
-        depth_type='aligned_depth_anything_colmap',
+        depth_type='aligned_depth_anything_colmap', # 'lidar', DepthAnything, DepthAnythingV2
         cam_type='refined',
         do_scale=False,
         every_x_frame=1,
@@ -141,6 +141,7 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
             embeddings=0.001,
+            instseg=0.0,
             bg=0.0001
         ),
     ),
@@ -169,6 +170,7 @@ config = dict(
             cam_unnorm_rots=0.001,
             cam_trans=0.001,
             embeddings=0.00,
+            instseg=0.0,
             bg=0.000
         ),
     ),

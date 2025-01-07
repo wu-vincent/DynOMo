@@ -50,3 +50,4 @@ SEQEUNCE_DICT = {
         'teddy'
     ]
 }
+
