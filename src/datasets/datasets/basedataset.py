@@ -80,7 +80,7 @@ def readEXR_onlydepth(filename):
     return Y
 
 
-def get_depth_model(model, name):
+def get_depth_model(model, name, device):
     if "DepthAnythingV2" in model:
         sys.path.append("Depth-Anything-V2/metric_depth")
         from depth_anything_v2.dpt import DepthAnythingV2
@@ -112,7 +112,6 @@ def get_depth_model(model, name):
                 shell=True
             )
         depth_model.load_state_dict(torch.load(f"{model_dir}/{model_name}", map_location='cpu'))
-        depth_model.eval()
         depth_transform = None
 
     elif model == "DepthAnything":
@@ -147,7 +146,8 @@ def get_depth_model(model, name):
         config = get_config("zoedepth", "eval", dataset, **overwrite)
         depth_model = build_model(config)
         depth_transform = ToTensor()
-        depth_model.eval()
+
+    depth_model = depth_model.eval().to(device)
     return depth_model, depth_transform
 
 def get_emb_model(desired_img_height, desired_img_width, model='dinov2_vits14_reg', embedding_dim=384, model_input_size=896, num_crops_l0=4, crop_n_layers=1, device='cuda:0'):
@@ -296,13 +296,17 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self.poses
         
         if self.online_depth is not None:
-            self.depth_model, self.depth_transform = get_depth_model(self.online_depth, self.name)
+            self.depth_model, self.depth_transform = get_depth_model(
+                self.online_depth,
+                self.name,
+                device=self.device)
             self.depth_model = self.depth_model.to(self.device)
         if self.online_emb is not None:
             self.emb_model, self.emb_transform, self.emb_kwargs, self.emb_initial_scale = get_emb_model(
                 self.desired_height,
                 self.desired_width,
-                self.online_emb)
+                self.online_emb,
+                device=self.device)
             self.pca = None
 
     def __len__(self):

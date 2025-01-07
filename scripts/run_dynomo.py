@@ -296,11 +296,11 @@ if __name__ == "__main__":
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
 
-    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_*"
+    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     alpha_add = '' if not args.alpha_traj else '_alpha_traj'
     best_add = '' if args.best_x == 1 else f'_{args.best_x}'
     result_files = os.path.join(
-        experiment.config["workdir"], run_name, f"eval/traj_metrics{best_add}{alpha_add}.json"
+        experiment.config["workdir"], run_name, "splatam_*", f"eval/traj_metrics{best_add}{alpha_add}.json"
     )
     summary_short = None
     summary_long = None
@@ -325,6 +325,6 @@ if __name__ == "__main__":
     print(f"METRICS: \n {summary_short}")
 
     summary_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
-    summary_short.to_json(os.path.join(experiment.config["workdir"], "summary", f"{summary_name}{best_add}{alpha_add}.json"))
-    summary_long.to_json(os.path.join(experiment.config["workdir"], "summary", f"{summary_name}{best_add}{alpha_add}_long.json"))
+    summary_short.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}.json"))
+    summary_long.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}_long.json"))
 

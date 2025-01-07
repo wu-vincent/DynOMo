@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from natsort import natsorted
 
-from .basedataset_w_online import GradSLAMDataset
+from .basedataset import GradSLAMDataset
 import imageio
 import pickle
 from sklearn.decomposition import PCA
