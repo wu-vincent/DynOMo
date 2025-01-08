@@ -64,8 +64,8 @@ class TrajEvaluator():
             dataset = 'davis'
         elif 'iphone' in self.config['data']["gradslam_data_cfg"].lower():
             dataset = 'iphone'
-        elif 'panoptic_sports' in self.config['data']["gradslam_data_cfg"].lower():
-            dataset = 'panoptic_sports'
+        elif 'panoptic_sport' in self.config['data']["gradslam_data_cfg"].lower():
+            dataset = 'panoptic_sport'
 
         # get metrics
         metrics = self._eval_traj(
@@ -77,7 +77,7 @@ class TrajEvaluator():
     def _eval_traj(
             self,
             data,
-            dataset='panoptic_sports'
+            dataset='panoptic_sport'
         ):
 
         # get GT
@@ -87,7 +87,7 @@ class TrajEvaluator():
         valids = 1-occluded.float()
 
         # move by one pix
-        if dataset == 'panoptic_sports':
+        if dataset == 'panoptic_sport':
             gt_traj_2D[:, :, 0] = ((gt_traj_2D[:, :, 0] * self.w) - 1)/self.w
             gt_traj_2D[:, :, 1] = ((gt_traj_2D[:, :, 1] * self.h) - 1)/self.h
             search_fg_only = True
@@ -315,24 +315,24 @@ class TrajEvaluator():
 
     def gauss_wise3D_track(self, search_fg_only, start_pixels, start_time, start_3D, do_3D=False, only_t0=True):
         first_occurance = self.params['timestep']
+        params_gs_traj_3D = copy.deepcopy(self.params)
         if search_fg_only:
-            fg_mask = (self.params['bg'] < 0.5).squeeze()
+            fg_mask = (params_gs_traj_3D['bg'] < 0.5).squeeze()
             first_occurance = first_occurance[fg_mask]
-            for k in self.params.keys():
+            for k in params_gs_traj_3D.keys():
                 try:
-                    self.params[k] = self.params[k][fg_mask]
+                    params_gs_traj_3D[k] = params_gs_traj_3D[k][fg_mask]
                 except:
-                    self.params[k] = self.params[k]
+                    params_gs_traj_3D[k] = params_gs_traj_3D[k]
 
         # only search gaussians inializaed at t=0
-        params_gs_traj_3D = copy.deepcopy(self.params)
         if only_t0:
             first = first_occurance==first_occurance.min().item()
         else:
             first = torch.ones_like(first_occurance, dtype=bool, device=self.dev)
-        params_gs_traj_3D['means3D'] = self.params['means3D'][first]
-        params_gs_traj_3D['unnorm_rotations'] = self.params['unnorm_rotations'][first]
-        params_vis = self.params['visibility'][first]
+        params_gs_traj_3D['means3D'] = params_gs_traj_3D['means3D'][first]
+        params_gs_traj_3D['unnorm_rotations'] = params_gs_traj_3D['unnorm_rotations'][first]
+        params_vis = params_gs_traj_3D['visibility'][first]
 
         # get Gauss IDs
         gauss_ids = torch.zeros(start_pixels.shape[0] * self.best_x, device=self.dev).long()
@@ -392,8 +392,6 @@ class TrajEvaluator():
         params_gs_traj_3D['unnorm_rotations'] = unnorm_rotations
         gs_traj_2D_per_time = list()
         for cam_time in range(gs_traj_3D.shape[-1]):
-            if cam_time % 50 == 0:
-                print(f"Processing step {cam_time}...")
             gs_traj_2D = list()
             for gauss_time in range(gs_traj_3D.shape[-1]):
                 if gs_traj_3D[:, :, gauss_time].sum() == 0:
@@ -594,12 +592,15 @@ class TrajEvaluator():
     
     def vis_grid_trajs(
             self,
-            mask=None):
+            mask=None,
+            N=1024):
+        # store best_x for later
+        best_x = self.best_x
+        self.best_x = 1
         self.visuals = self.traj_len > 0
-        search_fg_only = False if mask is None else False
+        search_fg_only = False if mask is None else True
 
-        # get trajectories to track
-        N = 2048 if search_fg_only else 1024
+        # get trajectories to track        
         start_pixels = get_xy_grid(
             self.h,
             self.w,
@@ -632,7 +633,10 @@ class TrajEvaluator():
                 data,
                 pred_visibility=torch.ones_like(pred_visibility.squeeze()).to(self.dev),
                 vis_traj=True if self.traj_len > 0 else False,
-                traj_len=self.traj_len)
+                traj_len=self.traj_len,
+                fg_only=search_fg_only)
+        # reset best x
+        self.best_x = best_x
     
     def vis_flow(self):
         vis_thresh, vis_thresh_start = self.vis_thresh, self.vis_thresh_start

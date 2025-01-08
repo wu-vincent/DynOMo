@@ -138,6 +138,7 @@ class RenderingEvaluator():
                 'w2c': w2c,
                 'embeddings': embeddings,
                 'bg': bg,
+                'instseg': instseg,
                 'iter_gt_w2c_list': variables['gt_w2c_all_frames']}
             
             variables, im, radius, rastered_depth, _, _, _, _, time_mask, _, rastered_sil, rendered_embeddings, rastered_bg, visibility = self.render_helper.get_renderings(

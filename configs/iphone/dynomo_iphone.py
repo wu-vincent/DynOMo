@@ -12,7 +12,7 @@ tracking_iters_init = 200
 tracking_iters_cam = 200
 num_frames = -1
 
-group_name = "dynosplatam_davis"
+group_name = "dynosplatam_iphone"
 run_name = f"splatam_{scene_name}/splatam_{scene_name}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
 
 config = dict(
@@ -45,7 +45,7 @@ config = dict(
     ),
     data=dict(
         name='iphone',
-        basedir="data/iphone",
+        basedir="/data3/jseidens/iphone",
         gradslam_data_cfg="./configs/data/iphone.yaml",
         sequence=scene_name,
         desired_image_height=1.0, #480,

@@ -130,7 +130,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
 
 
 
-def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10):
+def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10, fg_only=True):
     """
     This function calculates the median motion of the background, which is subsequently
     subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
@@ -208,9 +208,13 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
 
 
         frames.append(img_curr.astype(np.uint8))
-    imageio.mimwrite(os.path.join(results_dir, f'vid_trails_{traj_len}.mp4'), frames, quality=8, fps=10)
-    print('stored vis', os.path.join(results_dir, f'vid_trails_{traj_len}.mp4'))
 
+    if not fg_only:
+        save_path = os.path.join(results_dir, f'vid_trails_{traj_len}_fg_and_bg.mp4')
+    else:
+        save_path = os.path.join(results_dir, f'vid_trails_{traj_len}.mp4')
 
+    imageio.mimwrite(save_path, frames, quality=8, fps=10)
+    print('stored vis', save_path)
 
 # flow_color = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)

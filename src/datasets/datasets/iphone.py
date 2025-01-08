@@ -106,9 +106,8 @@ class IphoneDataset(GradSLAMDataset):
             
         bg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
         instseg_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'flow3d_preprocessed/track_anything/1x', f'{cam}_*.png')))[self.start:self.end]
-
         if self.load_embeddings and self.online_emb is None:
-            embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*dino_img_quat_4_1_32_240_180.npy")))[self.start:self.end]
+            embedding_paths = natsorted(glob.glob(os.path.join(self.input_folder, 'feats/2x', f"{cam}_*.npy")))[self.start:self.end]
             features = np.load(embedding_paths[0])
             if self.embedding_dim != features.shape[2]:
                 pca = PCA(n_components=self.embedding_dim)

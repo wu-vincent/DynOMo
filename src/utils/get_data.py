@@ -246,8 +246,8 @@ def get_gt_traj(config, in_torch=False, device='cuda:0'):
     config_dict = load_dataset_config(config['data']["gradslam_data_cfg"])
     if config_dict["dataset_name"].lower() in ["davis"]:
         return load_davis(config["data"]["sequence"], config["data"]["gt_traj_data"], in_torch)
-    elif config_dict["dataset_name"].lower() in ["jono_data"]:
-        return  load_panoptic_sports(config["data"]["sequence"], in_torch)
+    elif config_dict["dataset_name"].lower() in ["panoptic_sport"]:
+        return  load_panoptic_sports(config["data"]["sequence"], in_torch, config['data']['basedir'])
     elif config_dict["dataset_name"].lower() in ["iphone"]:
         return  load_iphone(config, in_torch, device)
 

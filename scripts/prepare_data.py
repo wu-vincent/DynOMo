@@ -30,7 +30,7 @@ def download_panoptic(download, embeddings, depth):
     # PANOPTIC SPORT
     # download data
     if download:
-        command = "cd data && wget https://omnomnom.vision.rwth-aachen.de/data/Dynamic3DGaussians/data.zip && unzip data.zip && rm -rf data.zip && cd data; mkdir annotations && cd annotations; gdown --fuzzy https://drive.google.com/file/d/1WXePud-DuR3fN5P4ThyfKWGjnIzD-0O1/view?usp=sharing; gdown --fuzzy https://drive.google.com/file/d/1MSYSTKhMvS-Wn-ACBxNVATzHUC5WybKS/view?usp=sharing; cd ../../../; mv data/data/ data/panoptic_sport; python preprocess/process_panoptic_sport.py; cd data; wget https://vision.in.tum.de/webshare/u/seidensc/DynOMo/Dynamic3DGaussianDepth.zip; unzip Dynamic3DGaussianDepth.zip; rm Dynamic3DGaussianDepth.zip; cd ../"
+        command = "cd data && wget https://omnomnom.vision.rwth-aachen.de/data/Dynamic3DGaussians/data.zip && unzip data.zip && rm -rf data.zip && cd data; mkdir annotations && cd annotations; gdown --fuzzy https://drive.google.com/file/d/1WXePud-DuR3fN5P4ThyfKWGjnIzD-0O1/view?usp=sharing; gdown --fuzzy https://drive.google.com/file/d/1MSYSTKhMvS-Wn-ACBxNVATzHUC5WybKS/view?usp=sharing; cd ../../../; mv data/data/ data/panoptic_sport; python preprocess/process_panoptic_sport.py; python preprocess/convert_panoptic_sports_to_tapvid.py; cd data; wget https://vision.in.tum.de/webshare/u/seidensc/DynOMo/Dynamic3DGaussianDepth.zip; unzip Dynamic3DGaussianDepth.zip; rm Dynamic3DGaussianDepth.zip; cd ../"
         subprocess.run(
             command,
             shell=True
@@ -49,17 +49,27 @@ def download_panoptic(download, embeddings, depth):
             shell=True
         )
 
-def dosnload_iphone(download, embedding, depth):
+def download_iphone(download, embeddings, depth):
     # IPHONE DATASET
     # download data from som https://drive.google.com/drive/folders/1xJaFS_3027crk7u36cue7BseAX80abRe
     if download:
         files = [
             "gdown --fuzzy https://drive.google.com/file/d/15PirJRqsT5lLjuGdLWALBDFMQanj8FTh/view?usp=drive_link && unzip paper-windmill.zip && rm paper-windmill.zip", 
-            "gdown --fuzzy https://drive.google.com/file/d/18sjQQMU6AijyXg4BoucLX82R959BYAzz/view?usp=drive_link && unzip sriracha-tree.zip && rm sriracha-tree.zip"
+            "gdown --fuzzy https://drive.google.com/file/d/18sjQQMU6AijyXg4BoucLX82R959BYAzz/view?usp=drive_link && unzip sriracha-tree.zip && rm sriracha-tree.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1QihG5A7c_bpkse5b0OBdqqFThgX0kDyZ/view?usp=drive_link && unzip bagpack.zip && bagpack.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1QJQnVw_szoy_k5x9k_BAE2BWtf_BXqKn/view?usp=drive_link && unzip apple.zip && apple.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1BmuxJXKi6dVaNOjmppuETQsaspAV9Wca/view?usp=drive_link && unzip haru-sit.zip && haru-sit.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1frv8miU24Dl7fqblYt7zkwj129ci-68U/view?usp=drive_link && unzip handwavy.zip && handwavy.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1inkHp24an1TyWvBekBxu2wRIyLQ0gkhO/view?usp=drive_link && unzip creeper.zip && creeper.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1OpgF2ILf43jcN-226wQcxImjcfMAVOwA/view?usp=drive_link && unzip mochi-high-five.zip && mochi-high-five.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1b9Y-hUm9Cviuq-fl7gG-q7rUK7j0u2Rv/view?usp=drive_link && unzip block.zip && block.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1055wcQk-ZfVWXa_g-dpQIRQy-kLBL_Lk/view?usp=drive_link && unzip spin.zip && spin.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1Mqm4C1Oitv4AsDM2n0Ojbt5pmF_qXVfI/view?usp=drive_link && unzip teddy.zip && teddy.zip",
+            "gdown --fuzzy https://drive.google.com/file/d/1Uc2BXpONnWhxKNs6tKMle0MiSVMVZsuB/view?usp=drive_link && unzip pillow.zip && pillow.zip",
         ]
         
         for file in files:
-            command = f"cd data && mkdir iphone && cd iphone; {file}; cd ../../"
+            command = f"cd data; mkdir iphone; cd iphone; {file}; cd ../../"
             subprocess.run(
                 command,
                 shell=True

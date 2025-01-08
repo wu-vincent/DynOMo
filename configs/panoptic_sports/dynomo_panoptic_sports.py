@@ -12,7 +12,7 @@ tracking_iters_init = 1000
 tracking_iters_cam = 0
 num_frames = -1
 
-group_name = "dynosplatam_davis"
+group_name = "dynosplatam_panoptic_sport"
 run_name = f"splatam_{scene_name}/splatam_{scene_name}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
 
 config = dict(

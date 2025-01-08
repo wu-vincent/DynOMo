@@ -438,7 +438,7 @@ class DynOMo():
         
         return curr_data
         
-    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False):
+    def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False, traj_len=10):
         self.load_dataset()
         self.render_helper = RenderHelper()
         self.first_frame_w2c, _, _ = self.init_Gaussian_scne()
@@ -453,9 +453,9 @@ class DynOMo():
             config=self.config,
             render_helper=self.render_helper)
         
-        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid, vis_fg_only, best_x, alpha_traj)
+        self._eval(novel_view_mode, eval_renderings, eval_traj, vis_trajs, vis_grid, vis_fg_only, best_x, alpha_traj, traj_len=traj_len)
     
-    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False):
+    def _eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=False, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False, traj_len=10):
         # make sure everything on same device
         self.scene.params = params2device(self.scene.params, self.device)
         
@@ -470,7 +470,7 @@ class DynOMo():
                     self.num_frames,
                     variables=self.scene.params,
                     novel_view_mode=novel_view_mode)
-
+        
         # eval traj
         evaluator = TrajEvaluator(
             self.config,
@@ -479,7 +479,7 @@ class DynOMo():
             results_dir=self.eval_dir, 
             vis_trajs=vis_trajs,
             queries_first_t=False if 'iphone' in self.eval_dir else True,
-            traj_len=10,
+            traj_len=traj_len,
             best_x=best_x,
             get_gauss_wise3D_track=not alpha_traj)
         

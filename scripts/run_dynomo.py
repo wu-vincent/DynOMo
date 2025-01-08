@@ -189,9 +189,10 @@ def run_splatam(args):
     seq_experiment.config['data']['online_emb'] = experiment_args['online_emb']
     seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
 
-    seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs'],
-    seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid'],
-    seq_experiment.config['viz']['vis_fg_only'] = experiment_args['vis_fg_only'],
+    seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs']
+    seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid']
+    seq_experiment.config['viz']['vis_all'] = experiment_args['vis_all']
+    seq_experiment.config['viz']['vis_gt'] = experiment_args['vis_gt']
 
     # Set Experiment Seed
     seed_everything(seed=seq_experiment.config['seed'])
@@ -218,13 +219,15 @@ def run_splatam(args):
             experiment_args['vis_grid'],
             experiment_args['vis_fg_only'],
             experiment_args['best_x'],
-            experiment_args['alpha_traj']
+            experiment_args['alpha_traj'],
+            experiment_args['traj_len'],
             )
 
     else:
-        # if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
-        #     print(f"Experiment already done {run_name}\n\n")
-        #     return
+        print(os.path.join(results_dir, 'params.npz'))
+        if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
+            print(f"Experiment already done {run_name}\n\n")
+            return
         os.makedirs(results_dir, exist_ok=True)
         with open(os.path.join(results_dir, 'config.json'), 'w') as f:
             json.dump(seq_experiment.config, f)
@@ -235,16 +238,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str, help="Path to experiment file")
     parser.add_argument("--just_eval", action="store_true", help="if only eval")
-    parser.add_argument("--eval_renderings", action="store_false", help="if eval renderings")
-    parser.add_argument("--eval_traj", action="store_false", help="if eval traj")
+    parser.add_argument("--not_eval_renderings", action="store_true", help="if eval renderings")
+    parser.add_argument("--not_eval_traj", action="store_true", help="if eval traj")
     parser.add_argument("--vis_trajs", action="store_false", help="if vis evaluation grids")
     parser.add_argument("--vis_grid", action="store_false", help="if vis grid")
-    parser.add_argument("--vis_fg_only", action="store_false", help="if only vis fg")
+    parser.add_argument("--vis_bg_and_fg", action="store_true", help="if only vis fg")
+    parser.add_argument("--vis_gt", action="store_true", help="ground truth also")
+    parser.add_argument("--vis_all", action="store_true", help="if visualizing all renderings")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
     parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
     parser.add_argument("--sequence", default=None, help="gpus to use")
     parser.add_argument("--best_x", default=1, type=int, help="oracle result, get best Gaussian out of x")
     parser.add_argument("--alpha_traj", action="store_true", help="if using alpha blending for trajectory")
+    parser.add_argument("--traj_len", default=10, type=int, help="if using alpha blending for trajectory")
     parser.add_argument("--online_depth", default=None, choices=[None, 'DepthAnything', 'DepthAnythingV2-vitl'], help="if computing depth online")
     parser.add_argument("--online_emb", default=None, choices=[None, 'dinov2_vits14', 'dinov2_vits14_reg'], help="if computing embeddings online")
     args = parser.parse_args()
@@ -264,15 +270,18 @@ if __name__ == "__main__":
     experiment_args = dict(
         just_eval = experiment.config['just_eval'],
         novel_view_mode=args.novel_view_mode,
-        eval_renderings=args.eval_renderings,
+        eval_renderings=not args.not_eval_renderings,
         vis_trajs=args.vis_trajs,
-        eval_traj=args.eval_traj,
+        eval_traj=not args.not_eval_traj,
         vis_grid=args.vis_grid,
-        vis_fg_only=args.vis_fg_only,
+        vis_fg_only=not args.vis_bg_and_fg,
+        vis_gt=args.vis_gt,
+        vis_all=args.vis_all,
         best_x=args.best_x,
         alpha_traj=args.alpha_traj,
         online_depth=args.online_depth,
-        online_emb=args.online_emb
+        online_emb=args.online_emb,
+        traj_len=args.traj_len
         )
         
     configs_to_paralellize = list()
@@ -299,9 +308,15 @@ if __name__ == "__main__":
     run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     alpha_add = '' if not args.alpha_traj else '_alpha_traj'
     best_add = '' if args.best_x == 1 else f'_{args.best_x}'
-    result_files = os.path.join(
-        experiment.config["workdir"], run_name, "splatam_*", f"eval/traj_metrics{best_add}{alpha_add}.json"
-    )
+    if 'panoptic_sport' not in args.experiment:
+        result_files = os.path.join(
+            experiment.config["workdir"], run_name, "splatam_*", f"eval/traj_metrics{best_add}{alpha_add}.json"
+        )
+    else:
+        result_files = os.path.join(
+            experiment.config["workdir"], run_name, "splatam_*/*/*", f"eval/traj_metrics{best_add}{alpha_add}.json"
+        )
+
     summary_short = None
     summary_long = None
     columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
@@ -310,21 +325,33 @@ if __name__ == "__main__":
             metrics = json.load(jf)
         if 'iphone' not in args.experiment:
             metrics = {k1: v1 for k, v in metrics.items() for k1, v1 in metrics[k].items()}
-        seq = f.split('/')[3].split('_')[-1]
+        seq = f.replace(
+            f"/eval/traj_metrics{best_add}{alpha_add}.json", '').replace(
+                os.path.join(experiment.config["workdir"], run_name) + '/', '')
         params = np.load(os.path.join(os.path.dirname(os.path.dirname(f)), 'params.npz'))
         metrics['FPS']  = (params['duration'].item()) # +2.3)
         metrics['duration [min]']  = params['overall_duration'].item() / 60
 
         if summary_short is None:
-            summary_short = pd.DataFrame(columns=columns)
-            summary_long = pd.DataFrame(columns=list(metrics.keys()))
-        summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
-        summary_long.loc[seq] = metrics
-    summary_short.loc['mean'] = summary_short.mean()
-    summary_long.loc['mean'] = summary_long.mean()
-    print(f"METRICS: \n {summary_short}")
+            if 'iphone' not in args.experiment:
+                summary_short = pd.DataFrame(columns=columns)
+                summary_long = pd.DataFrame(columns=list(metrics.keys()))
+            else:
+                summary_short = pd.DataFrame(columns=list(metrics.keys()))
+                
+        if 'iphone' not in args.experiment:
+            summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
+            summary_long.loc[seq] = metrics
+        else:
+            summary_short.loc[seq] = metrics
 
     summary_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
+    summary_short.loc['mean'] = summary_short.mean()
     summary_short.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}.json"))
-    summary_long.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}_long.json"))
+    print(f"METRICS: \n {summary_short}")
+
+    if 'iphone' not in args.experiment:
+        summary_long.loc['mean'] = summary_long.mean()
+        summary_long.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}_long.json"))
+
 

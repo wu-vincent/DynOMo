@@ -42,26 +42,27 @@ class Logger():
         return input_list
     
     def log_final_stats(self, psnr_list, rmse_list, l1_list, ssim_list, lpips_list):
-        # Compute Average Metrics
-        psnr_list = self.numpy_and_save(os.path.join(self.eval_dir, "psnr.txt"), psnr_list)
-        rmse_list = self.numpy_and_save(os.path.join(self.eval_dir, "rmse.txt"), rmse_list)
-        l1_list = self.numpy_and_save(os.path.join(self.eval_dir, "l1.txt"), l1_list)
-        ssim_list = self.numpy_and_save(os.path.join(self.eval_dir, "ssim.txt"), ssim_list)
-        lpips_list = self.numpy_and_save(os.path.join(self.eval_dir, "lpips.txt"), lpips_list)
+        if len(psnr_list) > 0:
+            # Compute Average Metrics
+            psnr_list = self.numpy_and_save(os.path.join(self.eval_dir, "psnr.txt"), psnr_list)
+            rmse_list = self.numpy_and_save(os.path.join(self.eval_dir, "rmse.txt"), rmse_list)
+            l1_list = self.numpy_and_save(os.path.join(self.eval_dir, "l1.txt"), l1_list)
+            ssim_list = self.numpy_and_save(os.path.join(self.eval_dir, "ssim.txt"), ssim_list)
+            lpips_list = self.numpy_and_save(os.path.join(self.eval_dir, "lpips.txt"), lpips_list)
 
-        print("Average PSNR: {:.2f}".format(psnr_list.mean()))
-        print("Average Depth RMSE: {:.2f} cm".format(rmse_list.mean()*100))
-        print("Average Depth L1: {:.2f} cm".format(l1_list.mean()*100))
-        print("Average MS-SSIM: {:.3f}".format(ssim_list.mean()))
-        print("Average LPIPS: {:.3f}".format(lpips_list.mean()))
+            print("Average PSNR: {:.2f}".format(psnr_list.mean()))
+            print("Average Depth RMSE: {:.2f} cm".format(rmse_list.mean()*100))
+            print("Average Depth L1: {:.2f} cm".format(l1_list.mean()*100))
+            print("Average MS-SSIM: {:.3f}".format(ssim_list.mean()))
+            print("Average LPIPS: {:.3f}".format(lpips_list.mean()))
 
-        if self.wandb_run is not None:
-            self.wandb_run.log({"Final Stats/Average PSNR": psnr_list.mean(), 
-                        "Final Stats/Average Depth RMSE": rmse_list.mean(),
-                        "Final Stats/Average Depth L1": l1_list.mean(),
-                        "Final Stats/Average MS-SSIM": ssim_list.mean(), 
-                        "Final Stats/Average LPIPS": lpips_list.mean(),
-                        "Final Stats/step": 1})
+            if self.wandb_run is not None:
+                self.wandb_run.log({"Final Stats/Average PSNR": psnr_list.mean(), 
+                            "Final Stats/Average Depth RMSE": rmse_list.mean(),
+                            "Final Stats/Average Depth L1": l1_list.mean(),
+                            "Final Stats/Average MS-SSIM": ssim_list.mean(), 
+                            "Final Stats/Average LPIPS": lpips_list.mean(),
+                            "Final Stats/step": 1})
     
     def report_loss(
             self,
