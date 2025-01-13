@@ -209,7 +209,7 @@ def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, 
         if iter_time_idx > 0:
             is_bg = scene.params['bg'].detach().clone().squeeze() > 0.5
             losses['bg_reg'] = l1_loss_v1(
-                scene.params['means3D'][:, :][is_bg],
+                scene.params['means3D'][is_bg],
                 scene.variables['means3D'][:, :, iter_time_idx-1][is_bg].to(device))
 
         # bg loss with mask    
@@ -225,7 +225,7 @@ def get_l1_losses(losses, config, iter_time_idx, scene, load_embeddings):
     l1_mask = scene.variables['timestep'] < iter_time_idx
     if config['loss_weights']['l1_bg'] and iter_time_idx > 0:
         losses['l1_bg'] = l1_loss_v1(scene.params['bg'][l1_mask], scene.variables['prev_bg'])
-    
+     
     if config['loss_weights']['l1_rgb'] and iter_time_idx > 0:
         losses['l1_rgb'] = l1_loss_v1(scene.params['rgb_colors'][l1_mask], scene.variables['prev_rgb_colors'])
     

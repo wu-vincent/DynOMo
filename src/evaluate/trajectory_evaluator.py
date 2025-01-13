@@ -34,7 +34,6 @@ class TrajEvaluator():
             vis_trajs_best_x=False,
             queries_first_t=True,
             primary_device='cuda:0'):
-        
         self.render_helper = RenderHelper()
         self.config = config
         self.results_dir = results_dir
@@ -51,7 +50,6 @@ class TrajEvaluator():
         self.vis_trajs = vis_trajs
         self.get_proj_and_params(primary_device)
         self.dev = self.params['means3D'].device
-        print(f"Using device {self.dev}")
         self.queries_first_t = queries_first_t
         print(f"\nEvaluating queries for time only {self.queries_first_t}")
 
@@ -80,6 +78,7 @@ class TrajEvaluator():
             dataset='panoptic_sport'
         ):
 
+        copied_params = copy.deepcopy(self.params)
         # get GT
         gt_traj_2D = data['points']
         gt_traj_3D = data['trajs'] if 'trajs' in data.keys() else None
@@ -106,6 +105,7 @@ class TrajEvaluator():
 
         # self.params['visibility'] = (self.params['visibility'] > vis_thresh).float()
         # get trajectories of Gaussians
+
         gs_traj_2D, gs_traj_3D, pred_visibility, gs_traj_2D_for_vis = self.get_gs_traj_pts(
             start_pixels,
             start_pixels_normalized=True,
@@ -136,7 +136,6 @@ class TrajEvaluator():
                     gt_traj_3D.unsqueeze(0) if gt_traj_3D is not None else None,
                     gs_traj_3D.unsqueeze(0) if gs_traj_3D is not None else None,
                     gs_traj_2D_for_vis=gs_traj_2D_for_vis.unsqueeze(0) if self.visuals else None)
-
             # compute metrics from pips
             pips_metrics = compute_metrics(
                 self.h,
@@ -190,7 +189,8 @@ class TrajEvaluator():
                 pred_visibility=pred_visibility.squeeze(),
                 vis_traj=True if self.traj_len > 0 else False,
                 traj_len=self.traj_len )
-            
+        
+        self.params = copy.deepcopy(copied_params)    
         return metrics
     
     def best_x_idx(
@@ -315,17 +315,17 @@ class TrajEvaluator():
 
     def gauss_wise3D_track(self, search_fg_only, start_pixels, start_time, start_3D, do_3D=False, only_t0=True):
         first_occurance = self.params['timestep']
-        params_gs_traj_3D = copy.deepcopy(self.params)
         if search_fg_only:
-            fg_mask = (params_gs_traj_3D['bg'] < 0.5).squeeze()
+            fg_mask = (self.params['bg'] < 0.5).squeeze()
             first_occurance = first_occurance[fg_mask]
-            for k in params_gs_traj_3D.keys():
+            for k in self.params.keys():
                 try:
-                    params_gs_traj_3D[k] = params_gs_traj_3D[k][fg_mask]
+                    self.params[k] = self.params[k][fg_mask]
                 except:
-                    params_gs_traj_3D[k] = params_gs_traj_3D[k]
+                    self.params[k] = self.params[k]
 
         # only search gaussians inializaed at t=0
+        params_gs_traj_3D = copy.deepcopy(self.params)
         if only_t0:
             first = first_occurance==first_occurance.min().item()
         else:

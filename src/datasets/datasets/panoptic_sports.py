@@ -28,7 +28,7 @@ class PanopticSportsDataset(GradSLAMDataset):
         depth_type='Dynamic3DGaussians',
         embedding_dim: Optional[int] = 64,
         start_from_complete_pc=False,
-        do_transform=False,
+        do_transform=True, 
         novel_view_mode=None,
         online_depth=None,
         online_emb=None,

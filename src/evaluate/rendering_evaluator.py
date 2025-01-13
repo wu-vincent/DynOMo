@@ -28,6 +28,7 @@ class RenderingEvaluator():
         self.get_embeddings = get_embeddings
         self.config = config
         self.render_helper = render_helper
+        self.pca = None
 
     @staticmethod
     def save_pc(final_params_time, save_dir, time_idx, time_mask):
@@ -55,20 +56,19 @@ class RenderingEvaluator():
         if time_idx == num_frames - 1: 
             make_vid(save_dir)
 
-    @staticmethod
-    def save_pca_downscaled(features, save_dir, pca, time_idx, num_frames):
+    def save_pca_downscaled(self, features, save_dir, time_idx, num_frames):
         features = features.permute(1, 2, 0).detach().cpu().numpy()
         shape = features.shape
         if shape[2] != 3:
-            if pca is None:
-                pca = PCA(n_components=3)
-                pca.fit(features.reshape(-1, shape[2]))
-            features = pca.transform(
+            if self.pca is None:
+                self.pca = PCA(n_components=3)
+                self.pca.fit(features.reshape(-1, shape[2]))
+            features = self.pca.transform(
                 features.reshape(-1, shape[2]))
             features = features.reshape(
                 (shape[0], shape[1], 3))
-        vmax, vmin = features.max(), features.min()
-        normalized_features = np.clip((features - vmin) / (vmax - vmin + 1e-10), 0, 1)
+            self.vmax_emb, self.vmin_emb = features.max(), features.min()
+        normalized_features = np.clip((features - self.vmin_emb) / (self.vmax_emb - self.vmin_emb + 1e-10), 0, 1)
         normalized_features_colormap = (normalized_features * 255).astype(np.uint8)
         imageio.imwrite(os.path.join(save_dir, "gs_{:04d}.png".format(time_idx)), normalized_features_colormap)
         if time_idx == num_frames - 1: 
@@ -189,8 +189,8 @@ class RenderingEvaluator():
 
                 if self.viz_config['vis_all']:
                     # depth
-                    vmin = 0 if 'jono' in self.eval_dir or 'iphone' in self.eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                    vmax = 6 if 'jono' in self.eval_dir or 'iphone' in self.eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                    vmin = 0
+                    vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
                     self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, vmin, vmax, num_frames)
 
                 # bg
@@ -199,8 +199,8 @@ class RenderingEvaluator():
 
                 # embeddings
                 if rendered_embeddings is not None and self.viz_config['vis_all']:
-                    self.save_pca_downscaled(rendered_embeddings, dir_names['render_emb_dir'], pca, time_idx, num_frames)
-                    self.save_pca_downscaled(curr_data['embeddings'], dir_names['render_emb_gt_dir'], pca, time_idx, num_frames)
+                    self.save_pca_downscaled(rendered_embeddings, dir_names['render_emb_dir'], time_idx, num_frames)
+                    self.save_pca_downscaled(curr_data['embeddings'], dir_names['render_emb_gt_dir'], time_idx, num_frames)
 
                 # if self.viz_config['vis_all']:
                 #     # silouette
@@ -210,8 +210,8 @@ class RenderingEvaluator():
                     # Save GT RGB and Depth
                     self.save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames)
                     # depth
-                    vmin = 0 if 'jono' in self.eval_dir or 'iphone' in self.eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                    vmax = 6 if 'jono' in self.eval_dir or 'iphone' in self.eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                    vmin = 0
+                    vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
                     self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, vmin, vmax, num_frames)
                     # instseg
                     self.save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
@@ -265,14 +265,12 @@ class RenderingEvaluator():
     def eval_during(
             self,
             curr_data,
-            curr_params,
             time_idx,
             im,
             rastered_depth,
             rastered_sil,
             rastered_bg,
             rendered_embeddings,
-            rastered_inst,
             pca=None,
             num_frames=-1):
 
@@ -308,8 +306,8 @@ class RenderingEvaluator():
 
             if self.viz_config['vis_all']:
                 # depth
-                vmin = 0 if 'jono' in self.eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                vmax = 6 if 'jono' in self.eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                vmin = 0
+                vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
                 self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, vmin, vmax, num_frames)
 
             # bg
@@ -318,26 +316,24 @@ class RenderingEvaluator():
 
             # embeddings
             if rendered_embeddings is not None and self.viz_config['vis_all']:
-                self.save_pca_downscaled(rendered_embeddings, dir_names['render_emb_dir'], pca, time_idx, num_frames)
-                self.save_pca_downscaled(curr_data['embeddings'], dir_names['render_emb_gt_dir'], pca, time_idx, num_frames)
+                self.save_pca_downscaled(rendered_embeddings, dir_names['render_emb_dir'], time_idx, num_frames)
+                self.save_pca_downscaled(curr_data['embeddings'], dir_names['render_emb_gt_dir'], time_idx, num_frames)
 
             if self.viz_config['vis_gt']:
                 # Save GT RGB and Depth
                 self.save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames=num_frames)
                 # depth
-                vmin = 0 if 'jono' in self.eval_dir else min(curr_data['depth'].min().item(), rastered_depth.min().item())
-                vmax = 6 if 'jono' in self.eval_dir else max(curr_data['depth'].max().item(), rastered_depth.max().item()) + 1e-10
+                vmin = 0
+                vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
                 self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, vmin, vmax, num_frames=num_frames)
                 # instseg
                 self.save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
                 # bg 
                 self.save_normalized(curr_data['bg'].float(), dir_names['bg_dir'], time_idx, num_frames=num_frames)
 
-        self.psnr_list.append(psnr)
-        self.rmse_list.append(rmse)
-        self.l1_list.append(depth_l1)
-        self.ssim_list.append(ssim)
+        self.psnr_list.append(psnr.cpu().numpy())
+        self.rmse_list.append(rmse.cpu().numpy())
+        self.l1_list.append(depth_l1.cpu().numpy())
+        self.ssim_list.append(ssim.cpu().numpy())
         self.lpips_list.append(lpips_score)
-        return pca
-
 

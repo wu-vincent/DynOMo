@@ -46,6 +46,8 @@ SEQEUNCE_DICT = {
         'haru-sit',
         'mochi-high-five',
         'paper-windmill',
+        'pillow',
+        'spin',
         'sriracha-tree',
         'teddy'
     ]

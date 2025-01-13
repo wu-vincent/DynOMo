@@ -177,44 +177,44 @@ def run_splatam(args):
     tracking_iters = seq_experiment.config['tracking_obj']['num_iters']
     tracking_iters_init = seq_experiment.config['tracking_obj']['num_iters_init']
     tracking_iters_cam = seq_experiment.config['tracking_cam']['num_iters']
+    
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
-    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
 
-    seq_experiment.config['run_name'] = run_name
-    seq_experiment.config['data']['sequence'] = seq
-    seq_experiment.config['wandb']['name'] = run_name
-    seq_experiment.config['just_eval'] = experiment_args['just_eval']
-    seq_experiment.config['data']['online_depth'] = experiment_args['online_depth']
-    seq_experiment.config['data']['online_emb'] = experiment_args['online_emb']
-    seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
-
-    seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs']
-    seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid']
-    seq_experiment.config['viz']['vis_all'] = experiment_args['vis_all']
-    seq_experiment.config['viz']['vis_gt'] = experiment_args['vis_gt']
+    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    # run_name = f"transformed_s2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    # run_name = f"s1_0.5wh_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    
+    seq_experiment.config['stride'] = 1
+    seq_experiment.config['prune_densify']['use_gaussian_splatting_densification'] = True
+    seq_experiment.config['eval_during'] = True
 
     # Set Experiment Seed
     seed_everything(seed=seq_experiment.config['seed'])
     
     # Create Results Directory and Copy Config
     results_dir = os.path.join(
-        seq_experiment.config["workdir"], seq_experiment.config["run_name"]
+        seq_experiment.config["workdir"], run_name
     )
-    if seq_experiment.config['just_eval']:
-        seq_experiment.config['checkpoint'] = True
 
-    dynomo = DynOMo(seq_experiment.config)
-
-    if seq_experiment.config['just_eval']:
+    if experiment_args['just_eval']:
         if not os.path.isfile(os.path.join(results_dir, 'params.npz')):
             print(f"Experiment not there {run_name}")
             return
+        with open(os.path.join(results_dir, 'config.json'), 'r') as f:
+            config = json.load(f)
 
+        config['primary_device'] = f"cuda:{gpu_id}"
+        config['just_eval'] = experiment_args['just_eval']
+        config['checkpoint'] = True
+
+        dynomo = DynOMo(config)
         dynomo.eval(
             experiment_args['novel_view_mode'],
             experiment_args['eval_renderings'],
-            experiment_args['eval_traj'],
+            experiment_args['eval_trajs'],
             experiment_args['vis_trajs'],
             experiment_args['vis_grid'],
             experiment_args['vis_fg_only'],
@@ -224,10 +224,26 @@ def run_splatam(args):
             )
 
     else:
-        print(os.path.join(results_dir, 'params.npz'))
         if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
             print(f"Experiment already done {run_name}\n\n")
             return
+        else:
+            print(f"Doing experiment {run_name}\n\n")
+        # update config with args
+        seq_experiment.config['run_name'] = run_name
+        seq_experiment.config['data']['sequence'] = seq
+        seq_experiment.config['wandb']['name'] = run_name
+        seq_experiment.config['just_eval'] = experiment_args['just_eval']
+        seq_experiment.config['data']['online_depth'] = experiment_args['online_depth']
+        seq_experiment.config['data']['online_emb'] = experiment_args['online_emb']
+        seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
+
+        seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs']
+        seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid']
+        seq_experiment.config['viz']['vis_all'] = experiment_args['vis_all']
+        seq_experiment.config['viz']['vis_gt'] = experiment_args['vis_gt']
+
+        dynomo = DynOMo(seq_experiment.config)
         os.makedirs(results_dir, exist_ok=True)
         with open(os.path.join(results_dir, 'config.json'), 'w') as f:
             json.dump(seq_experiment.config, f)
@@ -238,11 +254,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str, help="Path to experiment file")
     parser.add_argument("--just_eval", action="store_true", help="if only eval")
-    parser.add_argument("--not_eval_renderings", action="store_true", help="if eval renderings")
-    parser.add_argument("--not_eval_traj", action="store_true", help="if eval traj")
-    parser.add_argument("--vis_trajs", action="store_false", help="if vis evaluation grids")
-    parser.add_argument("--vis_grid", action="store_false", help="if vis grid")
-    parser.add_argument("--vis_bg_and_fg", action="store_true", help="if only vis fg")
+    parser.add_argument("--not_eval_renderings", action="store_false", help="if eval renderings")
+    parser.add_argument("--not_eval_trajs", action="store_false", help="if eval traj")
+    parser.add_argument("--not_vis_trajs", action="store_false", help="if vis evaluation grids")
+    parser.add_argument("--not_vis_grid", action="store_false", help="if vis grid")
+    parser.add_argument("--vis_bg_and_fg", action="store_false", help="if only vis fg")
     parser.add_argument("--vis_gt", action="store_true", help="ground truth also")
     parser.add_argument("--vis_all", action="store_true", help="if visualizing all renderings")
     parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
@@ -270,11 +286,11 @@ if __name__ == "__main__":
     experiment_args = dict(
         just_eval = experiment.config['just_eval'],
         novel_view_mode=args.novel_view_mode,
-        eval_renderings=not args.not_eval_renderings,
-        vis_trajs=args.vis_trajs,
-        eval_traj=not args.not_eval_traj,
-        vis_grid=args.vis_grid,
-        vis_fg_only=not args.vis_bg_and_fg,
+        eval_renderings=args.not_eval_renderings,
+        vis_trajs=args.not_vis_trajs,
+        eval_trajs=args.not_eval_trajs,
+        vis_grid=args.not_vis_grid,
+        vis_fg_only=args.vis_bg_and_fg,
         vis_gt=args.vis_gt,
         vis_all=args.vis_all,
         best_x=args.best_x,
@@ -305,7 +321,12 @@ if __name__ == "__main__":
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
 
-    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    # run_name = f"transformed_s2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    # run_name = f"s1_0.5wh_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    
     alpha_add = '' if not args.alpha_traj else '_alpha_traj'
     best_add = '' if args.best_x == 1 else f'_{args.best_x}'
     if 'panoptic_sport' not in args.experiment:
@@ -319,7 +340,13 @@ if __name__ == "__main__":
 
     summary_short = None
     summary_long = None
-    columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
+    if 'davis' in args.experiment:
+        columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
+    elif 'panoptic_sport' in args.experiment:
+        columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'd_avg_3D', 'survival_3D', 'median_l2_3D', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
+    else:
+        columns = ["AJ", "APCK", "occ_acc", "epe", "pck_3d_50cm", "pck_3d_10cm", "pck_3d_5cm", 'FPS', 'duration [min]']
+    print(result_files)
     for f in glob.glob(result_files):
         with open(f, 'r') as jf:
             metrics = json.load(jf)
@@ -333,25 +360,18 @@ if __name__ == "__main__":
         metrics['duration [min]']  = params['overall_duration'].item() / 60
 
         if summary_short is None:
-            if 'iphone' not in args.experiment:
-                summary_short = pd.DataFrame(columns=columns)
-                summary_long = pd.DataFrame(columns=list(metrics.keys()))
-            else:
-                summary_short = pd.DataFrame(columns=list(metrics.keys()))
-                
-        if 'iphone' not in args.experiment:
-            summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
-            summary_long.loc[seq] = metrics
-        else:
-            summary_short.loc[seq] = metrics
+            summary_short = pd.DataFrame(columns=columns)
+            summary_long = pd.DataFrame(columns=list(metrics.keys()))
+            
+        summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
+        summary_long.loc[seq] = metrics
 
     summary_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
     summary_short.loc['mean'] = summary_short.mean()
     summary_short.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}.json"))
     print(f"METRICS: \n {summary_short}")
 
-    if 'iphone' not in args.experiment:
-        summary_long.loc['mean'] = summary_long.mean()
-        summary_long.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}_long.json"))
+    summary_long.loc['mean'] = summary_long.mean()
+    summary_long.to_json(os.path.join(experiment.config["workdir"], run_name, f"{summary_name}{best_add}{alpha_add}_long.json"))
 
 

@@ -9,7 +9,7 @@ scene_name = scenes[0]
 
 tracking_iters = 200
 tracking_iters_init = 200
-tracking_iters_cam = 200
+tracking_iters_cam = 0
 num_frames = -1
 
 group_name = "dynosplatam_iphone"
@@ -33,7 +33,7 @@ config = dict(
     dist_to_use='embeddings', # 'rgb', 'dinov2', 'l2'
     eval_during=False,
     early_stop=True,
-    stride=2,
+    stride=1,
     kNN=20,
     gt_w2c=False,
     wandb=dict(
@@ -48,11 +48,10 @@ config = dict(
         basedir="/data3/jseidens/iphone",
         gradslam_data_cfg="./configs/data/iphone.yaml",
         sequence=scene_name,
-        desired_image_height=1.0, #480,
-        desired_image_width=1.0, #910,
+        desired_image_height=0.5, #480,
+        desired_image_width=0.5, #910,
         start=0,
         end=num_frames,
-        stride=1,
         num_frames=num_frames,
         load_embeddings=True,
         embedding_dim=32,
@@ -175,7 +174,7 @@ config = dict(
         ),
     ),
     viz=dict(
-        vis_grid=True,
+        vis_grid=False,
         vis_trajs=False,
         vis_tracked=True,
         save_pc=False,

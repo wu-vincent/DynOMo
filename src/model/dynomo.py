@@ -89,9 +89,6 @@ class DynOMo():
         else:
             self.wandb_run = None
         self.logger = Logger(self.config, self.wandb_run, self.eval_dir)
-        
-        # initalize eval lists
-        self.eval_pca = None
 
     def get_loss_cam(self,
                       curr_data,
@@ -216,18 +213,14 @@ class DynOMo():
         weighted_losses['loss'] = loss
     
         if (iter == num_iters - 1 or early_stop_eval or last) and self.config['eval_during']:
-            self.eval_pca = self.rendering_evaluator.eval_during(
+            self.rendering_evaluator.eval_during(
                 curr_data,
-                self.scene.params,
                 iter_time_idx,
-                self.eval_dir,
                 im=im.detach().clone(),
                 rastered_depth=depth.detach().clone(),
                 rastered_sil=mask.detach().clone(),
                 rastered_bg=bg.detach().clone(),
                 rendered_embeddings=embeddings.detach().clone() if embeddings is not None else embeddings,
-                pca=self.eval_pca,
-                viz_config=self.config['viz'],
                 num_frames=self.num_frames)
 
         return loss, weighted_losses, visible, weight
@@ -481,7 +474,9 @@ class DynOMo():
             queries_first_t=False if 'iphone' in self.eval_dir else True,
             traj_len=traj_len,
             best_x=best_x,
-            get_gauss_wise3D_track=not alpha_traj)
+            get_gauss_wise3D_track=not alpha_traj,
+            vis_thresh=0.5 if self.config['stride'] == 2 else 0.1,
+            vis_thresh_start=0.5 if self.config['stride'] == 2 else 0.1)
         
         if eval_traj:
             alpha_add = '' if not alpha_traj else '_alpha_traj'
@@ -578,7 +573,7 @@ class DynOMo():
 
         # eval renderings, traj and grid vis
         metrics = self._eval(
-            eval_renderings=not self.config['eval_during'],
+            eval_renderings=not self.config['eval_during'] and not 'iphone' in self.config['data']['basedir'],
             vis_trajs=self.config['viz']['vis_trajs'],
             vis_grid=self.config['viz']['vis_grid'],
             vis_fg_only=self.config['viz']['vis_fg_only'])
@@ -705,29 +700,28 @@ class DynOMo():
                     obj_tracking=True)
 
             with torch.no_grad():
+                self.scene.variables['means2D_grad'] = self.scene.variables['means2D'].grad
                 # Prune Gaussians
                 if self.config['prune_densify']['prune_gaussians'] and time_idx > 0:
-                    self.scene.params, self.scene.variables, means2d = prune_gaussians(
+                    self.scene.params, self.scene.variables = prune_gaussians(
                         self.scene.params,
                         self.scene.variables,
                         optimizer, 
                         iter,
                         self.config['prune_densify']['pruning_dict'],
-                        time_idx,
-                        means2d)
+                        time_idx)
                     if self.config['use_wandb']:
                         self.wandb_run.log({"Tracking Object/Number of Gaussians - Pruning": self.scene.params['means3D'].shape[0],
                                         "Mapping/step": self.wandb_mapping_step})
                 # Gaussian-Splatting's Gradient-based Densification
-                if self.config['prune_densify']['use_gaussian_splatting_densification']:
-                    self.scene.params, self.scene.variables, means2d = densify(
+                if self.config['prune_densify']['use_gaussian_splatting_densification'] and time_idx > 0:
+                    self.scene.params, self.scene.variables = densify(
                         self.scene.params,
                         self.scene.variables,
                         optimizer,
                         iter,
                         self.config['prune_densify']['densify_dict'],
-                        time_idx,
-                        means2d)
+                        time_idx)
                     if self.config['use_wandb']:
                         self.wandb_run.log({"Tracking Object/Number of Gaussians - Densification": self.scene.params['means3D'].shape[0],
                                         "Tracking Object/step": self.wandb_mapping_step})

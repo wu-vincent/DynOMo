@@ -470,10 +470,10 @@ class GaussianScene():
     def ema_update_all_prev(self):
         for key in ['prev_bg', 'prev_embeddings', 'prev_rgb_colors', 'prev_log_scales', 'prev_logit_opacities']:
             try:
-                self.variables[key] = self.ema_update(key, key[5:])
+                self.variables[key] = self.ema_update(key, key[5:]).detach().clone()
             except:
                 if key != 'prev_embeddings' or 'embeddings' in self.params.keys():
-                    self.variables[key] = self.params[key[5:]]
+                    self.variables[key] = self.params[key[5:]].detach().clone()
 
     def ema_update(self, key, prev_key):
         return (1-self.config['ema']) * self.params[key].detach().clone() \

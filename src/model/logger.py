@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import torch
 
 
 class Logger():
@@ -37,7 +38,10 @@ class Logger():
 
     @staticmethod
     def numpy_and_save(save_path, input_list):
-        input_list = np.array(input_list)
+        if type(input_list) == list:
+            input_list = np.array(input_list)
+        elif type(input_list) == torch.Tensor:
+            input_list = input_list.cpu().numpy()
         np.savetxt(save_path, input_list)
         return input_list
     
