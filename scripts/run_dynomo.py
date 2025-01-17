@@ -176,18 +176,9 @@ def run_splatam(args):
     tracking_iters = seq_experiment.config['tracking_obj']['num_iters']
     tracking_iters_init = seq_experiment.config['tracking_obj']['num_iters_init']
     tracking_iters_cam = seq_experiment.config['tracking_cam']['num_iters']
-    
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
-
-    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
-    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
-    run_name = f"transformed_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
-    run_name = f"s1_0.5wh_v2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
-    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
-    
-    # seq_experiment.config['stride'] = 1
-    # seq_experiment.config['prune_densify']['use_gaussian_splatting_densification'] = True
+    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
 
     # Set Experiment Seed
     seed_everything(seed=seq_experiment.config['seed'])
@@ -197,21 +188,18 @@ def run_splatam(args):
         seq_experiment.config["workdir"], run_name
     )
 
+    # if just re-evaluation and not optimization
     if experiment_args['just_eval']:
+        # check if experiment done
         if not os.path.isfile(os.path.join(results_dir, 'params.npz')):
             print(f"Experiment not there {run_name}")
             return
         else:
             print(f"Evaluating experiment {run_name}")
+
+        # load config and update GPU and vis params
         with open(os.path.join(results_dir, 'config.json'), 'r') as f:
             config = json.load(f)
-        
-        config['run_name'] = run_name
-        config['wandb']['name'] = run_name
-        config['data']['sequence'] = seq
-
-        with open(os.path.join(results_dir, 'config.json'), 'w') as f:
-            json.dump(seq_experiment.config, f)
 
         config['primary_device'] = f"cuda:{gpu_id}"
         config['just_eval'] = experiment_args['just_eval']
@@ -219,6 +207,7 @@ def run_splatam(args):
         config['viz']['vis_all'] = experiment_args['vis_all']
         config['viz']['vis_gt'] = experiment_args['vis_gt']
 
+        # infialize dynomo and run
         dynomo = DynOMo(config)
         dynomo.eval(
             experiment_args['novel_view_mode'],
@@ -233,29 +222,39 @@ def run_splatam(args):
             )
 
     else:
+        # if final parameters exist, experiment is already done
         if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
             print(f"Experiment already done {run_name}")
             return
         else:
             print(f"Doing experiment {run_name}")
-        # update config with args
-        seq_experiment.config['run_name'] = run_name
-        seq_experiment.config['data']['sequence'] = seq
-        seq_experiment.config['wandb']['name'] = run_name
-        seq_experiment.config['just_eval'] = experiment_args['just_eval']
-        seq_experiment.config['data']['online_depth'] = experiment_args['online_depth']
-        seq_experiment.config['data']['online_emb'] = experiment_args['online_emb']
-        seq_experiment.config['primary_device'] = f"cuda:{gpu_id}"
+        
+        # if experiment has been started before, take existing config
+        if os.path.isfile(os.path.join(results_dir, 'config.json')):
+            with open(os.path.join(results_dir, 'config.json'), 'r') as f:
+                config = json.load(f)
+        else:
+            # update config with args and store 
+            config = seq_experiment.config
+            config['run_name'] = run_name
+            config['data']['sequence'] = seq
+            config['wandb']['name'] = run_name
+            config['data']['online_depth'] = experiment_args['online_depth']
+            config['data']['online_emb'] = experiment_args['online_emb']
 
-        seq_experiment.config['viz']['vis_trajs'] = experiment_args['vis_trajs']
-        seq_experiment.config['viz']['vis_grid'] = experiment_args['vis_grid']
-        seq_experiment.config['viz']['vis_all'] = experiment_args['vis_all']
-        seq_experiment.config['viz']['vis_gt'] = experiment_args['vis_gt']
+            os.makedirs(results_dir, exist_ok=True)
+            with open(os.path.join(results_dir, 'config.json'), 'w') as f:
+                json.dump(config, f)
 
-        dynomo = DynOMo(seq_experiment.config)
-        os.makedirs(results_dir, exist_ok=True)
-        with open(os.path.join(results_dir, 'config.json'), 'w') as f:
-            json.dump(seq_experiment.config, f)
+        # update to current GPU and vis params
+        config['primary_device'] = f"cuda:{gpu_id}"
+        config['viz']['vis_trajs'] = experiment_args['vis_trajs']
+        config['viz']['vis_grid'] = experiment_args['vis_grid']
+        config['viz']['vis_all'] = experiment_args['vis_all']
+        config['viz']['vis_gt'] = experiment_args['vis_gt']
+
+        # initialize dynomo and run
+        dynomo = DynOMo(config)
         dynomo.track()
 
 
@@ -283,6 +282,7 @@ if __name__ == "__main__":
     # parse args
     args = parser.parse_args()
 
+    # load config file and update args
     experiment = SourceFileLoader(
             os.path.basename(args.experiment), args.experiment
         ).load_module()
@@ -295,6 +295,7 @@ if __name__ == "__main__":
     if args.just_eval or args.novel_view_mode is not None:
         experiment.config['just_eval'] = True
 
+    # make args dict for mutliprocessing
     experiment_args = dict(
         just_eval = experiment.config['just_eval'],
         novel_view_mode=args.novel_view_mode,
@@ -311,7 +312,8 @@ if __name__ == "__main__":
         online_emb=args.online_emb,
         traj_len=args.traj_len
         )
-        
+    
+    # prepare multiprocessing inputs
     configs_to_paralellize = list()
     sequences = list([args.sequence]) if args.sequence is not None else SEQEUNCE_DICT[experiment.config['data']['name']]
     for seq in sequences:
@@ -320,25 +322,25 @@ if __name__ == "__main__":
     gpus = [int(g[0]) for g in args.gpus[0] if g != ',']
     n_ranks = len(gpus)
 
+    # multiprocess files
     gpu_map(
         run_splatam,
         configs_to_paralellize,
         n_ranks=n_ranks,
         gpus=gpus,
         method='static')
-
+    
+    # make summary dataframe and store to csv file
+    # get run name
     tracking_iters = experiment.config['tracking_obj']['num_iters']
     tracking_iters_init = experiment.config['tracking_obj']['num_iters_init']
     tracking_iters_cam = experiment.config['tracking_cam']['num_iters']
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
-
-    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
-    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
-    run_name = f"transformed_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     run_name = f"s1_0.5wh_v2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
-    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     
+    # get all evaluation files
     alpha_add = '' if not args.alpha_traj else '_alpha_traj'
     best_add = '' if args.best_x == 1 else f'_{args.best_x}'
     if 'panoptic_sport' not in args.experiment:
@@ -350,6 +352,7 @@ if __name__ == "__main__":
             experiment.config["workdir"], run_name, "*/*/*", f"eval/traj_metrics{best_add}{alpha_add}.json"
         )
 
+    # summarize all results in dataframe
     summary_short = None
     summary_long = None
     if 'davis' in args.experiment:
