@@ -14,7 +14,7 @@
     ·
     <a href="https://research.nvidia.com/labs/dvl/author/laura-leal-taixe/"><strong>Laura Leal-Taixe</strong></a>
   </p>
-  <h3 align="center"><a href="https://arxiv.org/abs/2409.02104">Paper</a> | <a href="https://github.com/JennySeidenschwarz/DynOMo.github.io">Project Page</a></h3>
+  <h3 align="center"><a href="https://arxiv.org/abs/2409.02104">Paper</a> | <a href="DynOMo.github.io">Project Page</a></h3>
   <div align="center"></div>
 </p>
 
