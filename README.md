@@ -19,9 +19,11 @@
 </p>
 
 <p align="center">
-  <video class="lazy" autoplay controls muted loop playsinline poster="assets/front.png">
-    <source data-src="assets/combo_tracks.mp4" type="video/mp4"></video>
+  <a href="">
+    <img src="./assets/combo_tracks.gif" alt="Logo" width="100%">
+  </a>
 </p>
+
 
 <br>
 
