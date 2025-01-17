@@ -23,7 +23,7 @@
     <source data-src="assets/combo_tracks.mp4" type="video/mp4"></video>
 </p>
 
-
+[![Sehen Sie sich das Video an](assets/front.png)](assets/combo_tracks.mp)
 
 <br>
 
