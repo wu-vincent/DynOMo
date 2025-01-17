@@ -29,6 +29,13 @@ class RenderingEvaluator():
         self.config = config
         self.render_helper = render_helper
         self.pca = None
+        self.vmin_depth = 0
+        if 'panoptic' in self.eval_dir:
+            self.vmax_depth = 20
+        elif'iphone' in self.eval_dir:
+            self.vmax_depth = 10
+        else:
+            self.vmax_depth = 80
 
     @staticmethod
     def save_pc(final_params_time, save_dir, time_idx, time_mask):
@@ -189,9 +196,7 @@ class RenderingEvaluator():
 
                 if self.viz_config['vis_all']:
                     # depth
-                    vmin = 0
-                    vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
-                    self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, vmin, vmax, num_frames)
+                    self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, self.vmin_depth, self.vmax_depth, num_frames)
 
                 # bg
                 if self.viz_config['vis_all']:
@@ -210,9 +215,7 @@ class RenderingEvaluator():
                     # Save GT RGB and Depth
                     self.save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames)
                     # depth
-                    vmin = 0
-                    vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
-                    self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, vmin, vmax, num_frames)
+                    self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, self.vmin_depth, self.vmax_depth, num_frames)
                     # instseg
                     self.save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
                     # bg 
@@ -306,9 +309,7 @@ class RenderingEvaluator():
 
             if self.viz_config['vis_all']:
                 # depth
-                vmin = 0
-                vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
-                self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, vmin, vmax, num_frames)
+                self.save_normalized(rastered_depth.detach(), dir_names['render_depth_dir'], time_idx, self.vmin_depth, self.vmax_depth, num_frames)
 
             # bg
             if self.viz_config['vis_all']:
@@ -323,9 +324,7 @@ class RenderingEvaluator():
                 # Save GT RGB and Depth
                 self.save_rgb(curr_data['im'], dir_names['rgb_dir'], time_idx, num_frames=num_frames)
                 # depth
-                vmin = 0
-                vmax = 20 if 'panoptic' in self.eval_dir or 'iphone' in self.eval_dir else 80
-                self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, vmin, vmax, num_frames=num_frames)
+                self.save_normalized(curr_data['depth'], dir_names['depth_dir'], time_idx, self.vmin_depth, self.vmax_depth, num_frames=num_frames)
                 # instseg
                 self.save_normalized(curr_data['instseg'], dir_names['instseg_dir'], time_idx, num_frames=num_frames)                
                 # bg 

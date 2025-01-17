@@ -105,8 +105,6 @@ def get_depth_model(model, name, device):
         model_dir = f'Depth-Anything-V2/metric_depth/checkpoints'
         if not os.path.isfile(f"{model_dir}/{model_name}"):
             import subprocess
-            print(os.getcwd())
-            print(f"wget {url}; mkdir {model_dir}; mv {model_name} {model_dir}/",)
             subprocess.run(
                 f"wget {url}; mkdir {model_dir}; mv {model_name} {model_dir}/",
                 shell=True
@@ -294,7 +292,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.transformed_poses = self._preprocess_poses(self.poses)
         else:
             self.transformed_poses = self.poses
-        
+
         if self.online_depth is not None:
             self.depth_model, self.depth_transform = get_depth_model(
                 self.online_depth,

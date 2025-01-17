@@ -169,7 +169,7 @@ def physics_based_losses(
     return losses, offset_0
 
 
-def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, bg=None, load_embeddings=False, iter_time_idx=0, scene=None, device="cuda:0"):
+def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, bg=None, load_embeddings=False, iter_time_idx=0, scene=None, device="cuda:0", l2_emb=True):
     # RGB Loss
     if not config['calc_ssmi']:
         losses['im'] = l1_loss_v1(
@@ -196,8 +196,9 @@ def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, 
             curr_data['embeddings'], p=2, dim=0)
         embeddings = torch.nn.functional.normalize(
             embeddings, p=2, dim=0)
-
-        losses['embeddings'] = l2_loss_v2(
+        
+        loss_fn = l2_loss_v2 if l2_emb else l1_loss_v1
+        losses['embeddings'] = loss_fn(
             embeddings_gt.permute(1, 2, 0),
             embeddings.permute(1, 2, 0),
             mask.squeeze(),

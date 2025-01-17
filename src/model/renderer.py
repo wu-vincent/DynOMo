@@ -8,6 +8,8 @@ from utils.gaussian_utils import quat_mult
 
 
 class RenderHelper():
+    def __init__(self, device="cuda:0"):
+        self.device = device
 
     def mask_timestamp(
             self,
@@ -187,15 +189,14 @@ class RenderHelper():
             'means3D': transformed_gaussians['means3D'],
             'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
             'opacities': torch.sigmoid(params['logit_opacities']),
-            'scales': torch.exp(log_scales),
+            'scales': torch.exp(log_scales).float(),
             'means2D': torch.zeros_like(transformed_gaussians['means3D'], requires_grad=True, device=params['means3D'].device) + 0
         } 
         rendervar, time_mask =  self.mask_timestamp(rendervar, iter_time_idx, variables['timestep'])
-        
         if get_rgb:
             # RGB Rendering
             rgb = params['rgb_colors'] if len(params['rgb_colors'].shape) == 2 else params['rgb_colors'][:, :, iter_time_idx]
-            rendervar['colors_precomp'] = rgb[time_mask]
+            rendervar['colors_precomp'] = rgb[time_mask].float()
             if not disable_grads and not last:
                 rendervar['means2D'].retain_grad()
             im, radius, _, weight, visible = Renderer(raster_settings=data['cam'])(**rendervar) 

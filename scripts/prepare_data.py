@@ -3,7 +3,7 @@ import subprocess
 import os
 
 
-def download_davis(download, embeddings, depth):
+def download_davis(download, embeddings, depth, embedding_model, depth_model):
     # DAVIS DATA
     # download data
     if download:
@@ -14,7 +14,7 @@ def download_davis(download, embeddings, depth):
         )
 
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/davis/dynomo_davis.py --base_path {os.getcwd()}/data/DAVIS/JPEGImages/480p/ --save_dir {os.getcwd()}/data/DAVIS/Feats/480p/"
+        command = f"python preprocess/get_dino_prediction.py configs/davis/dynomo_davis.py --base_path {os.getcwd()}/data/DAVIS/JPEGImages/480p/ --save_dir {os.getcwd()}/data/DAVIS/Feats/480p/ --model {embedding_model}"
         subprocess.run(
             command,
             shell=True
@@ -26,7 +26,7 @@ def download_davis(download, embeddings, depth):
             shell=True
         )
 
-def download_panoptic(download, embeddings, depth):
+def download_panoptic(download, embeddings, depth, embedding_model, depth_model):
     # PANOPTIC SPORT
     # download data
     if download:
@@ -37,7 +37,7 @@ def download_panoptic(download, embeddings, depth):
         )
 
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/panoptic_sports/dynomo_panoptic_sports.py --base_path {os.getcwd()}/data/panoptic_sport/  --save_dir {os.getcwd()}/data/panoptic_sport/"
+        command = f"python preprocess/get_dino_prediction.py configs/panoptic_sports/dynomo_panoptic_sports.py --base_path {os.getcwd()}/data/panoptic_sport/  --save_dir {os.getcwd()}/data/panoptic_sport/ --model {embedding_model}"
         subprocess.run(
             command,
             shell=True
@@ -49,7 +49,7 @@ def download_panoptic(download, embeddings, depth):
             shell=True
         )
 
-def download_iphone(download, embeddings, depth):
+def download_iphone(download, embeddings, depth, embedding_model, depth_model):
     # IPHONE DATASET
     # download data from som https://drive.google.com/drive/folders/1xJaFS_3027crk7u36cue7BseAX80abRe
     if download:
@@ -76,7 +76,14 @@ def download_iphone(download, embeddings, depth):
             )
     
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/iphone/dynomo_iphone.py --base_path {os.getcwd()}/data/iphone/  --save_dir {os.getcwd()}/data/iphone/"
+        command = f"python preprocess/get_dino_prediction.py configs/iphone/dynomo_iphone.py --base_path {os.getcwd()}/data/iphone/  --save_dir {os.getcwd()}/data/iphone/ --model {embedding_model}"
+        subprocess.run(
+            command,
+            shell=True
+        )
+    
+    if depth:
+        command = f'python preprocess/get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::{os.getcwd()}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path {os.getcwd()}/data/iphone/ --save_dir {os.getcwd()}/data/iphone/'
         subprocess.run(
             command,
             shell=True
@@ -85,11 +92,12 @@ def download_iphone(download, embeddings, depth):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["davis", "panoptic_sport", "iphone"], help="If downloading davis.")
+    parser.add_argument("dataset", type=str, choices=["davis", "panoptic_sport", "iphone"], help="Which dataset to use.")
     parser.add_argument("--download", action="store_true", help="If download needed.")
     parser.add_argument("--embeddings", action="store_true", help="If precompute embeddings.")
+    parser.add_argument("--embedding_model", type=str, default="dinov2_vits14_reg", choices=["dinov2_vits14_reg", "dinov2_vits14"],  help='Which dino version to use.')
     parser.add_argument("--depths", action="store_true", help="If precompute depth.")
-    parser.add_argument("--depth_model", default='DepthAnything', choices=["DepthAnything", "DepthAnythingV2-vitl"], help="Which Depth Model.")
+    parser.add_argument("--depth_model", type=str, default='DepthAnything', choices=["DepthAnything", "DepthAnythingV2-vitl"], help="Which Depth Model.")
     return parser.parse_args()
 
 
@@ -97,9 +105,9 @@ if __name__ == "__main__":
     args = parse_args()
 
     if args.dataset == "davis":
-        download_davis(args.download, args.embeddings, args.depths)
+        download_davis(args.download, args.embeddings, args.depths, args.embedding_model, args.depth_model)
     if args.dataset == "panoptic_sport":
-        download_panoptic(args.download, args.embeddings, args.depths)
+        download_panoptic(args.download, args.embeddings, args.depths, args.embedding_model, args.depth_model)
     if args.dataset == "iphone":
-        download_iphone(args.download, args.embeddings, args.depths)
+        download_iphone(args.download, args.embeddings, args.depths, args.embedding_model, args.depth_model)
     

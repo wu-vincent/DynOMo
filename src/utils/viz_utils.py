@@ -92,7 +92,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
         (dataset.transformed_poses.shape[0], 1, 1)).to(device)
     if novel_view_mode == 'circle' or novel_view_mode == 'zoom_out':
         # params['means3D'] = (N, T, 3)
-        avg_w2c = torch.linalg.inv(train_c2ws[0])
+        avg_w2c = params['w2c'] @ torch.linalg.inv(train_c2ws[0])
 
         # zoom out a bit
         scene_center = params['means3D'][:, :, :].reshape(-1, 3).mean(dim=0)
@@ -100,9 +100,10 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
         if avg_w2c.sum() == 4:
             if 'DAVIS' in config['data']['basedir']:
                 lookat = torch.tensor([0, 0, -2]).to(device)
+            elif 'iphone' in config['data']['basedir']:
+                lookat = torch.tensor([0, 0, -0.2]).to(device)
             else:
                 lookat = torch.tensor([0, 0, -0.2]).to(device)
-
         avg_w2c[:3, -1] -= 1 * lookat
         rads = 0 if novel_view_mode == 'zoom_out' else 0.1
         w2cs = get_circle(num_frames, device, avg_w2c, rads=rads, rots=3)
@@ -204,7 +205,7 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
             if traj_len > 0:
                 cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
             else:
-                cv2.circle(img_curr, p1, 5, color, -1, lineType=16)
+                cv2.circle(img_curr, p1, 3, color, -1, lineType=16)
 
 
         frames.append(img_curr.astype(np.uint8))

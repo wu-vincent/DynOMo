@@ -28,7 +28,6 @@ class PanopticSportsDataset(GradSLAMDataset):
         depth_type='Dynamic3DGaussians',
         embedding_dim: Optional[int] = 64,
         start_from_complete_pc=False,
-        do_transform=True, 
         novel_view_mode=None,
         online_depth=None,
         online_emb=None,
@@ -42,7 +41,6 @@ class PanopticSportsDataset(GradSLAMDataset):
         
         self.sequence = sequence
         self.pose_path = os.path.join(self.input_folder, "traj.txt")
-        self.do_transform = do_transform
         self.novel_view_mode = novel_view_mode
 
         super().__init__(config_dict,
@@ -111,16 +109,13 @@ class PanopticSportsDataset(GradSLAMDataset):
         return color_paths, depth_paths, embedding_paths, bg_paths, instseg_paths
             
     def load_poses(self):
-        if self.do_transform:
-            basedir = os.path.dirname(os.path.dirname(self.input_folder))
-            cam_id = int(os.path.basename(self.input_folder))
-            with open(f'{basedir}/meta.json', 'r') as jf:
-                data = json.load(jf)
-            idx = data['cam_id'][0].index(cam_id)
-            w2c = torch.tensor(data['w2c'][0][idx])
-            c2w = torch.linalg.inv(w2c)
-        else:
-            c2w = torch.eye(4).float()
+        basedir = os.path.dirname(os.path.dirname(self.input_folder))
+        cam_id = int(os.path.basename(self.input_folder))
+        with open(f'{basedir}/meta.json', 'r') as jf:
+            data = json.load(jf)
+        idx = data['cam_id'][0].index(cam_id)
+        w2c = torch.tensor(data['w2c'][0][idx])
+        c2w = torch.linalg.inv(w2c)
     
         poses = []
         for i in range(self.num_imgs):

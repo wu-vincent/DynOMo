@@ -133,6 +133,7 @@ class GaussianScene():
         num_pts = init_pt_cld.shape[0]
 
         logit_opacities = torch.ones((num_pts, 1), dtype=torch.float, device=self.device)
+
         if gaussian_distribution == "isotropic":
             log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
         elif gaussian_distribution == "anisotropic":
@@ -184,8 +185,8 @@ class GaussianScene():
             'visibility': torch.zeros(params['means3D'].shape[0], self.num_frames).to(self.device).float(),
             'rgb_colors': torch.zeros(params['means3D'].shape[0], 3, self.num_frames).to(self.device).float(),
             'log_scales': all_log_scales if gaussian_distribution == "isotropic" else torch.tile(all_log_scales[..., None], (1, 1, 3)).permute(0, 2, 1),
-            "means3D": means3D.cpu(),
-            "unnorm_rotations": unnorm_rotations.cpu()}
+            "means3D": means3D.cpu().float(),
+            "unnorm_rotations": unnorm_rotations.cpu().float()}
         
         self.params = params
         self.variables = variables

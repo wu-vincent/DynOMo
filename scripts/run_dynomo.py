@@ -169,7 +169,6 @@ def gpu_map_dynamic_helper(func, arg, it, gpu_id, result_queue, gpu_queue):
 
 def run_splatam(args):
     config_file, seq, experiment_args, gpu_id = args
-    print(f"Processing seq {seq}")
     seq_experiment = SourceFileLoader(
             os.path.basename(config_file), config_file
         ).load_module()
@@ -181,15 +180,14 @@ def run_splatam(args):
     online_depth = '' if experiment_args['online_depth'] is None else '_' + experiment_args['online_depth']
     online_emb = '' if experiment_args['online_emb'] is None else '_' + experiment_args['online_emb']
 
-    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
-    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
-    # run_name = f"transformed_s2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
-    # run_name = f"s1_0.5wh_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
-    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/splatam_{seq}"
+    run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
+    # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
+    run_name = f"transformed_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
+    run_name = f"s1_0.5wh_v2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
+    # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}/{seq}"
     
-    seq_experiment.config['stride'] = 1
-    seq_experiment.config['prune_densify']['use_gaussian_splatting_densification'] = True
-    seq_experiment.config['eval_during'] = True
+    # seq_experiment.config['stride'] = 1
+    # seq_experiment.config['prune_densify']['use_gaussian_splatting_densification'] = True
 
     # Set Experiment Seed
     seed_everything(seed=seq_experiment.config['seed'])
@@ -203,12 +201,23 @@ def run_splatam(args):
         if not os.path.isfile(os.path.join(results_dir, 'params.npz')):
             print(f"Experiment not there {run_name}")
             return
+        else:
+            print(f"Evaluating experiment {run_name}")
         with open(os.path.join(results_dir, 'config.json'), 'r') as f:
             config = json.load(f)
+        
+        config['run_name'] = run_name
+        config['wandb']['name'] = run_name
+        config['data']['sequence'] = seq
+
+        with open(os.path.join(results_dir, 'config.json'), 'w') as f:
+            json.dump(seq_experiment.config, f)
 
         config['primary_device'] = f"cuda:{gpu_id}"
         config['just_eval'] = experiment_args['just_eval']
         config['checkpoint'] = True
+        config['viz']['vis_all'] = experiment_args['vis_all']
+        config['viz']['vis_gt'] = experiment_args['vis_gt']
 
         dynomo = DynOMo(config)
         dynomo.eval(
@@ -225,10 +234,10 @@ def run_splatam(args):
 
     else:
         if os.path.isfile(os.path.join(results_dir, 'params.npz')): 
-            print(f"Experiment already done {run_name}\n\n")
+            print(f"Experiment already done {run_name}")
             return
         else:
-            print(f"Doing experiment {run_name}\n\n")
+            print(f"Doing experiment {run_name}")
         # update config with args
         seq_experiment.config['run_name'] = run_name
         seq_experiment.config['data']['sequence'] = seq
@@ -253,6 +262,12 @@ def run_splatam(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment", type=str, help="Path to experiment file")
+    # optimization flags
+    parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
+    parser.add_argument("--sequence", default=None, help="gpus to use")
+    parser.add_argument("--online_depth", default=None, choices=[None, 'DepthAnything', 'DepthAnythingV2-vitl'], help="if computing depth online")
+    parser.add_argument("--online_emb", default=None, choices=[None, 'dinov2_vits14', 'dinov2_vits14_reg'], help="if computing embeddings online")
+    # evaluation flags
     parser.add_argument("--just_eval", action="store_true", help="if only eval")
     parser.add_argument("--not_eval_renderings", action="store_false", help="if eval renderings")
     parser.add_argument("--not_eval_trajs", action="store_false", help="if eval traj")
@@ -260,15 +275,12 @@ if __name__ == "__main__":
     parser.add_argument("--not_vis_grid", action="store_false", help="if vis grid")
     parser.add_argument("--vis_bg_and_fg", action="store_false", help="if only vis fg")
     parser.add_argument("--vis_gt", action="store_true", help="ground truth also")
-    parser.add_argument("--vis_all", action="store_true", help="if visualizing all renderings")
-    parser.add_argument("--novel_view_mode", default=None, help="if eval novel view")
-    parser.add_argument("--gpus", nargs='+', type=list, help="gpus to use")
-    parser.add_argument("--sequence", default=None, help="gpus to use")
+    parser.add_argument("--vis_rendered", action="store_true", help="if visualizing all renderings")
+    parser.add_argument("--novel_view_mode", default=None, choices=[None, 'zoom_out', 'circle'], help="if eval novel view")
     parser.add_argument("--best_x", default=1, type=int, help="oracle result, get best Gaussian out of x")
     parser.add_argument("--alpha_traj", action="store_true", help="if using alpha blending for trajectory")
     parser.add_argument("--traj_len", default=10, type=int, help="if using alpha blending for trajectory")
-    parser.add_argument("--online_depth", default=None, choices=[None, 'DepthAnything', 'DepthAnythingV2-vitl'], help="if computing depth online")
-    parser.add_argument("--online_emb", default=None, choices=[None, 'dinov2_vits14', 'dinov2_vits14_reg'], help="if computing embeddings online")
+    # parse args
     args = parser.parse_args()
 
     experiment = SourceFileLoader(
@@ -292,7 +304,7 @@ if __name__ == "__main__":
         vis_grid=args.not_vis_grid,
         vis_fg_only=args.vis_bg_and_fg,
         vis_gt=args.vis_gt,
-        vis_all=args.vis_all,
+        vis_all=args.vis_rendered,
         best_x=args.best_x,
         alpha_traj=args.alpha_traj,
         online_depth=args.online_depth,
@@ -323,19 +335,19 @@ if __name__ == "__main__":
 
     run_name = f"deinsify_stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     # run_name = f"stride_1_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
-    # run_name = f"transformed_s2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
-    # run_name = f"s1_0.5wh_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    run_name = f"transformed_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
+    run_name = f"s1_0.5wh_v2_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     # run_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}{online_depth}{online_emb}"
     
     alpha_add = '' if not args.alpha_traj else '_alpha_traj'
     best_add = '' if args.best_x == 1 else f'_{args.best_x}'
     if 'panoptic_sport' not in args.experiment:
         result_files = os.path.join(
-            experiment.config["workdir"], run_name, "splatam_*", f"eval/traj_metrics{best_add}{alpha_add}.json"
+            experiment.config["workdir"], run_name, "*", f"eval/traj_metrics{best_add}{alpha_add}.json"
         )
     else:
         result_files = os.path.join(
-            experiment.config["workdir"], run_name, "splatam_*/*/*", f"eval/traj_metrics{best_add}{alpha_add}.json"
+            experiment.config["workdir"], run_name, "*/*/*", f"eval/traj_metrics{best_add}{alpha_add}.json"
         )
 
     summary_short = None
@@ -346,7 +358,7 @@ if __name__ == "__main__":
         columns = ['d_avg', 'survival', 'median_l2', 'occlusion_accuracy', 'd_avg_3D', 'survival_3D', 'median_l2_3D', 'average_jaccard', 'average_pts_within_thresh', 'FPS', 'duration [min]']
     else:
         columns = ["AJ", "APCK", "occ_acc", "epe", "pck_3d_50cm", "pck_3d_10cm", "pck_3d_5cm", 'FPS', 'duration [min]']
-    print(result_files)
+
     for f in glob.glob(result_files):
         with open(f, 'r') as jf:
             metrics = json.load(jf)
@@ -365,6 +377,9 @@ if __name__ == "__main__":
             
         summary_short.loc[seq] = {k: v for k, v in metrics.items() if k in columns}
         summary_long.loc[seq] = metrics
+    
+    summary_short = summary_short.sort_index()
+    summary_long = summary_short.sort_index()
 
     summary_name = f"{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
     summary_short.loc['mean'] = summary_short.mean()

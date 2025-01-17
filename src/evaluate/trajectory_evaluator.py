@@ -143,6 +143,11 @@ class TrajEvaluator():
                 gs_traj_2D.to(self.dev),
                 gt_traj_2D.to(self.dev),
                 valids.to(self.dev))
+            print("-----------------------------")
+            print(f"2D Survivial: {pips_metrics['survival']}")
+            print(f"2D Median L2: {pips_metrics['median_l2']}")
+            print(f"2D delta average: {pips_metrics['d_avg']}")
+            print("-----------------------------")
             metrics.update({'pips': pips_metrics})
 
             if 'trajs' in data.keys():
@@ -155,6 +160,11 @@ class TrajEvaluator():
                     valids.to(self.dev),
                     sur_thr=50,
                     norm_factor=None)
+                print("-----------------------------")
+                print(f"3D Survivial: {metrics3D['survival']}")
+                print(f"3D Median L2: {metrics3D['median_l2']}")
+                print(f"3D Delta Vverage: {metrics3D['d_avg']}")
+                print("-----------------------------")
                 metrics.update({'pips_3D': {f'{k}_3D': v for k, v in metrics3D.items()}})
                 
             if (1-occluded.long()).sum() != 0:
@@ -170,6 +180,11 @@ class TrajEvaluator():
                     gs_traj_2D.cpu().numpy(),
                     W=self.w,
                     H=self.h)
+                print("-----------------------------")
+                print(f"2D Delta Average: {tapvid_metrics['average_pts_within_thresh']}")
+                print(f"2D AJ: {tapvid_metrics['average_jaccard']}")
+                print(f"2D OA: {tapvid_metrics['occlusion_accuracy']}")
+                print("-----------------------------")
                 metrics.update({'tapvid': tapvid_metrics})
 
         else:
@@ -180,13 +195,14 @@ class TrajEvaluator():
         if self.vis_trajs:
             print('Visualizeing tracked points')
             gs_traj_2D_for_vis = gs_traj_2D_for_vis if gs_traj_2D_for_vis is not None else gs_traj_2D
+            gs_traj_2D_for_vis = gs_traj_2D_for_vis if dataset != "iphone" else gs_traj_2D_for_vis[start_time==0]
             data['points'] = normalize_points(gs_traj_2D_for_vis, self.h, self.w).squeeze()
             data['occluded'] = occluded.squeeze()
             data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
             vis_trail(
                 os.path.join(self.results_dir, 'tracked_points_vis'),
                 data,
-                pred_visibility=pred_visibility.squeeze(),
+                pred_visibility=pred_visibility.squeeze() if dataset != "iphone" else pred_visibility.squeeze()[start_time==0],
                 vis_traj=True if self.traj_len > 0 else False,
                 traj_len=self.traj_len )
         
@@ -357,7 +373,6 @@ class TrajEvaluator():
                     means3D_start.float(),
                     params_vis[:, time],
                     start_3D[start_time==time])
-
         # get Gauss tracks
         gs_traj_3D, unnorm_rotations, visibility = self.get_3D_trajs_for_track(
             gauss_ids, return_all=True)
@@ -628,13 +643,16 @@ class TrajEvaluator():
         data['occluded'] = torch.zeros(data['points'].shape[:-1]).to(self.dev)
         data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
         print("Visualizing grid...")
-        vis_trail(
-                os.path.join(self.results_dir, 'grid_points_vis'),
-                data,
-                pred_visibility=torch.ones_like(pred_visibility.squeeze()).to(self.dev),
-                vis_traj=True if self.traj_len > 0 else False,
-                traj_len=self.traj_len,
-                fg_only=search_fg_only)
+        try:
+            vis_trail(
+                    os.path.join(self.results_dir, 'grid_points_vis'),
+                    data,
+                    pred_visibility=torch.ones_like(pred_visibility.squeeze()).to(self.dev),
+                    vis_traj=True if self.traj_len > 0 else False,
+                    traj_len=self.traj_len,
+                    fg_only=search_fg_only)
+        except:
+            print(f'failed for {self.results_dir}...')
         # reset best x
         self.best_x = best_x
     
@@ -690,11 +708,12 @@ class TrajEvaluator():
         if isinstance(gt_w2c_list, np.ndarray):
             gt_w2c_list = torch.from_numpy(gt_w2c_list)
         num_frames = self.params['cam_unnorm_rots'].shape[-1]
-        latest_est_w2c = self.params['w2c']
+        latest_est_w2c = self.params['w2c'] if type(self.params['w2c']) == torch.Tensor \
+             else torch.from_numpy(self.params['w2c'])
         latest_est_w2c_list = []
-        latest_est_w2c_list.append(latest_est_w2c)
+        latest_est_w2c_list.append(latest_est_w2c.cpu())
         valid_gt_w2c_list = []
-        valid_gt_w2c_list.append(gt_w2c_list[0])
+        valid_gt_w2c_list.append(gt_w2c_list[0].cpu())
         for idx in range(1, num_frames):
             if isinstance(gt_w2c_list[idx], np.ndarray):
                 gt_w2c_list[idx] = torch.from_numpy(gt_w2c_list[idx])
@@ -707,12 +726,14 @@ class TrajEvaluator():
             intermrel_w2c[:3, :3] = build_rotation(interm_cam_rot)
             intermrel_w2c[:3, 3] = interm_cam_trans
             latest_est_w2c = intermrel_w2c
-            latest_est_w2c_list.append(latest_est_w2c)
-            valid_gt_w2c_list.append(gt_w2c_list[idx])
+            latest_est_w2c_list.append(latest_est_w2c.cpu())
+            valid_gt_w2c_list.append(gt_w2c_list[idx].cpu())
         gt_w2c_list = valid_gt_w2c_list
         # Calculate ATE RMSE
         ate_rmse = evaluate_ate(gt_w2c_list, latest_est_w2c_list)
         print("Final Average ATE RMSE: {:.2f} cm".format(ate_rmse*100))
+
+        return ate_rmse*100
             
 
 def evaluate_ate(gt_traj, est_traj):
@@ -807,6 +828,7 @@ def compute_metrics_iphone3D(data, pred_points, queries_first_t):
                 axis=-1,
             )
         )
+
     epe = np.mean(
         [frame_epes.mean() for frame_epes in epes if len(frame_epes) > 0]
     ).item()
@@ -887,6 +909,7 @@ def compute_metrics_iphone(data, pred_visibilities, pred_points, queries_first_t
     AJ = np.mean(all_jaccard)
     APCK = np.mean(all_frac_within)
 
+    print("-----------------------------")
     print(f"2D tracking AJ: {AJ:.4f}")
     print(f"2D tracking avg PCK: {APCK:.4f}")
     print(f"2D tracking occlusion accuracy: {occ_acc:.4f}")

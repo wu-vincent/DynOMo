@@ -12,8 +12,8 @@ tracking_iters_init = 1000
 tracking_iters_cam = 0
 num_frames = -1
 
-group_name = "dynosplatam_panoptic_sport"
-run_name = f"splatam_{scene_name}/splatam_{scene_name}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
+group_name = "panoptic_sport"
+run_name = f"{scene_name}/{scene_name}_{tracking_iters}_{tracking_iters_init}_{tracking_iters_cam}"
 
 config = dict(
     workdir=f"./experiments/{group_name}",
@@ -118,7 +118,6 @@ config = dict(
             rot=16.0,
             rigid=128.0,
             iso=16,
-            flow=0.0,
             embeddings=16.0,
             bg_reg=5,
             bg_loss=3,
@@ -127,7 +126,6 @@ config = dict(
             l1_opacity=0,
             l1_embeddings=20,
             l1_rgb=20,
-            coeff=1.0,
         ),
         lrs=dict(
             means3D=0.0016,

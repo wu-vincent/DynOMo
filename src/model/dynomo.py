@@ -58,7 +58,6 @@ from src.utils.common_utils import params2device
 
 class DynOMo():
     def __init__(self, config):
-        self.batch = 0
         # setup pytorch
         torch.set_num_threads(1)
         self.hook_list = list()
@@ -433,7 +432,7 @@ class DynOMo():
         
     def eval(self, novel_view_mode=None, eval_renderings=True, eval_traj=True, vis_trajs=True, vis_grid=False, vis_fg_only=True, best_x=1, alpha_traj=False, traj_len=10):
         self.load_dataset()
-        self.render_helper = RenderHelper()
+        self.render_helper = RenderHelper(self.device)
         self.first_frame_w2c, _, _ = self.init_Gaussian_scne()
         self.rendering_evaluator = RenderingEvaluator(
             self.device,
@@ -475,7 +474,7 @@ class DynOMo():
             traj_len=traj_len,
             best_x=best_x,
             get_gauss_wise3D_track=not alpha_traj,
-            vis_thresh=0.5 if self.config['stride'] == 2 else 0.1,
+            vis_thresh=0.5/2 if self.config['stride'] == 2 else 0.1/2,
             vis_thresh_start=0.5 if self.config['stride'] == 2 else 0.1)
         
         if eval_traj:
@@ -485,12 +484,12 @@ class DynOMo():
                 metrics = evaluator.eval_traj()
                 with open(os.path.join(self.eval_dir, f'traj_metrics{best_add}{alpha_add}.json'), 'w') as f:
                     json.dump(metrics, f)
-            print("Trajectory metrics: ",  metrics)
         
         if eval_traj and 'iphone' in self.eval_dir:
             with torch.no_grad():
                 cam_metrics = evaluator.eval_cam_traj()
-            print(f'Cam Traj Metrics: {cam_metrics}')
+                with open(os.path.join(self.eval_dir, f'cam_metrics.json'), 'w') as f:
+                    json.dump(cam_metrics, f)
 
         if vis_grid:
             vis_mask = None if not vis_fg_only else torch.from_numpy(self.dataset._load_bg(self.dataset.bg_paths[0])).to(self.device)
@@ -509,7 +508,7 @@ class DynOMo():
 
     def track(self):
         self.load_dataset()
-        self.render_helper = RenderHelper()
+        self.render_helper = RenderHelper(self.device)
         self.first_frame_w2c, start_time_idx, final_params = self.init_Gaussian_scne()
         self.optim_handler = OptimHandler(self.config)
         self.rendering_evaluator = RenderingEvaluator(
@@ -576,7 +575,8 @@ class DynOMo():
             eval_renderings=not self.config['eval_during'] and not 'iphone' in self.config['data']['basedir'],
             vis_trajs=self.config['viz']['vis_trajs'],
             vis_grid=self.config['viz']['vis_grid'],
-            vis_fg_only=self.config['viz']['vis_fg_only'])
+            vis_fg_only=self.config['viz']['vis_fg_only'],
+            traj_len=10 if not 'iphone' in self.config['data']['basedir'] else 0)
 
         # Close WandB Run
         if self.config['use_wandb']:
@@ -636,7 +636,8 @@ class DynOMo():
             # Initialize Gaussian poses for the next frame in params
             self.forward_propagate_gaussians(time_idx, forward_prop=self.config['tracking_obj']['forward_prop'])            
             # initialize cam pos for next frame
-            self.forward_propagate_camera(time_idx, forward_prop=self.config['tracking_cam']['forward_prop'])
+            if self.config['tracking_cam']['num_iters'] != 0:
+                self.forward_propagate_camera(time_idx, forward_prop=self.config['tracking_cam']['forward_prop'])
 
         # reset hooks
         for k, p in self.scene.params.items():
