@@ -192,9 +192,8 @@ class RenderingEvaluator():
                 self.l1_list.append(depth_l1.cpu().numpy())
 
             if self.save_frames:
-                if self.viz_config['vis_all']:
-                    # Save Rendered RGB and Depth
-                    self.save_rgb(im, dir_names['render_rgb_dir'], time_idx, num_frames)
+                # Save Rendered RGB and Depth
+                self.save_rgb(im, dir_names['render_rgb_dir'], time_idx, num_frames)
 
                 if self.viz_config['vis_all']:
                     # depth
@@ -230,9 +229,8 @@ class RenderingEvaluator():
 
     def make_dirs(self, name=''):
         dir_names = dict()
-        if self.viz_config['vis_all']:
-            dir_names['render_rgb_dir'] = os.path.join(self.eval_dir, f"rendered_rgb_{name}")
-            os.makedirs(dir_names['render_rgb_dir'], exist_ok=True)
+        dir_names['render_rgb_dir'] = os.path.join(self.eval_dir, f"rendered_rgb_{name}")
+        os.makedirs(dir_names['render_rgb_dir'], exist_ok=True)
         
         if self.viz_config['vis_all']:
             dir_names['render_depth_dir'] = os.path.join(self.eval_dir, f"rendered_depth_{name}")
@@ -307,9 +305,8 @@ class RenderingEvaluator():
         depth_l1 = diff_depth_l1.sum() / valid_depth_mask.sum()
 
         if self.save_frames:
-            if self.viz_config['vis_all']:
-                # Save Rendered RGB and Depth
-                self.save_rgb(im, dir_names['render_rgb_dir'], time_idx, num_frames)
+            # Save Rendered RGB and Depth
+            self.save_rgb(im, dir_names['render_rgb_dir'], time_idx, num_frames)
 
             if self.viz_config['vis_all']:
                 # depth
