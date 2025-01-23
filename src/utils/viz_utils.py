@@ -187,7 +187,10 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
                     # if p2[0] > 10000 or p2[1] > 10000:
                     #     continue
                     thickness = 1 if 'iphone' in results_dir else 1
-                    cv2.line(img1, p1, p2, color, thickness=thickness, lineType=16)
+                    if (vis_occ_diff and pred_visibility[i, j]) or not vis_occ_diff:
+                        cv2.line(img1, p1, p2, color, thickness=thickness, lineType=16)
+                    else:
+                        cv2.line(img1, p1, p2, color, thickness=int(thickness/2), lineType=16)
 
                 img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
 
