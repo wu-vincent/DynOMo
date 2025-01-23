@@ -52,6 +52,24 @@ class TrajEvaluator():
         self.dev = self.params['means3D'].device
         self.queries_first_t = queries_first_t
         print(f"\nEvaluating queries for time only {self.queries_first_t}")
+        if 'davis' in self.config['data']["gradslam_data_cfg"].lower():
+            self.fps = 24
+            if traj_len == 0:
+                self.N = 1024
+            else:
+                self.N = 2048
+        elif 'iphone' in self.config['data']["gradslam_data_cfg"].lower():
+            self.fps = 30 if self.config['data']['sequence'] not in ['haru-sit', 'mochi-high-five'] else 60
+            if traj_len == 0:
+                self.N = 8192
+            else:
+                self.N = 4096
+        elif 'panoptic_sport' in self.config['data']["gradslam_data_cfg"].lower():
+            self.fps = 30
+            if traj_len == 0:
+                self.N = 1024
+            else:
+                self.N = 2048
 
     def eval_traj(self):
         self.visuals = (self.vis_trajs_best_x or self.vis_trajs) and self.traj_len > 0
@@ -195,16 +213,23 @@ class TrajEvaluator():
         if self.vis_trajs:
             print('Visualizeing tracked points')
             gs_traj_2D_for_vis = gs_traj_2D_for_vis if gs_traj_2D_for_vis is not None else gs_traj_2D
-            gs_traj_2D_for_vis = gs_traj_2D_for_vis if dataset != "iphone" else gs_traj_2D_for_vis[start_time==0]
+            if dataset == "iphone" and self.traj_len > 0:
+                gs_traj_2D_for_vis = gs_traj_2D_for_vis[:, start_time==0]
+                pred_visibility = pred_visibility[start_time==0]
+            elif dataset == "iphone":
+                gs_traj_2D_for_vis = gs_traj_2D_for_vis[start_time==0]
+                pred_visibility = pred_visibility[start_time==0]
+
             data['points'] = normalize_points(gs_traj_2D_for_vis, self.h, self.w).squeeze()
             data['occluded'] = occluded.squeeze()
             data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
             vis_trail(
                 os.path.join(self.results_dir, 'tracked_points_vis'),
                 data,
-                pred_visibility=pred_visibility.squeeze() if dataset != "iphone" else pred_visibility.squeeze()[start_time==0],
+                pred_visibility=pred_visibility.squeeze(),
                 vis_traj=True if self.traj_len > 0 else False,
-                traj_len=self.traj_len )
+                traj_len=self.traj_len,
+                fps=self.fps)
         
         self.params = copy.deepcopy(copied_params)    
         return metrics
@@ -234,7 +259,8 @@ class TrajEvaluator():
                 data,
                 pred_visibility=pred_visibility.squeeze(),
                 vis_traj=True if self.traj_len > 0 else False,
-                traj_len=self.traj_len)
+                traj_len=self.traj_len,
+                fps=self.fps)
 
         # N*best_x, T, D 
         _, T, D = gs_traj_2D.shape
@@ -349,7 +375,6 @@ class TrajEvaluator():
         params_gs_traj_3D['means3D'] = params_gs_traj_3D['means3D'][first]
         params_gs_traj_3D['unnorm_rotations'] = params_gs_traj_3D['unnorm_rotations'][first]
         params_vis = params_gs_traj_3D['visibility'][first]
-
         # get Gauss IDs
         gauss_ids = torch.zeros(start_pixels.shape[0] * self.best_x, device=self.dev).long()
         start_time_best_x = start_time[..., None].repeat((1, self.best_x)).flatten()
@@ -608,20 +633,23 @@ class TrajEvaluator():
     def vis_grid_trajs(
             self,
             mask=None,
-            N=1024):
+            vis_vis_and_occ=True):
+        
         # store best_x for later
         best_x = self.best_x
         self.best_x = 1
         self.visuals = self.traj_len > 0
         search_fg_only = False if mask is None else True
 
-        # get trajectories to track        
+        # get trajectories to track
         start_pixels = get_xy_grid(
             self.h,
             self.w,
-            N=N,
+            N=self.N,
             device=self.dev,
             mask=mask).squeeze().long()
+        np.save(
+            os.path.join(self.results_dir, f'start_pixels_grid_{self.traj_len}.npy'),start_pixels.cpu().numpy())
 
         # no_bg
         gs_traj_2D, gs_traj_3D, pred_visibility, gs_traj_2D_for_vis = self.get_gs_traj_pts(
@@ -630,6 +658,9 @@ class TrajEvaluator():
             start_time=torch.zeros(start_pixels.shape[0]).to(self.dev).long(),
             search_fg_only=search_fg_only)
         pred_visibility = (pred_visibility > self.vis_thresh).float()
+        if vis_vis_and_occ:
+            pred_visibility = torch.ones_like(
+                pred_visibility, device=pred_visibility.device, dtype=float)
 
         if gs_traj_2D_for_vis is None:
             gs_traj_2D_for_vis = gs_traj_2D
@@ -639,7 +670,7 @@ class TrajEvaluator():
 
         # get gt data for visualization (actually only need rgb here)
         data = get_gt_traj(self.config, in_torch=True)
-        data['points'] = normalize_points(gs_traj_2D_for_vis, self.h, self.w).squeeze()    
+        data['points'] = normalize_points(gs_traj_2D_for_vis, self.h, self.w).squeeze()   
         data['occluded'] = torch.zeros(data['points'].shape[:-1]).to(self.dev)
         data = {k: v.detach().clone().cpu().numpy() for k, v in data.items()}
         print("Visualizing grid...")
@@ -647,10 +678,11 @@ class TrajEvaluator():
             vis_trail(
                     os.path.join(self.results_dir, 'grid_points_vis'),
                     data,
-                    pred_visibility=torch.ones_like(pred_visibility.squeeze()).to(self.dev),
+                    pred_visibility=pred_visibility.to(self.dev), # torch.ones_like(pred_visibility.squeeze()).to(self.dev)
                     vis_traj=True if self.traj_len > 0 else False,
                     traj_len=self.traj_len,
-                    fg_only=search_fg_only)
+                    fg_only=search_fg_only,
+                    fps=self.fps)
         except:
             print(f'failed for {self.results_dir}...')
         # reset best x

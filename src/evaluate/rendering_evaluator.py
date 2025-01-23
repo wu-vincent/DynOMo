@@ -32,11 +32,14 @@ class RenderingEvaluator():
         self.vmin_depth = 0
         if 'panoptic' in self.eval_dir:
             self.vmax_depth = 20
+            self.fps = 30
         elif'iphone' in self.eval_dir:
-            self.vmax_depth = 10
+            self.vmax_depth = 5
+            self.fps = 30 if self.config['data']['sequence'] not in ['haru-sit', 'mochi-high-five'] else 60
         else:
             self.vmax_depth = 80
-
+            self.fps = 24
+        
     @staticmethod
     def save_pc(final_params_time, save_dir, time_idx, time_mask):
         pcd = o3d.geometry.PointCloud()
@@ -44,8 +47,7 @@ class RenderingEvaluator():
         pcd.points = v3d(final_params_time['means3D'][:, :, time_idx][time_mask].cpu().numpy())
         o3d.io.write_point_cloud(filename=os.path.join(save_dir, "pc_{:04d}_all.xyz".format(time_idx)), pointcloud=pcd)
 
-    @staticmethod
-    def save_normalized(img, save_dir, time_idx, vmin=None, vmax=None, num_frames=100):
+    def save_normalized(self, img, save_dir, time_idx, vmin=None, vmax=None, num_frames=100):
         img = img[0].detach().cpu().numpy()
         if vmin is None:
             vmax, vmin = img.max(), img.min()
@@ -53,15 +55,14 @@ class RenderingEvaluator():
         colormap = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_JET)
         cv2.imwrite(os.path.join(save_dir, "gs_{:04d}.png".format(time_idx)), colormap)
         if time_idx == num_frames - 1: 
-            make_vid(save_dir)
+            make_vid(save_dir, self.fps)
 
-    @staticmethod
-    def save_rgb(img, save_dir, time_idx, num_frames):
+    def save_rgb(self, img, save_dir, time_idx, num_frames):
         viz_gt_im = torch.clamp(img, 0, 1)
         viz_gt_im = viz_gt_im.detach().cpu().permute(1, 2, 0).numpy()
         cv2.imwrite(os.path.join(save_dir, "gt_{:04d}.png".format(time_idx)), cv2.cvtColor(viz_gt_im*255, cv2.COLOR_RGB2BGR))
         if time_idx == num_frames - 1: 
-            make_vid(save_dir)
+            make_vid(save_dir, self.fps)
 
     def save_pca_downscaled(self, features, save_dir, time_idx, num_frames):
         features = features.permute(1, 2, 0).detach().cpu().numpy()
@@ -79,7 +80,7 @@ class RenderingEvaluator():
         normalized_features_colormap = (normalized_features * 255).astype(np.uint8)
         imageio.imwrite(os.path.join(save_dir, "gs_{:04d}.png".format(time_idx)), normalized_features_colormap)
         if time_idx == num_frames - 1: 
-            make_vid(save_dir)
+            make_vid(save_dir, self.fps)
             
     @staticmethod
     def calc_psnr(img1, img2):

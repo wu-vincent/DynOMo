@@ -5,15 +5,20 @@ from utils.camera_helpers import setup_camera
 from utils.gaussian_utils import build_rotation
 from utils.neighbor_search import torch_3d_knn
 from diff_gaussian_rasterization_w_dwv import GaussianRasterizer as Renderer
+from src.utils.viz_utils import make_vid
+import cv2
+import imageio
 
 
 class GaussianScene():
-    def __init__(self, config, render_helper, load_embeddings, num_frames, device):
+    def __init__(self, config, render_helper, load_embeddings, num_frames, device, eval_dir, do_store_vis=False):
         self.config = config
         self.render_helper = render_helper
         self.load_embeddings = load_embeddings
         self.num_frames = num_frames
         self.device = device
+        self.eval_dir = eval_dir
+        self.do_store_vis = do_store_vis
     
     def get_pointcloud(
             self,
@@ -330,8 +335,7 @@ class GaussianScene():
             depth_error_factor,
             time_idx,
             mean_sq_dist_method,
-            gaussian_distribution,
-            do_store_vis=False):
+            gaussian_distribution):
         
         # get depth for adding gaussians and rescaled cam
         render_depth, silhouette, gt_depth = self.get_depth_for_new_gauss(
@@ -339,24 +343,27 @@ class GaussianScene():
             curr_data)
 
         non_presence_sil_mask = (silhouette < sil_thres)
-        if do_store_vis:
+        if self.do_store_vis:
             self.store_vis(time_idx, silhouette, 'presence_mask')
         # Check for new foreground objects by u sing GT depth
 
         if self.config['add_gaussians']['use_depth_error_for_adding_gaussians']:
             depth_error = (torch.abs(gt_depth - render_depth)/gt_depth) * (gt_depth > 0)
             non_presence_depth_mask =  (depth_error > depth_error_factor*depth_error.median()) # * (render_depth > gt_depth)
-            non_presence_mask = non_presence_sil_mask | non_presence_depth_mask
-            
-            if do_store_vis:
+            non_presence_mask = non_presence_sil_mask | non_presence_depth_mask.squeeze()
+
+            if self.do_store_vis:
                 # depth error
                 depth_error_store = (depth_error-depth_error.min())/(depth_error.max()-depth_error.min())
                 self.store_vis(time_idx, depth_error_store, 'depth_error')
                 # non presence depth mask
                 self.store_vis(time_idx, non_presence_depth_mask, 'non_presence_depth_mask')
-
+            
         else:
             non_presence_mask = non_presence_sil_mask
+
+        if self.do_store_vis and self.config['add_gaussians']['use_depth_error_for_adding_gaussians']:
+            self.store_vis(time_idx, silhouette, 'adding_mask')
 
         # Determine non-presence mask
         # Get the new frame Gaussians based on the Silhouette

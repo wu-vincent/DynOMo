@@ -40,16 +40,15 @@ import json
 color_map = cm.get_cmap("jet")
 
 
-def make_vid(input_path): 
+def make_vid(input_path, fps=10): 
     images = list()
     img_paths = glob.glob(f'{input_path}/*')
-    print(input_path, len(img_paths))
     for f in sorted(img_paths):
         if 'mp4' in f:
             continue
         images.append(imageio.imread(f))
 
-    imageio.mimwrite(os.path.join(input_path, 'vid_trails.mp4'), np.stack(images), quality=8, fps=10)
+    imageio.mimwrite(os.path.join(input_path, 'vid_trails.mp4'), np.stack(images), quality=8, fps=fps)
     for f in img_paths:
         if 'mp4' in f:
             continue
@@ -131,7 +130,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
 
 
 
-def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10, fg_only=True):
+def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10, fg_only=True, fps=10):
     """
     This function calculates the median motion of the background, which is subsequently
     subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
@@ -187,7 +186,8 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
                     p2 = (int(round(pt2[0])), int(round(pt2[1])))
                     # if p2[0] > 10000 or p2[1] > 10000:
                     #     continue
-                    cv2.line(img1, p1, p2, color, thickness=1, lineType=16)
+                    thickness = 1 if 'iphone' in results_dir else 1
+                    cv2.line(img1, p1, p2, color, thickness=thickness, lineType=16)
 
                 img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
 
@@ -203,9 +203,11 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
             # if p1[0] > 10000 or p1[1] > 10000:
             #     continue
             if traj_len > 0:
-                cv2.circle(img_curr, p1, 2, color, -1, lineType=16)
+                size = 2 if 'iphone' in results_dir else 2
+                cv2.circle(img_curr, p1, size, color, -1, lineType=16)
             else:
-                cv2.circle(img_curr, p1, 3, color, -1, lineType=16)
+                size = 4 if 'iphone' in results_dir else 3
+                cv2.circle(img_curr, p1, size, color, -1, lineType=16)
 
 
         frames.append(img_curr.astype(np.uint8))
@@ -215,7 +217,7 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
     else:
         save_path = os.path.join(results_dir, f'vid_trails_{traj_len}.mp4')
 
-    imageio.mimwrite(save_path, frames, quality=8, fps=10)
+    imageio.mimwrite(save_path, frames, quality=8, fps=fps)
     print('stored vis', save_path)
 
 # flow_color = flow_vis.flow_to_color(flow_uv, convert_to_bgr=False)

@@ -366,7 +366,7 @@ class DynOMo():
 
     def init_Gaussian_scne(self):
         # init Gaussian scene 
-        self.scene = GaussianScene(self.config, self.render_helper, self.dataset.load_embeddings, self.num_frames, self.device)
+        self.scene = GaussianScene(self.config, self.render_helper, self.dataset.load_embeddings, self.num_frames, self.device, self.eval_dir)
         
         # maybe load checkpoint
         ckpt_output_dir = os.path.join(self.config["workdir"], self.config["run_name"])
@@ -699,12 +699,13 @@ class DynOMo():
                     self.wandb_run,
                     wandb_step,
                     obj_tracking=True)
-
+            
             with torch.no_grad():
+                pruned, densified = False, False
                 self.scene.variables['means2D_grad'] = self.scene.variables['means2D'].grad
                 # Prune Gaussians
                 if self.config['prune_densify']['prune_gaussians'] and time_idx > 0:
-                    self.scene.params, self.scene.variables = prune_gaussians(
+                    self.scene.params, self.scene.variables, pruned = prune_gaussians(
                         self.scene.params,
                         self.scene.variables,
                         optimizer, 
@@ -716,7 +717,7 @@ class DynOMo():
                                         "Mapping/step": self.wandb_mapping_step})
                 # Gaussian-Splatting's Gradient-based Densification
                 if self.config['prune_densify']['use_gaussian_splatting_densification'] and time_idx > 0:
-                    self.scene.params, self.scene.variables = densify(
+                    self.scene.params, self.scene.variables, densified = densify(
                         self.scene.params,
                         self.scene.variables,
                         optimizer,
@@ -726,6 +727,8 @@ class DynOMo():
                     if self.config['use_wandb']:
                         self.wandb_run.log({"Tracking Object/Number of Gaussians - Densification": self.scene.params['means3D'].shape[0],
                                         "Tracking Object/step": self.wandb_mapping_step})
+                if pruned or densified:
+                    self.get_hooks(config, time_idx)
 
             # Optimizer Update
             optimizer.step()
@@ -787,7 +790,7 @@ class DynOMo():
         tracking_end_time = time.time()
         self.logger.tracking_obj_frame_time_sum += tracking_end_time - tracking_start_time
         self.logger.tracking_obj_frame_time_count += 1
-        
+
         # update prev values for l1 losses
         self.scene.ema_update_all_prev()
 

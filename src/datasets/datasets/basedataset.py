@@ -347,6 +347,8 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.online_depth == "DepthAnything":
             image = np.asarray(Image.open(color_path), dtype=np.float32)
             image = image / 255.0
+            if image.shape[2] > 3:
+                image = image[:, :, :3]
             depth = np.zeros((image.shape[0], image.shape[1], 1))
             sample = dict(image=image, depth=depth)
             sample = self.depth_transform(sample)

@@ -278,7 +278,7 @@ if __name__ == "__main__":
     parser.add_argument("--novel_view_mode", default=None, choices=[None, 'zoom_out', 'circle'], help="if eval novel view")
     parser.add_argument("--best_x", default=1, type=int, help="oracle result, get best Gaussian out of x")
     parser.add_argument("--alpha_traj", action="store_true", help="if using alpha blending for trajectory")
-    parser.add_argument("--traj_len", default=10, type=int, help="if using alpha blending for trajectory")
+    parser.add_argument("--traj_len", default=20, type=int, help="if using alpha blending for trajectory")
     # parse args
     args = parser.parse_args()
 

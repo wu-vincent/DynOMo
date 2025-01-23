@@ -56,6 +56,7 @@ class IphoneDataset(GradSLAMDataset):
             self.transfm = self.scene_norm_dict["transfm"]
 
         print(f"Using {depth_type} depth...")
+        print(f"Using {cam_type} cam pose...")
         self.depths = None
 
         print(f"Using relative pose {relative_pose}!")

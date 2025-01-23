@@ -1,4 +1,4 @@
-from datasets.datasets import (
+from src.datasets.datasets import (
     load_dataset_config,
     DavisDataset,
     PanopticSportsDataset,
@@ -9,7 +9,7 @@ import pickle
 import numpy as np
 import os
 import torch
-from utils.camera_helpers import as_intrinsics_matrix
+from src.utils.camera_helpers import as_intrinsics_matrix
 import numpy as np
 import imageio
 import glob
@@ -132,6 +132,8 @@ def load_panoptic_sports(sequence, in_torch=False, basedir=''):
 def load_iphone(config, in_torch=True, device="cuda:0"):
     config = copy.deepcopy(config)
     config['data']['factor'] = 1
+    config['data']['online_depth'] = None
+    config['data']['online_emb'] = None
     config['data']['cam_type'] = 'refined'
     config['data']['depth_type'] = 'aligned_depth_anything_colmap'
     config['primary_device'] = device

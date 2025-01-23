@@ -104,6 +104,7 @@ def remove_points(
         variables,
         optimizer=None,
         time_idx=0):
+
     to_keep = ~to_remove
     idxs_to_keep = torch.arange(params['means3D'].shape[0])[to_keep].to(
         variables['self_indices'].device)
@@ -174,8 +175,10 @@ def prune_gaussians(
         prune_dict,
         curr_time_idx):
     
+    pruned = False
     if iter <= prune_dict['stop_after']:
         if (iter >= prune_dict['start_after']) and (iter % prune_dict['prune_every'] == 0):
+            pruned = True
             if iter == prune_dict['stop_after']:
                 remove_threshold = prune_dict['final_removal_opacity_threshold']
             else:
@@ -222,13 +225,13 @@ def prune_gaussians(
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
     
-    return params, variables
+    return params, variables, pruned
 
 def clone_vars(params, variables, to_clone, time_idx):
     device = variables['self_indices'].device
     idxs_to_clone = torch.arange(params['means3D'].shape[0])[to_clone].to(device)
-    to_clone = to_clone.to(device)
     to_clone_self_idx = torch.isin(variables['self_indices'], idxs_to_clone)
+    to_clone = to_clone.to(device)
     prev_mask = variables['timestep'] < time_idx
 
     for k, v in variables.items():
@@ -237,18 +240,16 @@ def clone_vars(params, variables, to_clone, time_idx):
                 continue
             if v.shape[0] == to_clone_self_idx.shape[0] and k != 'self_indices':
                 variables[k] = torch.cat(
-                    (variables[k], variables[k][to_clone_self_idx]), dim=0)
+                    (variables[k], variables[k][to_clone_self_idx].clone()), dim=0)
             elif v.shape[0] == params['means3D'].shape[0]:
-                variables[k] = torch.cat((variables[k], variables[k][to_clone]), dim=0)
+                variables[k] = torch.cat((variables[k], variables[k][to_clone].clone()), dim=0)
             elif v.shape[0] == prev_mask.sum():
-                variables[k] = torch.cat((variables[k], variables[k][to_clone[prev_mask]]), dim=0)
+                variables[k] = torch.cat((variables[k], variables[k][to_clone[prev_mask]].clone()), dim=0)
 
     self_idxs = variables['self_indices'][to_clone_self_idx]
-    print(variables['self_indices'].max(), to_clone.shape)
     mapping_tensor = torch.zeros(to_clone.shape[0]).long().to(to_clone.device)
     mapping_tensor[idxs_to_clone] = to_clone.shape[0] + torch.arange(
         idxs_to_clone.shape[0]).long().to(idxs_to_clone.device)
-    print(mapping_tensor)
     variables['self_indices'] = torch.cat(
         (variables['self_indices'], mapping_tensor[self_idxs]), dim=0)
 
@@ -273,16 +274,13 @@ def split_vars(params, variables, to_split, n, time_idx):
             elif len(v.shape) == 3:
                 rep = (n, 1, 1)
 
-            if v.shape[0] == to_split_self_idx.shape[0] and k != 'self_indices' and len(v.shape) == 1:
+            if v.shape[0] == to_split_self_idx.shape[0] and k != 'self_indices':
                 variables[k] = torch.cat(
-                    (variables[k], variables[k][to_split_self_idx].repeat(n)), dim=0)
-            elif v.shape[0] == to_split_self_idx.shape[0] and k != 'self_indices' and len(v.shape) == 2:
-                variables[k] = torch.cat(
-                    (variables[k], variables[k][to_split_self_idx].repeat(n, 1)), dim=0)
+                    (variables[k], variables[k][to_split_self_idx].repeat(rep).clone()), dim=0)
             elif v.shape[0] == params['means3D'].shape[0]:
-                variables[k] = torch.cat((variables[k], variables[k][to_split].repeat(rep)), dim=0)
+                variables[k] = torch.cat((variables[k], variables[k][to_split].repeat(rep).clone()), dim=0)
             elif v.shape[0] == prev_mask.sum():
-                variables[k] = torch.cat((variables[k], variables[k][to_split[prev_mask]].repeat(rep)), dim=0)
+                variables[k] = torch.cat((variables[k], variables[k][to_split[prev_mask]].repeat(rep).clone()), dim=0)
 
     # update new self-indices
     self_idxs = variables['self_indices'][to_split_self_idx]
@@ -295,25 +293,17 @@ def split_vars(params, variables, to_split, n, time_idx):
     return variables
 
 
-def densify(params, variables, optimizer, iter, densify_dict, time_idx):
+def densify(params, variables, optimizer, iter, densify_dict, time_idx, do_remove=False):
     device = params['means3D'].device
+    densified = False
+
     if iter <= densify_dict['stop_after']:
         variables = accumulate_mean2d_gradient(variables, time_idx)
         grad_thresh = densify_dict['grad_thresh']
         if (iter >= densify_dict['start_after']) and (iter % densify_dict['densify_every'] == 0):
+            densified = True
             grads = variables['means2D_gradient_accum'] / variables['denom']
             grads[grads.isnan()] = 0.0
-
-            # Remove Gaussians with large kNN dist
-            # recompute kNN distance
-            with torch.no_grad():
-                pdist = torch.nn.PairwiseDistance(p=2)
-                dist = pdist(
-                    params['means3D'][variables["self_indices"], :],
-                    params['means3D'][variables["neighbor_indices"], :])
-                dist = scatter_add(dist, variables["self_indices"], dim=0) 
-                far_away = torch.logical_and(dist < densify_dict['kNN_dist_thresh_max'] * variables['scene_radius'],
-                        dist > densify_dict['kNN_dist_thresh_min'] * variables['scene_radius'])
 
             # clone
             if densify_dict['scale_split_thresh'] == 'scene_radius':
@@ -323,13 +313,11 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
 
             to_clone = torch.logical_and(grads >= grad_thresh, (
                         torch.max(torch.exp(params['log_scales']), dim=1).values <= thresh))
-            # to_clone = torch.logical_or(to_clone, far_away).to(device)
-            
+
             if to_clone.sum():
-                new_params = {k: v[to_clone] for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
+                new_params = {k: v[to_clone].clone() for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
                 variables = clone_vars(params, variables, to_clone, time_idx)
                 params = cat_params_to_optimizer(new_params, params, optimizer)
-                print(variables['self_indices'].min(), variables['self_indices'].max(), variables['self_indices'].shape, params['means3D'].shape)
 
             # split
             num_pts = params['means3D'].shape[0]
@@ -341,7 +329,6 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
                 thresh = torch.median(torch.max(torch.exp(params['log_scales']), dim=1).values)
             to_split = torch.logical_and(padded_grad >= grad_thresh,
                                          torch.max(torch.exp(params['log_scales']), dim=1).values > thresh).to(device)
-      
             if to_split.sum():
                 n = densify_dict['num_to_split_into'] - 1
                 # split params
@@ -349,11 +336,11 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
                 for k, v in params.items():
                     if k not in ['cam_unnorm_rots', 'cam_trans']:
                         if len(v.shape) == 3:
-                            new_params[k] = v[to_split].repeat(n, 1, 1)
+                            new_params[k] = v[to_split].repeat(n, 1, 1).clone()
                         elif len(v.shape) == 2:
-                            new_params[k] = v[to_split].repeat(n, 1)
+                            new_params[k] = v[to_split].repeat(n, 1).clone()
                         else:
-                            new_params[k] = v[to_split].repeat(n)
+                            new_params[k] = v[to_split].repeat(n).clone()
 
                 # split variables
                 variables = split_vars(params, variables, to_split, n, time_idx)
@@ -380,7 +367,6 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
                 params['log_scales'][to_split] = torch.log(torch.exp(params['log_scales'][to_split]) / (0.8 * n+1))
                 # cat new and prev
                 params = cat_params_to_optimizer(new_params, params, optimizer)
-                print(variables['self_indices'].min(), variables['self_indices'].max(), variables['self_indices'].shape, params['means3D'].shape)
 
             num_pts = params['means3D'].shape[0]
             variables['means2D_gradient_accum'] = torch.zeros(num_pts, device="cuda")
@@ -391,29 +377,40 @@ def densify(params, variables, optimizer, iter, densify_dict, time_idx):
             #     to_remove = torch.cat((to_split, torch.zeros(n * to_split.sum(), dtype=torch.bool, device="cuda")))
             #     params, variables = remove_points(to_remove, params, variables, optimizer)
 
-            if iter == densify_dict['stop_after']:
-                remove_threshold = densify_dict['final_removal_opacity_threshold']
-            else:
-                remove_threshold = densify_dict['removal_opacity_threshold']
-
-            to_remove_opa = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
-            print(torch.sigmoid(params['logit_opacities']), torch.sigmoid(params['logit_opacities']).min(), torch.sigmoid(params['logit_opacities']).max(), remove_threshold)
-            if iter >= densify_dict['remove_big_after']:
-                big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
-                to_remove = torch.logical_or(to_remove_opa, big_points_ws)
-            if to_remove.sum():
-                params, variables = remove_points(to_remove, params, variables, optimizer, time_idx=time_idx)
-            torch.cuda.empty_cache()
-            print(variables['self_indices'].min(), variables['self_indices'].max(), variables['self_indices'].shape, params['means3D'].shape)
             print(f'Added {to_clone.sum()} Gaussians by cloning and {to_split.sum()} Gaussians by splitting during densification at Iteration {iter}!')
-            print(f'Removed {to_remove.sum()} big Gaussians during densification at Iteration {iter}, {to_remove_opa.sum()} due to opacity and {big_points_ws.sum()} due to size!')
+            
+            if do_remove:
+                # Remove Gaussians with large kNN dist
+                # recompute kNN distance
+                with torch.no_grad():
+                    pdist = torch.nn.PairwiseDistance(p=2)
+                    dist = pdist(
+                        params['means3D'][variables["self_indices"], :],
+                        params['means3D'][variables["neighbor_indices"], :])
+                    dist = scatter_add(dist, variables["self_indices"], dim=0) 
+                    far_away = torch.logical_and(dist < densify_dict['kNN_dist_thresh_max'] * variables['scene_radius'],
+                            dist > densify_dict['kNN_dist_thresh_min'] * variables['scene_radius'])
+                # opacity
+                if iter == densify_dict['stop_after']:
+                    remove_threshold = densify_dict['final_removal_opacity_threshold']
+                else:
+                    remove_threshold = densify_dict['removal_opacity_threshold']
+
+                to_remove_opa = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
+                if iter >= densify_dict['remove_big_after']:
+                    big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 10000000000 # 0.1 * variables['scene_radius']
+                    to_remove = torch.logical_or(to_remove_opa, big_points_ws)
+                if to_remove.sum():
+                    params, variables = remove_points(to_remove, params, variables, optimizer, time_idx=time_idx)
+                torch.cuda.empty_cache()
+                print(f'Removed {to_remove.sum()} big Gaussians during densification at Iteration {iter}, {to_remove_opa.sum()} due to opacity and {big_points_ws.sum()} due to size!')
 
         # Reset Opacities for all Gaussians (This is not desired for mapping on only current frame)
         if iter > 0 and iter % densify_dict['reset_opacities_every'] == 0 and densify_dict['reset_opacities']:
             new_params = {'logit_opacities': inverse_sigmoid(torch.ones_like(params['logit_opacities']) * 0.01)}
             params = update_params_and_optimizer(new_params, params, optimizer)
         
-    return params, variables
+    return params, variables, densified
 
 
 def _sqrt_positive_part(x: torch.Tensor) -> torch.Tensor:
