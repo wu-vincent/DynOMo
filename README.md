@@ -14,7 +14,7 @@
     ·
     <a href="https://research.nvidia.com/labs/dvl/author/laura-leal-taixe/"><strong>Laura Leal-Taixe</strong></a>
   </p>
-  <h3 align="center"><a href="https://arxiv.org/abs/2409.02104">Paper</a> | <a href="DynOMo.github.io">Project Page</a></h3>
+  <h3 align="center"><a href="https://arxiv.org/abs/2409.02104">Paper</a> | <a href="https://jennyseidenschwarz.github.io/DynOMo.github.io/">Project Page</a></h3>
   <div align="center"></div>
 </p>
 
@@ -27,8 +27,9 @@
 
 <br>
 
+This repository contains the official code of the 3DV 2025 paper "DynOMo: Online Point Tracking by Dynamic Online Monocular Gaussian Reconstruction".
 <!-- TABLE OF CONTENTS -->
-<details open="open" style='padding: 10px; border-radius:5px 30px 30px 5px; border-style: solid; border-width: 1px;'>
+<details open="open" style='padding: 10px; border-radius:5px 30px 30px 5px; border-style: solid; border-width: 0px;'>
   <summary>Table of Contents</summary>
   <ol>
     <li>
