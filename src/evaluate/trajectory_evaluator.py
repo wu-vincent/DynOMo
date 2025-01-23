@@ -633,7 +633,7 @@ class TrajEvaluator():
     def vis_grid_trajs(
             self,
             mask=None,
-            vis_vis_and_occ=True):
+            vis_vis_and_occ_same=False):
         
         # store best_x for later
         best_x = self.best_x
@@ -658,7 +658,7 @@ class TrajEvaluator():
             start_time=torch.zeros(start_pixels.shape[0]).to(self.dev).long(),
             search_fg_only=search_fg_only)
         pred_visibility = (pred_visibility > self.vis_thresh).float()
-        if vis_vis_and_occ:
+        if vis_vis_and_occ_same:
             pred_visibility = torch.ones_like(
                 pred_visibility, device=pred_visibility.device, dtype=float)
 

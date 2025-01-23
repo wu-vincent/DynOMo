@@ -130,7 +130,7 @@ def get_cam_poses(novel_view_mode, dataset, config, num_frames, device, params):
 
 
 
-def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10, fg_only=True, fps=10):
+def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True, traj_len=10, fg_only=True, fps=10, vis_occ_diff=True):
     """
     This function calculates the median motion of the background, which is subsequently
     subtracted from the foreground motion. This subtraction process "stabilizes" the camera and
@@ -192,8 +192,6 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
                 img_curr = cv2.addWeighted(img1, alpha, img_curr, 1 - alpha, 0)
 
         for j in range(num_pts):
-            if not pred_visibility[i, j]:
-                continue
             color = np.array(color_map(j/max(1, float(num_pts - 1)))[:3]) * 255
             if not per_time:
                 pt1 = points[0, i, j]
@@ -207,7 +205,11 @@ def vis_trail(results_dir, data, clip=True, pred_visibility=None, vis_traj=True,
                 cv2.circle(img_curr, p1, size, color, -1, lineType=16)
             else:
                 size = 4 if 'iphone' in results_dir else 3
-                cv2.circle(img_curr, p1, size, color, -1, lineType=16)
+                if (vis_occ_diff and pred_visibility[i, j]) or not vis_occ_diff:
+                    cv2.circle(img_curr, p1, size, color, -1, lineType=16)
+                else:
+                    cv2.drawMarker(img_curr, p1, color, markerType=cv2.MARKER_CROSS,
+                        markerSize=int(5*size), thickness=int(size/2), line_type=cv2.LINE_AA)
 
 
         frames.append(img_curr.astype(np.uint8))
