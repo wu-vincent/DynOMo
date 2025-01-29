@@ -1,6 +1,6 @@
 #!/bin/bash
 
-git clone --recurse-submodules https://github.com/JennySeidenschwarz/DynoSplatTAM.git
+git clone --recurse-submodules https://github.com/dvl-tum/DynOMo.git
 conda env create -f environment.yml
 conda activate dynomo
 pip install imageio-ffmpeg
