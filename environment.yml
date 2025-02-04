@@ -7,15 +7,17 @@ channels:
   - conda-forge
 dependencies:
   - cudatoolkit
+  - pip
   - python=3.12
-  - pytorch
-  - torchvision
+  - pytorch=2.5.1
+  - torchvision=0.20.1
   - pip:
       - click
       - gdown
       - h5py
       - imageio
       - imageio-ffmpeg
+      - natsort
       - opencv-python
       - pillow
       - scikit-learn
