@@ -1,30 +1,72 @@
 import argparse
-import subprocess
 import os
+import shutil
+import requests
+import zipfile
+import subprocess
+import gdown
+from pathlib import Path
+from tqdm import tqdm
+
+
+def download_file(url, save_path):
+    """Download a file from a given URL with a progress bar."""
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+    total_size = int(response.headers.get('content-length', 0))
+
+    with open(save_path, 'wb') as file, tqdm(
+            desc=f"Downloading {save_path.name}",
+            total=total_size,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+    ) as bar:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+            bar.update(len(chunk))
+
+
+def extract_zip(zip_path, extract_to):
+    """Extract a zip file to a given directory."""
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+    os.remove(zip_path)
 
 
 def download_davis(download, embeddings, depth, embedding_model, depth_model):
-    # DAVIS DATA
-    # download data
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+
     if download:
-        command = "cd data; wget https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip && unzip tapvid_davis.zip && rm -rf tapvid_davis.zip; wget https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip && unzip DAVIS-2017-trainval-480p.zip && rm -rf DAVIS-2017-trainval-480p.zip && cd ..; python preprocess/process_davis.py"
-        subprocess.run(
-            command,
-            shell=True
-        )
+        tapvid_zip = data_dir / "tapvid_davis.zip"
+        davis_zip = data_dir / "DAVIS-2017-trainval-480p.zip"
+
+        download_file("https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip", tapvid_zip)
+        extract_zip(tapvid_zip, data_dir)
+
+        download_file("https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip", davis_zip)
+        extract_zip(davis_zip, data_dir)
+
+        subprocess.run(["python", "preprocess/process_davis.py"], check=True)
 
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/davis/dynomo_davis.py --base_path {os.getcwd()}/data/DAVIS/JPEGImages/480p/ --save_dir {os.getcwd()}/data/DAVIS/Feats/480p/ --model {embedding_model}"
-        subprocess.run(
-            command,
-            shell=True
-        )
+        subprocess.run([
+            "python", "preprocess/get_dino_prediction.py", "configs/davis/dynomo_davis.py",
+            "--base_path", str(data_dir / "DAVIS/JPEGImages/480p/"),
+            "--save_dir", str(data_dir / "DAVIS/Feats/480p/"),
+            "--model", embedding_model
+        ], check=True)
+
     if depth:
-        command = f'python preprocess/get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::{os.getcwd()}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_outdoor.pt" --base_path {os.getcwd()}/data/DAVIS/JPEGImages/480p/ --save_dir {os.getcwd()}/data/DAVIS/Depth/480p/'
-        subprocess.run(
-            command,
-            shell=True
-        )
+        subprocess.run([
+            "python", "preprocess/get_depth_anything_prediction.py", "-m", "zoedepth",
+            "--pretrained_resource",
+            f"local::{data_dir}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_outdoor.pt",
+            "--base_path", str(data_dir / "DAVIS/JPEGImages/480p/"),
+            "--save_dir", str(data_dir / "DAVIS/Depth/480p/")
+        ], check=True)
+
 
 def download_panoptic(download, embeddings, depth, embedding_model, depth_model):
     # PANOPTIC SPORT
@@ -49,12 +91,13 @@ def download_panoptic(download, embeddings, depth, embedding_model, depth_model)
             shell=True
         )
 
+
 def download_iphone(download, embeddings, depth, embedding_model, depth_model):
     # IPHONE DATASET
     # download data from som https://drive.google.com/drive/folders/1xJaFS_3027crk7u36cue7BseAX80abRe
     if download:
         files = [
-            "gdown --fuzzy https://drive.google.com/file/d/15PirJRqsT5lLjuGdLWALBDFMQanj8FTh/view?usp=drive_link && unzip paper-windmill.zip && rm paper-windmill.zip", 
+            "gdown --fuzzy https://drive.google.com/file/d/15PirJRqsT5lLjuGdLWALBDFMQanj8FTh/view?usp=drive_link && unzip paper-windmill.zip && rm paper-windmill.zip",
             "gdown --fuzzy https://drive.google.com/file/d/18sjQQMU6AijyXg4BoucLX82R959BYAzz/view?usp=drive_link && unzip sriracha-tree.zip && rm sriracha-tree.zip",
             "gdown --fuzzy https://drive.google.com/file/d/1QihG5A7c_bpkse5b0OBdqqFThgX0kDyZ/view?usp=drive_link && unzip bagpack.zip && bagpack.zip",
             "gdown --fuzzy https://drive.google.com/file/d/1QJQnVw_szoy_k5x9k_BAE2BWtf_BXqKn/view?usp=drive_link && unzip apple.zip && apple.zip",
@@ -67,21 +110,21 @@ def download_iphone(download, embeddings, depth, embedding_model, depth_model):
             "gdown --fuzzy https://drive.google.com/file/d/1Mqm4C1Oitv4AsDM2n0Ojbt5pmF_qXVfI/view?usp=drive_link && unzip teddy.zip && teddy.zip",
             "gdown --fuzzy https://drive.google.com/file/d/1Uc2BXpONnWhxKNs6tKMle0MiSVMVZsuB/view?usp=drive_link && unzip pillow.zip && pillow.zip",
         ]
-        
+
         for file in files:
             command = f"cd data; mkdir iphone; cd iphone; {file}; cd ../../"
             subprocess.run(
                 command,
                 shell=True
             )
-    
+
     if embeddings:
         command = f"python preprocess/get_dino_prediction.py configs/iphone/dynomo_iphone.py --base_path {os.getcwd()}/data/iphone/  --save_dir {os.getcwd()}/data/iphone/ --model {embedding_model}"
         subprocess.run(
             command,
             shell=True
         )
-    
+
     if depth:
         command = f'python preprocess/get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::{os.getcwd()}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path {os.getcwd()}/data/iphone/ --save_dir {os.getcwd()}/data/iphone/'
         subprocess.run(
@@ -92,12 +135,15 @@ def download_iphone(download, embeddings, depth, embedding_model, depth_model):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", type=str, choices=["davis", "panoptic_sport", "iphone"], help="Which dataset to use.")
+    parser.add_argument("dataset", type=str, choices=["davis", "panoptic_sport", "iphone"],
+                        help="Which dataset to use.")
     parser.add_argument("--download", action="store_true", help="If download needed.")
     parser.add_argument("--embeddings", action="store_true", help="If precompute embeddings.")
-    parser.add_argument("--embedding_model", type=str, default="dinov2_vits14_reg", choices=["dinov2_vits14_reg", "dinov2_vits14"],  help='Which dino version to use.')
+    parser.add_argument("--embedding_model", type=str, default="dinov2_vits14_reg",
+                        choices=["dinov2_vits14_reg", "dinov2_vits14"], help='Which dino version to use.')
     parser.add_argument("--depths", action="store_true", help="If precompute depth.")
-    parser.add_argument("--depth_model", type=str, default='DepthAnything', choices=["DepthAnything", "DepthAnythingV2-vitl"], help="Which Depth Model.")
+    parser.add_argument("--depth_model", type=str, default='DepthAnything',
+                        choices=["DepthAnything", "DepthAnythingV2-vitl"], help="Which Depth Model.")
     return parser.parse_args()
 
 
@@ -110,4 +156,3 @@ if __name__ == "__main__":
         download_panoptic(args.download, args.embeddings, args.depths, args.embedding_model, args.depth_model)
     if args.dataset == "iphone":
         download_iphone(args.download, args.embeddings, args.depths, args.embedding_model, args.depth_model)
-    

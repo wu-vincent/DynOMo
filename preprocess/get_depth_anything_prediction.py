@@ -28,6 +28,8 @@ import torch
 from tqdm import tqdm
 import glob
 import sys
+import shutil
+import requests
 sys.path.append("Depth-Anything/metric_depth/")
 from zoedepth.data.data_mono import DepthDataLoader
 from zoedepth.models.builder import build_model
@@ -139,11 +141,20 @@ def download_weights(dataset, pretrained_resource):
     vit_url = f"https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints/{vit_name}"
 
     if not os.path.isfile(pretrained_resource.replace("local::", '')):
-        import subprocess
-        subprocess.run(
-            f"wget {url}; wget {vit_url}; mkdir {model_dir}; mv {model_name} {model_dir}/; mv {vit_name} {model_dir}",
-            shell=True
-        )
+        # Download files using requests
+        response_model = requests.get(url, stream=True)
+        with open(model_name, 'wb') as f:
+            shutil.copyfileobj(response_model.raw, f)
+        response_vit = requests.get(vit_url, stream=True)
+        with open(vit_name, 'wb') as f:
+            shutil.copyfileobj(response_vit.raw, f)
+
+        # Create directory
+        os.makedirs(model_dir, exist_ok=True)
+
+        # Move files to the directory
+        shutil.move(model_name, os.path.join(model_dir, model_name))
+        shutil.move(vit_name, os.path.join(model_dir, vit_name))
 
 
 def eval_model(model_name, base_path, save_dir, pretrained_resource, save_depth=True, dataset='nyu', device="cuda:4", **kwargs):
