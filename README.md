@@ -59,7 +59,10 @@ We provide a conda environment file to create our environment. Please run the fo
 
 ```bash
 # create conda environment and install rasterizer
-bash scripts/create_env.sh
+conda env create -f environment.yml
+python -m pip install diff_gaussian_rasterization_w_dwv -f wheelhouse
+cp preprocess/Depth-Anything_Updates/depth_anything.py Depth-Anything/metric_depth/zoedepth/models/base_models/depth_anything.py
+cp preprocess/Depth-Anything_Updates/dpt.py Depth-Anything/metric_depth/zoedepth/models/base_models/dpt_dinov2/dpt.py
 ```
 
 ## Downloads
@@ -67,7 +70,7 @@ We provide a script to download and preprocess TAP-VID Davis, Panoptic Sport as 
 
 ```bash
 # base command
-python scripts/prepare_data.py <DATASET> --download --embeddings --embedding_model <EMBEDDING_MODEL> --depth --depth_model <DEPTH_MODEL>
+python scripts/prepare_data.py <DATASET> --download --embeddings --embedding_model <EMBEDDING_MODEL> --depths --depth_model <DEPTH_MODEL>
 ```
 where the flags mean the following
 - ```<DATASET>```: choose either davis, panoptic_sport, or iphone
@@ -81,7 +84,7 @@ To preprocess the data the same way as we did, please run the following:
 
 ```bash
 # Download and prepare davis dataset
-python scripts/prepare_data.py davis --download --embeddings --embedding_model dinov2_vits14_reg --depth --depth_model DepthAnything
+python scripts/prepare_data.py davis --download --embeddings --embedding_model dinov2_vits14_reg --depths --depth_model DepthAnything
 
 # Download and prepare panoptic sport dataset
 python scripts/prepare_data.py panoptic_sport --download --embeddings --embedding_model dinov2_vits14_reg
