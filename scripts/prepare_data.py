@@ -62,34 +62,69 @@ def download_davis(download, embeddings, depth, embedding_model, depth_model):
         subprocess.run([
             "python", "preprocess/get_depth_anything_prediction.py", "-m", "zoedepth",
             "--pretrained_resource",
-            f"local::{data_dir}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_outdoor.pt",
+            f"local::Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_outdoor.pt",
             "--base_path", str(data_dir / "DAVIS/JPEGImages/480p/"),
             "--save_dir", str(data_dir / "DAVIS/Depth/480p/")
         ], check=True)
 
 
 def download_panoptic(download, embeddings, depth, embedding_model, depth_model):
-    # PANOPTIC SPORT
-    # download data
+    """Pure Python-based implementation for downloading PANOPTIC SPORT data."""
+    data_dir = Path("data")
+    panoptic_sport_dir = data_dir / "panoptic_sport"
+    annotations_dir = panoptic_sport_dir / "annotations"
+    depth_zip_url = "https://vision.in.tum.de/webshare/u/seidensc/DynOMo/Dynamic3DGaussianDepth.zip"
+    depth_zip_path = data_dir / "Dynamic3DGaussianDepth.zip"
+
     if download:
-        command = "cd data && wget https://omnomnom.vision.rwth-aachen.de/data/Dynamic3DGaussians/data.zip && unzip data.zip && rm -rf data.zip && cd data; mkdir annotations && cd annotations; gdown --fuzzy https://drive.google.com/file/d/1WXePud-DuR3fN5P4ThyfKWGjnIzD-0O1/view?usp=sharing; gdown --fuzzy https://drive.google.com/file/d/1MSYSTKhMvS-Wn-ACBxNVATzHUC5WybKS/view?usp=sharing; cd ../../../; mv data/data/ data/panoptic_sport; python preprocess/process_panoptic_sport.py; python preprocess/convert_panoptic_sports_to_tapvid.py; cd data; wget https://vision.in.tum.de/webshare/u/seidensc/DynOMo/Dynamic3DGaussianDepth.zip; unzip Dynamic3DGaussianDepth.zip; rm Dynamic3DGaussianDepth.zip; cd ../"
-        subprocess.run(
-            command,
-            shell=True
+        # Step 1: Download and extract main data
+        main_data_zip_url = "https://omnomnom.vision.rwth-aachen.de/data/Dynamic3DGaussians/data.zip"
+        main_data_zip_path = data_dir / "data.zip"
+
+        data_dir.mkdir(exist_ok=True)
+        download_file(main_data_zip_url, main_data_zip_path)
+        extract_zip(main_data_zip_path, data_dir)
+
+        # Step 2: Setting up annotations and downloading required files from Google Drive
+        annotations_dir.mkdir(parents=True, exist_ok=True)
+        gdown.download(
+            "https://drive.google.com/uc?id=1WXePud-DuR3fN5P4ThyfKWGjnIzD-0O1",
+            str(annotations_dir / "2dgt.json"), fuzzy=True
+        )
+        gdown.download(
+            "https://drive.google.com/uc?id=1MSYSTKhMvS-Wn-ACBxNVATzHUC5WybKS",
+            str(annotations_dir / "3dgt.json"), fuzzy=True
         )
 
+        # Step 3: Move and process the data
+        shutil.move(str(data_dir / "data"), str(panoptic_sport_dir))
+        subprocess.run(["python", "preprocess/process_panoptic_sport.py"], check=True)
+        subprocess.run(["python", "preprocess/convert_panoptic_sports_to_tapvid.py"], check=True)
+
+        # Step 4: Download and extract depth data
+        download_file(depth_zip_url, depth_zip_path)
+        extract_zip(depth_zip_path, data_dir)
+
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/panoptic_sports/dynomo_panoptic_sports.py --base_path {os.getcwd()}/data/panoptic_sport/  --save_dir {os.getcwd()}/data/panoptic_sport/ --model {embedding_model}"
-        subprocess.run(
-            command,
-            shell=True
-        )
+        # Precompute embeddings using the specified model
+        subprocess.run([
+            "python", "preprocess/get_dino_prediction.py",
+            "configs/panoptic_sports/dynomo_panoptic_sports.py",
+            "--base_path", str(panoptic_sport_dir),
+            "--save_dir", str(panoptic_sport_dir),
+            "--model", embedding_model
+        ], check=True)
+
     if depth:
-        command = f'python preprocess/get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::{os.getcwd()}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path {os.getcwd()}/data/panoptic_sport/ --save_dir {os.getcwd()}/data/panoptic_sport/'
-        subprocess.run(
-            command,
-            shell=True
-        )
+        # Precompute depth using the specified model and pretrained resource
+        pretrained_resource = f"local::Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt"
+        subprocess.run([
+            "python", "preprocess/get_depth_anything_prediction.py",
+            "-m", "zoedepth",
+            "--pretrained_resource", pretrained_resource,
+            "--base_path", str(panoptic_sport_dir),
+            "--save_dir", str(panoptic_sport_dir)
+        ], check=True)
 
 
 def download_iphone(download, embeddings, depth, embedding_model, depth_model):
