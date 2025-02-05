@@ -128,45 +128,46 @@ def download_panoptic(download, embeddings, depth, embedding_model, depth_model)
 
 
 def download_iphone(download, embeddings, depth, embedding_model, depth_model):
-    # IPHONE DATASET
-    # download data from som https://drive.google.com/drive/folders/1xJaFS_3027crk7u36cue7BseAX80abRe
-    if download:
-        files = [
-            "gdown --fuzzy https://drive.google.com/file/d/15PirJRqsT5lLjuGdLWALBDFMQanj8FTh/view?usp=drive_link && unzip paper-windmill.zip && rm paper-windmill.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/18sjQQMU6AijyXg4BoucLX82R959BYAzz/view?usp=drive_link && unzip sriracha-tree.zip && rm sriracha-tree.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1QihG5A7c_bpkse5b0OBdqqFThgX0kDyZ/view?usp=drive_link && unzip bagpack.zip && bagpack.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1QJQnVw_szoy_k5x9k_BAE2BWtf_BXqKn/view?usp=drive_link && unzip apple.zip && apple.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1BmuxJXKi6dVaNOjmppuETQsaspAV9Wca/view?usp=drive_link && unzip haru-sit.zip && haru-sit.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1frv8miU24Dl7fqblYt7zkwj129ci-68U/view?usp=drive_link && unzip handwavy.zip && handwavy.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1inkHp24an1TyWvBekBxu2wRIyLQ0gkhO/view?usp=drive_link && unzip creeper.zip && creeper.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1OpgF2ILf43jcN-226wQcxImjcfMAVOwA/view?usp=drive_link && unzip mochi-high-five.zip && mochi-high-five.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1b9Y-hUm9Cviuq-fl7gG-q7rUK7j0u2Rv/view?usp=drive_link && unzip block.zip && block.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1055wcQk-ZfVWXa_g-dpQIRQy-kLBL_Lk/view?usp=drive_link && unzip spin.zip && spin.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1Mqm4C1Oitv4AsDM2n0Ojbt5pmF_qXVfI/view?usp=drive_link && unzip teddy.zip && teddy.zip",
-            "gdown --fuzzy https://drive.google.com/file/d/1Uc2BXpONnWhxKNs6tKMle0MiSVMVZsuB/view?usp=drive_link && unzip pillow.zip && pillow.zip",
-        ]
+    data_dir = Path("data/iphone")
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-        for file in files:
-            command = f"cd data; mkdir iphone; cd iphone; {file}; cd ../../"
-            subprocess.run(
-                command,
-                shell=True
-            )
+    if download:
+        gdown_files = [
+            ("15PirJRqsT5lLjuGdLWALBDFMQanj8FTh", "paper-windmill.zip"),
+            ("18sjQQMU6AijyXg4BoucLX82R959BYAzz", "sriracha-tree.zip"),
+            ("1QihG5A7c_bpkse5b0OBdqqFThgX0kDyZ", "bagpack.zip"),
+            ("1QJQnVw_szoy_k5x9k_BAE2BWtf_BXqKn", "apple.zip"),
+            ("1BmuxJXKi6dVaNOjmppuETQsaspAV9Wca", "haru-sit.zip"),
+            ("1frv8miU24Dl7fqblYt7zkwj129ci-68U", "handwavy.zip"),
+            ("1inkHp24an1TyWvBekBxu2wRIyLQ0gkhO", "creeper.zip"),
+            ("1OpgF2ILf43jcN-226wQcxImjcfMAVOwA", "mochi-high-five.zip"),
+            ("1b9Y-hUm9Cviuq-fl7gG-q7rUK7j0u2Rv", "block.zip"),
+            ("1055wcQk-ZfVWXa_g-dpQIRQy-kLBL_Lk", "spin.zip"),
+            ("1Mqm4C1Oitv4AsDM2n0Ojbt5pmF_qXVfI", "teddy.zip"),
+            ("1Uc2BXpONnWhxKNs6tKMle0MiSVMVZsuB", "pillow.zip"),
+        ]  # Add remaining files in the same format
+
+        for file_id, filename in gdown_files:
+            zip_path = data_dir / filename
+            gdown.download(id=file_id, output=str(zip_path), quiet=False)
+            extract_zip(zip_path, data_dir)
 
     if embeddings:
-        command = f"python preprocess/get_dino_prediction.py configs/iphone/dynomo_iphone.py --base_path {os.getcwd()}/data/iphone/  --save_dir {os.getcwd()}/data/iphone/ --model {embedding_model}"
-        subprocess.run(
-            command,
-            shell=True
-        )
+        subprocess.run([
+            "python", "preprocess/get_dino_prediction.py", "configs/iphone/dynomo_iphone.py",
+            "--base_path", str(data_dir),
+            "--save_dir", str(data_dir),
+            "--model", embedding_model
+        ], check=True)
 
     if depth:
-        command = f'python preprocess/get_depth_anything_prediction.py -m zoedepth --pretrained_resource="local::{os.getcwd()}/Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt" --base_path {os.getcwd()}/data/iphone/ --save_dir {os.getcwd()}/data/iphone/'
-        subprocess.run(
-            command,
-            shell=True
-        )
-
+        subprocess.run([
+            "python", "preprocess/get_depth_anything_prediction.py", "-m", "zoedepth",
+            "--pretrained_resource",
+            f"local::Depth-Anything/metric_depth/checkpoints/depth_anything_metric_depth_indoor.pt",
+            "--base_path", str(data_dir),
+            "--save_dir", str(data_dir)
+        ], check=True)
 
 def parse_args():
     parser = argparse.ArgumentParser()
