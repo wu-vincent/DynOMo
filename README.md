@@ -61,6 +61,7 @@ We provide a conda environment file to create our environment. Please run the fo
 # create conda environment and install rasterizer
 conda env create -f environment.yml
 python -m pip install diff_gaussian_rasterization_w_dwv -f wheelhouse
+python -m pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.1+cu118.html
 cp preprocess/Depth-Anything_Updates/depth_anything.py Depth-Anything/metric_depth/zoedepth/models/base_models/depth_anything.py
 cp preprocess/Depth-Anything_Updates/dpt.py Depth-Anything/metric_depth/zoedepth/models/base_models/dpt_dinov2/dpt.py
 ```
@@ -103,7 +104,7 @@ To run DynOMo, please run the ```run_dynomo.py``` script as follows:
 python scripts/run_dynomo.py <CONFIG_FILE> --gpus <GPUS_TO_USE> 
 ``` 
 where the flags are defined as follows:
-- \<CONFIG_FILE>: one of the config files for the specific datasets, i.e., either ```config/davis/dynomo_davis.py```, ```config/iphone/dynomo_iphone.py```, or ```config/panoptic_sports/dynomo_panoptic_sports.py```
+- \<CONFIG_FILE>: one of the config files for the specific datasets, i.e., either ```configs/davis/dynomo_davis.py```, ```configs/iphone/dynomo_iphone.py```, or ```configs/panoptic_sports/dynomo_panoptic_sports.py```
 - gpus: the GPUs to use for the optimization as comma seperated list, e.g., 0,1,2,3,4,5,6,7
 
 Additionally, to predict depth and embeddings online, add the following flags:
