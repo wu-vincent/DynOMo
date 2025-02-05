@@ -209,6 +209,7 @@ def get_rendered_losses(config, losses, curr_data, im, depth, mask, embeddings, 
         # hard foce bg
         if iter_time_idx > 0:
             is_bg = scene.params['bg'].detach().clone().squeeze() > 0.5
+            is_bg = is_bg.cpu()
             losses['bg_reg'] = l1_loss_v1(
                 scene.params['means3D'][is_bg],
                 scene.variables['means3D'][:, :, iter_time_idx-1][is_bg].to(device))

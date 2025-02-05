@@ -316,6 +316,7 @@ class DynOMo():
                     rot_1_inv[:, 1:] = -1 * rot_1_inv[:, 1:]
                     delta_rot = quat_mult(rot_2, rot_1_inv)
                     curr_rot = normalize_quat(self.scene.variables['unnorm_rotations'][:, :, curr_time_idx].detach().clone())
+                    mask = mask.cpu()
                     new_rot = quat_mult(delta_rot, curr_rot)[mask]
                     new_rot = torch.nn.Parameter(new_rot.to(self.device).float().contiguous().requires_grad_(True))
                 else:

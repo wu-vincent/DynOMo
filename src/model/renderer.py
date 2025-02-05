@@ -289,7 +289,7 @@ class RenderHelper():
         # filter above tensors where id tensor (visibility) is 0
         # by this we loos pixel Gaussian with ID 0, but should be fine
         weight_pix_flat = weight_pix_flat[vis_pix_flat!=0]
-        pix_id = pix_id[vis_pix_flat!=0]
+        # pix_id = pix_id[vis_pix_flat!=0]
         vis_pix_flat = vis_pix_flat[vis_pix_flat!=0]
 
         # get overall sum of weights of one Gaussian for all pixels
